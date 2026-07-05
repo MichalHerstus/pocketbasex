@@ -1,0 +1,10 @@
+:root {
+  --body-bg: #43a47f;
+  --card-bg: #a15454;
+  --card-shadow: 0 16px 32px rgba(0, 0, 0, 0.08);
+  --input-border: #0c0c75;
+  --primary: #2563eb;
+  --primary-foreground: #dbc158;
+  --surface: #3b63b2;
+  --surface-foreground: #111827;
+}

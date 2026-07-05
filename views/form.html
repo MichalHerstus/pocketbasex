@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{.Title}} - Form</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: sans-serif; margin: 0; padding: 20px; background: var(--body-bg, #f5f5f5); color: #333; }
+        h1 { margin: 0 0 16px 0; font-size: 1.8rem; }
+        .sys-fields { margin-bottom: 16px; padding: 12px 16px; background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.1); display: flex; gap: 24px; flex-wrap: wrap; }
+        .sys-fields label { font-size: .85rem; color: #666; }
+        .sys-fields label span { font-weight: 600; color: #333; }
+        .form-row { display: flex; gap: 16px; margin-bottom: 12px; }
+        .form-col { flex: 1; min-width: 0; background: #fff; border-radius: 8px; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+        .form-col:empty { min-height: 40px; }
+        .form-col label { display: block; margin-bottom: 12px; font-size: .9rem; }
+        .form-col label span { display: block; margin-bottom: 4px; font-weight: 500; color: #444; }
+        .form-col input { width: 100%; padding: 8px 12px; border: 1px solid #ccc; border-radius: 6px; font-size: .9rem; outline: none; }
+        .form-col input:focus { border-color: #007bff; }
+        .form-col input[type="checkbox"] { width: auto; }
+        .form-col textarea { width: 100%; padding: 8px 12px; border: 1px solid #ccc; border-radius: 6px; font-size: .9rem; outline: none; font-family: sans-serif; resize: vertical; }
+        .form-col textarea:focus { border-color: #007bff; }
+        .form-actions { display: flex; gap: 8px; margin-top: 20px; }
+        .form-actions button { padding: 10px 24px; border: none; border-radius: 6px; font-size: .95rem; cursor: pointer; }
+        .form-actions button[type="submit"] { background: #007bff; color: #fff; }
+        .form-actions button[type="submit"]:hover { background: #0056b3; }
+        .form-actions button[type="button"] { background: #6c757d; color: #fff; }
+        .form-actions button[type="button"]:hover { background: #5a6268; }
+    </style>
+</head>
+<body>
+    <h1>{{.Title}}</h1>
+
+    {{if .Description}}<p>{{.Description}}</p>{{end}}
+
+    {{if .SystemFields}}
+    <div class="sys-fields">
+        {{range .SystemFields}}
+        <label><span>{{.Label}}:</span> {{.Value}}</label>
+        {{end}}
+    </div>
+    {{end}}
+
+    <form>
+        {{range $row := .Rows}}
+        <div class="form-row">
+            {{range $col := $row.Columns}}
+            <div class="form-col">
+                {{range $field := $col.Fields}}
+                <label>
+                    <span>{{$field.Label}}</span>
+                    {{if eq $field.Type "bool"}}
+                    <input type="checkbox" name="{{$field.Name}}"{{if eq $field.Value "true"}} checked{{end}}>
+                    {{else if eq $field.Type "number"}}
+                    <input type="number" name="{{$field.Name}}" value="{{$field.Value}}">
+                    {{else if eq $field.Type "editor"}}
+                    <textarea name="{{$field.Name}}" rows="5">{{$field.Value}}</textarea>
+                    {{else}}
+                    <input type="text" name="{{$field.Name}}" value="{{$field.Value}}">
+                    {{end}}
+                </label>
+                {{else}}
+                &nbsp;
+                {{end}}
+            </div>
+            {{end}}
+        </div>
+        {{end}}
+        <div class="form-actions">
+            <button type="submit">Submit</button>
+            <button type="button" onclick="window.location.href='/'">Cancel</button>
+        </div>
+    </form>
+</body>
+</html>

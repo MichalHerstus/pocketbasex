@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>PBX Login</title>
+    <link rel="stylesheet" href="assets/w3.css" />
+    <style>
+      body {
+        display: flex;
+        min-height: 100vh;
+        align-items: center;
+        justify-content: center;
+        margin: 0;
+        background: #f8f9fb;
+        font-family: Arial, Helvetica, sans-serif;
+      }
+      .login-card {
+        width: 100%;
+        max-width: 1520px;
+        background: #ffffff;
+        border-radius: 16px;
+        box-shadow: 0 16px 40px rgba(0, 0, 0, 0.08);
+        padding: 32px 28px;
+      }
+      .logo-box {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        margin-bottom: 24px;
+      }
+      .logo-box svg {
+        width: 80px;
+        height: 80px;
+      }
+      .login-title {
+        text-align: center;
+        margin: 0 0 20px;
+        font-size: 1.4rem;
+        color: #222;
+      }
+      .form-row {
+        margin-bottom: 18px;
+      }
+      .form-row label {
+        display: block;
+        margin-bottom: 8px;
+        font-weight: 600;
+        color: #333;
+      }
+      .w3-input {
+        border-radius: 8px;
+        border: 1px solid #d8dde6;
+      }
+      .actions {
+        display: flex;
+        gap: 12px;
+        margin-top: 24px;
+      }
+      .actions button {
+        flex: 1;
+        border-radius: 8px;
+        padding: 12px 0;
+        font-weight: 600;
+      }
+      .reset-btn {
+        background: transparent;
+        border: 1px solid #999;
+        color: #444;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/pocketbase/dist/pocketbase.umd.js"></script>
+
+    <script type="text/babel">
+      const { useState, useEffect } = React;
+
+      const pb = new PocketBase('http://127.0.0.1:8090');
+
+      function LoginPage() {
+        const [email, setEmail] = useState('');
+        const [password, setPassword] = useState('');
+        const [error, setError] = useState('');
+
+        useEffect(() => {
+          if (pb.authStore.model) {
+            window.location.replace('home.html');
+          }
+        }, []);
+
+        const handleSubmit = async (event) => {
+          event.preventDefault();
+          setError('');
+          try {
+            await pb.collection('users').authWithPassword(email, password);
+            window.location.replace('home.html');
+          } catch (err) {
+            setError(err.message ?? 'Login failed');
+          }
+        };
+
+        const handleReset = () => {
+          setEmail('');
+          setPassword('');
+          setError('');
+        };
+
+        return (
+          <div className="login-card">
+            <div className="logo-box">
+              <svg viewBox="0 0 120 120" role="img" aria-label="Logo">
+                <circle cx="60" cy="60" r="52" fill="#2b79ff" />
+                <path d="M45 70 L55 45 L70 68 L85 40" fill="none" stroke="#fff" strokeWidth="10" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            </div>
+            <h1 className="login-title">Sign In</h1>
+            {error && <p style={{ color: '#c00', textAlign: 'center' }}>{error}</p>}
+            <form onSubmit={handleSubmit}>
+              <div className="form-row">
+                <label htmlFor="email">Email</label>
+                <input
+                  id="email"
+                  className="w3-input"
+                  type="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  required
+                />
+              </div>
+              <div className="form-row">
+                <label htmlFor="password">Password</label>
+                <input
+                  id="password"
+                  className="w3-input"
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Enter your password"
+                  required
+                />
+              </div>
+              <div className="actions">
+                <button type="submit" className="w3-button w3-blue">Sign in</button>
+                <button type="button" className="w3-button reset-btn" onClick={handleReset}>
+                  Reset form
+                </button>
+              </div>
+            </form>
+          </div>
+        );
+      }
+
+      const rootElement = document.getElementById('root');
+      ReactDOM.createRoot(rootElement).render(React.createElement(LoginPage));
+    </script>
+  </body>
+</html>
