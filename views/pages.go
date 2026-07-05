@@ -61,3 +61,19 @@ type FormPageData struct {
 	Rows           []FormRow
 	HasConfig      bool
 }
+
+type AppLink struct {
+	Collection string
+	Label      string
+}
+
+type AppGroup struct {
+	GroupLabel string
+	Links      []AppLink
+}
+
+type AppPageData struct {
+	Name   string
+	Error  string
+	Groups []AppGroup
+}
