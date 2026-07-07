@@ -55,11 +55,13 @@ type FormConfig struct {
 
 type FormPageData struct {
 	CollectionName string
+	ID             string
 	Title          string
 	Description    string
 	SystemFields   []FormFieldItem
 	Rows           []FormRow
 	HasConfig      bool
+	ViewOnly       bool
 }
 
 type AppLink struct {
@@ -69,6 +71,7 @@ type AppLink struct {
 
 type AppGroup struct {
 	GroupLabel string
+	GroupIcon  string
 	Links      []AppLink
 }
 

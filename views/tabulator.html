@@ -38,11 +38,16 @@
     <div class="subtitle">{{.TotalRecords}} record{{if ne .TotalRecords 1}}s{{end}}</div>
     {{if .Config.CollectionDescr}}<div class="descr">{{.Config.CollectionDescr}}</div>{{end}}
 
-    {{if .Config.SearchBox}}
-    <div class="search-box">
-        <input type="text" id="searchInput" placeholder="Search across all columns…">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
+        {{if .Config.SearchBox}}
+        <div class="search-box" style="margin-bottom:0;">
+            <input type="text" id="searchInput" placeholder="Search across all columns…">
+        </div>
+        {{end}}
+        <span id="filterLabel" style="display:none;font-size:.9rem;color:#e67e22;font-weight:600;">Filter is set</span>
+        <button id="filterBtn" style="padding:8px 16px;background:#6c757d;color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">Filter</button>
+        <a href="/form/{{.CollectionName}}" style="margin-left:auto;padding:8px 16px;background:#28a745;color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">+ Add new</a>
     </div>
-    {{end}}
 
     <div class="table-wrap">
         <table>
@@ -54,6 +59,7 @@
                         {{if $.Config.ColumnSorting}}<span class="sort-icon">↕</span>{{end}}
                     </th>
                     {{end}}
+                    <th style="width:130px">Actions</th>
                 </tr>
             </thead>
             <tbody id="tableBody"></tbody>
@@ -111,10 +117,23 @@
 
             const tbody = document.getElementById("tableBody");
             if (!pageRecords.length) {
-                tbody.innerHTML = `<tr><td class="empty" colspan="${fields.length}">No records found</td></tr>`;
+                tbody.innerHTML = `<tr><td class="empty" colspan="${fields.length+1}">No records found</td></tr>`;
             } else {
+                const collName = "{{.CollectionName}}";
                 tbody.innerHTML = pageRecords.map(r =>
-                    "<tr>" + fields.map(f => `<td>${r[f] || ""}</td>`).join("") + "</tr>"
+                    "<tr>" +
+                    fields.map(f => `<td>${r[f] || ""}</td>`).join("") +
+                    `<td style="white-space:nowrap">
+                        <a href="/form/${collName}/${r.id}?view=1" style="display:inline-block;padding:4px 8px;background:#17a2b8;border-radius:4px;margin-right:4px;line-height:0">
+                            <img src="/assets/Binocular--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="View">
+                        </a>
+                        <a href="/form/${collName}/${r.id}" style="display:inline-block;padding:4px 8px;background:#007bff;border-radius:4px;margin-right:4px;line-height:0">
+                            <img src="/assets/Arrange-List-Descending-1--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="Edit">
+                        </a>
+                        <button onclick="deleteRecord('${collName}','${r.id}')" style="display:inline-block;padding:4px 8px;background:#dc3545;border:none;border-radius:4px;cursor:pointer;line-height:0">
+                            <img src="/assets/Bin-1--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="Delete">
+                        </button>
+                    </td>` + "</tr>"
                 ).join("");
             }
 
@@ -139,6 +158,14 @@
             render();
         });
         {{end}}
+
+        // filter toggle
+        let filterActive = false;
+        document.getElementById("filterBtn").addEventListener("click", function () {
+            filterActive = !filterActive;
+            document.getElementById("filterLabel").style.display = filterActive ? "" : "none";
+            this.style.background = filterActive ? "#e67e22" : "#6c757d";
+        });
 
         // sort
         {{if .Config.ColumnSorting}}
@@ -197,6 +224,28 @@
         {{end}}
 
         render();
+
+        // delete record
+        async function deleteRecord(collName, id) {
+            if (!confirm("Really delete selected record?")) return;
+            const res = await fetch(`/form/${collName}/${id}/delete`, { method: "POST" });
+            if (!res.ok) { alert("Failed to delete record."); return; }
+            const idx = allRecords.findIndex(r => r.id === id);
+            if (idx !== -1) allRecords.splice(idx, 1);
+            render();
+            alert("Record deleted.");
+        }
+
+        // flash message
+        const params = new URLSearchParams(window.location.search);
+        const msg = params.get("msg");
+        if (msg) {
+            alert(msg);
+            // clean URL
+            const url = new URL(window.location);
+            url.searchParams.delete("msg");
+            window.history.replaceState({}, "", url);
+        }
     </script>
 </body>
 </html>

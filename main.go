@@ -7,6 +7,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -14,10 +15,12 @@ import (
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/hook"
 
+	"pbx/pbexcel"
 	"pbx/views"
 )
 
 //go:embed views/*.html
+//go:embed views/assets
 var viewsFS embed.FS
 
 var templates *template.Template
@@ -34,7 +37,8 @@ func init() {
 				}
 				return r
 			},
-			"safeJS": func(s string) template.JS { return template.JS(s) },
+			"safeJS":   func(s string) template.JS { return template.JS(s) },
+			"safeHTML": func(s string) template.HTML { return template.HTML(s) },
 		}).
 		ParseFS(viewsFS, "views/*.html"))
 }
@@ -45,25 +49,66 @@ func main() {
 	// all endpoints
 	app.OnServe().Bind(&hook.Handler[*core.ServeEvent]{
 		Func: func(se *core.ServeEvent) error {
+			// login dialog
 			se.Router.GET("/login", func(e *core.RequestEvent) error {
 				e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
 				return templates.ExecuteTemplate(e.Response, "login.html", map[string]string{})
 			})
-
+			// login form submission
 			se.Router.POST("/login", func(e *core.RequestEvent) error {
 				return handleLoginPost(e)
 			})
-
+			// main app page: list of collections, export/import, etc.
 			se.Router.GET("/app", func(e *core.RequestEvent) error {
 				return handleApp(e)
 			})
-
+			// collection tableform view
 			se.Router.GET("/tabulator/{collectionName}", func(e *core.RequestEvent) error {
 				return handleTabulator(e)
 			})
-
+			// collection form view (new or edit)
 			se.Router.GET("/form/{collectionName}", func(e *core.RequestEvent) error {
 				return handleForm(e)
+			})
+
+			se.Router.GET("/form/{collectionName}/{id}", func(e *core.RequestEvent) error {
+				return handleForm(e)
+			})
+
+			se.Router.POST("/form/{collectionName}", func(e *core.RequestEvent) error {
+				return handleFormPost(e)
+			})
+
+			se.Router.POST("/form/{collectionName}/{id}", func(e *core.RequestEvent) error {
+				return handleFormPost(e)
+			})
+			// delete record
+			se.Router.POST("/form/{collectionName}/{id}/delete", func(e *core.RequestEvent) error {
+				return handleDeleteRecord(e)
+			})
+			// export collection to Excel
+			se.Router.GET("/export/{collectionName}", func(e *core.RequestEvent) error {
+				return handleExport(e)
+			})
+			// serve static assets
+			se.Router.GET("/assets/{path...}", func(e *core.RequestEvent) error {
+				path := e.Request.PathValue("path")
+				if path == "" {
+					return e.NotFoundError("Missing path", nil)
+				}
+				data, err := viewsFS.ReadFile("views/assets/" + path)
+				if err != nil {
+					return e.NotFoundError("Asset not found", err)
+				}
+				ct := "application/octet-stream"
+				if strings.HasSuffix(path, ".png") {
+					ct = "image/png"
+				} else if strings.HasSuffix(path, ".css") {
+					ct = "text/css; charset=utf-8"
+				}
+				e.Response.Header().Set("Content-Type", ct)
+				e.Response.Write(data)
+				return nil
 			})
 
 			return se.Next()
@@ -93,18 +138,30 @@ func handleApp(e *core.RequestEvent) error {
 		return e.InternalServerError("Failed to fetch app records", recErr)
 	}
 
+	appColl, _ := e.App.FindCachedCollectionByNameOrId("_app")
+	appCollID := ""
+	if appColl != nil {
+		appCollID = appColl.Id
+	}
+
 	type linkEntry struct {
 		group      string
 		groupLabel string
+		groupIcon  string
 		collection string
 		label      string
 	}
 
 	entries := make([]linkEntry, 0, len(appRecs))
 	for _, rec := range appRecs {
+		iconURL := ""
+		if gi := rec.GetString("group_icon"); gi != "" && appCollID != "" {
+			iconURL = "/api/files/" + appCollID + "/" + rec.Id + "/" + gi
+		}
 		entries = append(entries, linkEntry{
 			group:      rec.GetString("group"),
 			groupLabel: rec.GetString("group_label"),
+			groupIcon:  iconURL,
 			collection: rec.GetString("collection"),
 			label:      rec.GetString("collectionLabel"),
 		})
@@ -115,7 +172,7 @@ func handleApp(e *core.RequestEvent) error {
 	for _, ent := range entries {
 		g, ok := groups[ent.group]
 		if !ok {
-			g = &views.AppGroup{GroupLabel: ent.groupLabel}
+			g = &views.AppGroup{GroupLabel: ent.groupLabel, GroupIcon: ent.groupIcon}
 			groups[ent.group] = g
 			groupOrder = append(groupOrder, ent.group)
 		}
@@ -215,49 +272,41 @@ func handleTabulator(e *core.RequestEvent) error {
 	fields := collection.Fields
 
 	systemCols := map[string]bool{"id": true, "created": true, "updated": true}
-	orderMap := map[int]int{}
+
+	var fieldIndices []int
 	if cfg.ColumnOrder != "" {
 		parts := strings.Split(cfg.ColumnOrder, ",")
-		for i, p := range parts {
+		for _, p := range parts {
 			idx, err := strconv.Atoi(strings.TrimSpace(p))
 			if err == nil && idx >= 1 && idx <= len(fields) {
-				orderMap[idx-1] = i
+				fieldIndices = append(fieldIndices, idx-1)
 			}
 		}
 	}
 
-	type sField struct {
-		origIdx int
-		order   int
-		name    string
+	if len(fieldIndices) == 0 {
+		for i := range fields {
+			fieldIndices = append(fieldIndices, i)
+		}
 	}
 
-	var visible []sField
-	for i, f := range fields {
+	var visibleFields []core.Field
+	var visibleHeaders []string
+	for _, i := range fieldIndices {
+		f := fields[i]
 		fName := f.GetName()
 		if !cfg.DisplaySystemCol && systemCols[fName] {
 			continue
 		}
-		order := i
-		if o, ok := orderMap[i]; ok {
-			order = o
-		}
-		visible = append(visible, sField{origIdx: i, order: order, name: fName})
+		visibleFields = append(visibleFields, f)
+		visibleHeaders = append(visibleHeaders, fName)
 	}
 
-	for i := 0; i < len(visible); i++ {
-		for j := i + 1; j < len(visible); j++ {
-			if visible[i].order > visible[j].order {
-				visible[i], visible[j] = visible[j], visible[i]
-			}
-		}
-	}
-
-	fieldNames := make([]string, len(visible))
-	headers := make([]string, len(visible))
-	for i, v := range visible {
-		fieldNames[i] = v.name
-		headers[i] = v.name
+	fieldNames := make([]string, len(visibleFields))
+	headers := make([]string, len(visibleFields))
+	for i, f := range visibleFields {
+		fieldNames[i] = f.GetName()
+		headers[i] = f.GetName()
 	}
 
 	if cfg.ColumnTitles != "" {
@@ -275,6 +324,7 @@ func handleTabulator(e *core.RequestEvent) error {
 		for _, fn := range fieldNames {
 			rm[fn] = rec.GetString(fn)
 		}
+		rm["id"] = rec.GetString("id")
 		allData = append(allData, rm)
 	}
 
@@ -309,6 +359,7 @@ func handleTabulator(e *core.RequestEvent) error {
 
 func handleForm(e *core.RequestEvent) error {
 	collName := e.Request.PathValue("collectionName")
+	recordID := e.Request.PathValue("id")
 
 	collection, err := e.App.FindCachedCollectionByNameOrId(collName)
 	if err != nil {
@@ -316,6 +367,14 @@ func handleForm(e *core.RequestEvent) error {
 	}
 
 	fields := collection.Fields
+
+	var record *core.Record
+	if recordID != "" {
+		record, err = e.App.FindRecordById(collName, recordID)
+		if err != nil {
+			return e.NotFoundError("Record not found", err)
+		}
+	}
 
 	var configRec *core.Record
 	configRecs, _ := e.App.FindRecordsByFilter("_form", "collName = {:name}", "", 1, 0, nil, map[string]any{"name": collName})
@@ -406,11 +465,19 @@ func handleForm(e *core.RequestEvent) error {
 		for _, f := range fields {
 			fName := f.GetName()
 			if systemCols[fName] {
+				val := ""
+				if record != nil {
+					if fName == "id" {
+						val = record.GetString("id")
+					} else {
+						val = record.GetString(fName)
+					}
+				}
 				sysFields = append(sysFields, views.FormFieldItem{
 					Name:  fName,
 					Label: fName,
 					Type:  "text",
-					Value: "",
+					Value: val,
 				})
 			}
 		}
@@ -450,12 +517,17 @@ func handleForm(e *core.RequestEvent) error {
 				if systemCols[fName] && !displaySystemCol {
 					continue
 				}
+				val := ""
+				if record != nil {
+					val = record.GetString(fName)
+				}
 				columns = append(columns, views.FormColumn{
 					Fields: []views.FormFieldItem{
 						{
 							Name:  fName,
 							Label: fieldLabel(fName),
 							Type:  fieldType(f),
+							Value: val,
 						},
 					},
 				})
@@ -492,10 +564,15 @@ func handleForm(e *core.RequestEvent) error {
 			if systemCols[fName] && !displaySystemCol {
 				continue
 			}
+			val := ""
+			if record != nil {
+				val = record.GetString(fName)
+			}
 			rowFields = append(rowFields, views.FormFieldItem{
 				Name:  fName,
 				Label: fieldLabel(fName),
 				Type:  fieldType(s.f),
+				Value: val,
 			})
 		}
 		if len(rowFields) > 0 {
@@ -507,13 +584,103 @@ func handleForm(e *core.RequestEvent) error {
 
 	data := views.FormPageData{
 		CollectionName: collName,
+		ID:             recordID,
 		Title:          title,
 		Description:    description,
 		SystemFields:   sysFields,
 		Rows:           rows,
 		HasConfig:      configRec != nil,
+		ViewOnly:       e.Request.URL.Query().Get("view") == "1",
 	}
 
 	e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	return templates.ExecuteTemplate(e.Response, "form.html", data)
+}
+
+// --- Form POST (create/update) ---
+
+func handleFormPost(e *core.RequestEvent) error {
+	collName := e.Request.PathValue("collectionName")
+	recordID := e.Request.PathValue("id")
+
+	collection, err := e.App.FindCachedCollectionByNameOrId(collName)
+	if err != nil {
+		return e.NotFoundError("Collection not found", err)
+	}
+
+	var record *core.Record
+	if recordID != "" {
+		record, err = e.App.FindRecordById(collName, recordID)
+		if err != nil {
+			return e.NotFoundError("Record not found", err)
+		}
+	} else {
+		record = core.NewRecord(collection)
+	}
+
+	systemCols := map[string]bool{"id": true, "created": true, "updated": true}
+
+	for _, f := range collection.Fields {
+		fName := f.GetName()
+		if systemCols[fName] {
+			continue
+		}
+		switch f.Type() {
+		case "bool":
+			record.Set(fName, e.Request.FormValue(fName) == "on")
+		case "number":
+			val := e.Request.FormValue(fName)
+			if val == "" {
+				record.Set(fName, nil)
+			} else {
+				record.Set(fName, val)
+			}
+		default:
+			record.Set(fName, e.Request.FormValue(fName))
+		}
+	}
+
+	if err := e.App.Save(record); err != nil {
+		return e.InternalServerError("Failed to save record", err)
+	}
+
+	msg := "Record successfully added."
+	if recordID != "" {
+		msg = "Record successfully updated."
+	}
+
+	return e.Redirect(http.StatusSeeOther, "/tabulator/"+collName+"?msg="+url.QueryEscape(msg))
+}
+
+// --- Export ---
+
+func handleExport(e *core.RequestEvent) error {
+	collName := e.Request.PathValue("collectionName")
+	excelFileName := e.Request.URL.Query().Get("excelFileName")
+	sheetName := e.Request.URL.Query().Get("sheetName")
+
+	if err := pbexcel.ExportToExcel(e.App, excelFileName, sheetName, collName); err != nil {
+		return e.InternalServerError("Export failed", err)
+	}
+
+	msg := url.QueryEscape("Export successful")
+	return e.Redirect(http.StatusSeeOther, "/tabulator/"+collName+"?msg="+msg)
+}
+
+// --- Delete record ---
+
+func handleDeleteRecord(e *core.RequestEvent) error {
+	collName := e.Request.PathValue("collectionName")
+	recordID := e.Request.PathValue("id")
+
+	record, err := e.App.FindRecordById(collName, recordID)
+	if err != nil {
+		return e.NotFoundError("Record not found", err)
+	}
+
+	if err := e.App.Delete(record); err != nil {
+		return e.InternalServerError("Failed to delete record", err)
+	}
+
+	return e.JSON(http.StatusOK, map[string]any{"ok": true})
 }
