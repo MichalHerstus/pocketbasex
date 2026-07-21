@@ -14,14 +14,17 @@ type TabulatorConfig struct {
 	SearchBox        bool
 	DisplaySystemCol bool
 	PageTitle        string
+	Filter           string
 }
 
 type TabulatorPageData struct {
 	CollectionName string
 	TotalRecords   int
 	Fields         []string
+	FieldTypes     []string
 	ColumnHeaders  []string
 	FieldsJSON     string
+	FieldTypesJSON string
 	HeadersJSON    string
 	RecordsJSON    string
 	PerPage        int
@@ -36,6 +39,7 @@ type FormFieldItem struct {
 	Type     string
 	Value    string
 	IsSystem bool
+	Data     map[string]any
 }
 
 type FormColumn struct {
@@ -79,4 +83,8 @@ type AppPageData struct {
 	Name   string
 	Error  string
 	Groups []AppGroup
+}
+
+type PbxSetupPageData struct {
+	Sections []TabulatorPageData
 }

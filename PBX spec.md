@@ -1,15 +1,23 @@
 # PBX spec
+## Theme Colors
+- default
+- primary
+- susćess
+- warning
+- danger
+Create light and dark pallete variant!
+
 ## Pages/endpoints
 Aplikace bude mít tyto stránky, resp. endpointy
 ### Login
 GET /login
 
 ### Dashboard
-GET /dashboard
+GET /app
 
 ### Tabulator
 GET /tabulator/{collectionName}
-how the field types are displayed in table (PB field type: how to display on tabulator page) ->
+Let enhance how the field types are displayed in table (PB field type: how to display on tabulator page) ->
 	text: text
     number: decimal 
     bool: icon for True/False or empty, if not set
@@ -23,11 +31,36 @@ how the field types are displayed in table (PB field type: how to display on tab
     autodate: same as date
     JSON: icon, if not empty
     GeoPoint: icon, if not empty
-    
+Please implement.    
 
 ### Form
 GET /tabulator/{collectionName}/{recordId}
 
+Enhance /form view mode in the way, how the PB field types are displayed:
+	text: text
+    number: decimal 
+    bool: icon for True/False or empty, if not set
+    email: text, put “email icon" in front of field label.
+    URL: link, last part of URL as link text. Put "url icon" in front of field label, to indicate field type.
+    editor: as is now (field content as formatted html)
+    file: file name, if file uploaded, otherwise empty. Put “file icon" in front of field label.
+    select: selected option as text. Put “selection" icon" in front of field label.
+    relation: button, its label show numer of records in relation. When user click on button, modal tabular view appears, displaying related 					  collection. Put “relation icon" in front of field label.
+    date: formatted date as text
+    autodate: same as date
+    JSON: as formatted html, the json keys display bold
+    GeoPoint: GPS coordinates as text. Put “position icon" in front of field label.
+
+Implement filter button functionality in /tabular page.
+Filter definition: {condition1} {chain} {condition2}..etc. Exapmle “(Price > 10) && (Price < 100)”. Filter definition is stored in field “filter” of _tabulator collection.
+Fileter definition syntax: 
+	condition operators: < (less then),> (bigger then),<= (less or equal then), => (equal or bigger then), != (not equal), ~ (contain)
+    can be applied to string type fields: =, !=, ~
+    number, datetime fields: only <,>,<=, =>, !=
+    selection type of field is treated as string, rich editor as well. Other types (relation, GPS, JSON) cannot be used in filters.
+    if “?” is used asi value in condition, modal dialog is diplayed to allow user enter the values for filter. Dialog contain also 2 buttons - “Set 	filter” (= switch filter ON) and “Cancel filter” (switch filter off).
+    If there are not inputs (means no “?” in definition), filter is applied automatically when Filter button is pressed. 
+    
 ### Actions
 GET /pbxAction/{actionName}?{parameters} … built in Go, inside Pbx
 GET /jsAction/{actionName}?{parameters} … in js, soubory *.pb.js v ./pb_hooks
@@ -70,3 +103,9 @@ For both functions:
      - if sheetName is empty, assume "Sheet 1"
      - always create "log" sheet and print export result the ("10 lines exported from collection <example>)
 
+## package external_db
+Connect external SQL database, allow to access data online or synchronize with Pockbase collection. Package will support Microsoft SQL, MySQL/MariaDB and Postgres.
+1) online mode
+View and edit data in SQL database table. As UI the /tabular and /form pages are used. When commit in /form, the record is immediatelly saved to SQL database. Use contex for handling timeout, lost connection etc.
+2) synchronization
+Synchronize PB collection and SQL database table. The collection must have same 

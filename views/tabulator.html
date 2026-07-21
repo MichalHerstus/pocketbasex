@@ -31,6 +31,27 @@
         .pagination .page-input { width: 50px; padding: 6px; text-align: center; border: 1px solid #ddd; border-radius: 6px; font-size: .9rem; outline: none; }
         .pagination .page-input:focus { border-color: #007bff; }
         .pagination .info { margin-left: auto; color: #666; font-size: .85rem; }
+        .bool-true { color: #28a745; font-weight: bold; }
+        .bool-false { color: #dc3545; }
+        .cell-icon { font-size: 1.1rem; cursor: default; }
+        .rel-btn { padding: 2px 10px; border: 1px solid #007bff; border-radius: 10px; background: #e7f1ff; color: #007bff; cursor: pointer; font-size: .85rem; font-weight: 600; }
+        .rel-btn:hover { background: #007bff; color: #fff; }
+        .num-cell { text-align: right; }
+        .modal-overlay { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,.4); align-items: center; justify-content: center; }
+        .modal-overlay.open { display: flex; }
+        .modal-content { background: #fff; border-radius: 10px; max-width: 80vw; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 4px 24px rgba(0,0,0,.2); }
+        .modal-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-bottom: 1px solid #eee; }
+        .modal-header h3 { margin: 0; font-size: 1.1rem; }
+        .modal-close { background: none; border: none; font-size: 1.4rem; cursor: pointer; color: #999; padding: 0 4px; }
+        .modal-close:hover { color: #333; }
+        .modal-body { padding: 16px 20px; overflow-y: auto; }
+        .modal-body table { font-size: .85rem; }
+        .modal-body th { font-size: .75rem; }
+        .modal-body td, .modal-body th { padding: 6px 10px; }
+        .filter-field-group { margin-bottom: 12px; }
+        .filter-field-group label { display: block; margin-bottom: 4px; font-size: .85rem; font-weight: 600; color: #555; }
+        .filter-field-group input { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 6px; font-size: .9rem; outline: none; box-sizing: border-box; }
+        .filter-field-group input:focus { border-color: #007bff; }
     </style>
 </head>
 <body>
@@ -44,9 +65,15 @@
             <input type="text" id="searchInput" placeholder="Search across all columns…">
         </div>
         {{end}}
-        <span id="filterLabel" style="display:none;font-size:.9rem;color:#e67e22;font-weight:600;">Filter is set</span>
+        <span id="filterLabel" style="display:none;font-size:.9rem;color:#e67e22;font-weight:600;"></span>
         <button id="filterBtn" style="padding:8px 16px;background:#6c757d;color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">Filter</button>
-        <a href="/form/{{.CollectionName}}" style="margin-left:auto;padding:8px 16px;background:#28a745;color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">+ Add new</a>
+        <button id="importBtn" style="margin-left:auto;padding:8px 16px;background:#6f42c1;color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
+            <img src="/assets/Monitor-Download--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="Import"> Import
+        </button>
+        <button id="exportBtn" style="padding:8px 16px;background:#17a2b8;color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
+            <img src="/assets/Upload-Brackets--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="Export"> Export
+        </button>
+        <a href="/form/{{.CollectionName}}" style="padding:8px 16px;background:#28a745;color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">+ Add new</a>
     </div>
 
     <div class="table-wrap">
@@ -77,29 +104,183 @@
     </div>
     {{end}}
 
+    <!-- Relation modal -->
+    <div class="modal-overlay" id="relModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="relModalTitle">Related records</h3>
+                <button class="modal-close" onclick="closeRelModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="relModalBody"></div>
+        </div>
+    </div>
+
+    <!-- Import modal -->
+    <div class="modal-overlay" id="importModal">
+        <div class="modal-content" style="max-width:400px;">
+            <div class="modal-header">
+                <h3>Import from Excel</h3>
+                <button class="modal-close" onclick="closeImportModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <form id="importForm" action="/import/{{.CollectionName}}" method="POST">
+                    <label style="display:block;margin-bottom:6px;font-size:.9rem;font-weight:600;">File name</label>
+                    <input type="text" name="excelFileName" value="{{.CollectionName}}" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;margin-bottom:12px;outline:none;box-sizing:border-box;">
+
+                    <label style="display:block;margin-bottom:6px;font-size:.9rem;font-weight:600;">Sheet name</label>
+                    <input type="text" name="sheetName" value="Sheet1" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;margin-bottom:12px;outline:none;box-sizing:border-box;">
+
+                    <label style="display:block;margin-bottom:6px;font-size:.9rem;font-weight:600;">Mode</label>
+                    <div style="margin-bottom:20px;">
+                        <label style="display:inline-flex;align-items:center;gap:4px;margin-right:16px;font-size:.9rem;cursor:pointer;">
+                            <input type="radio" name="mode" value="insert" checked> Insert
+                        </label>
+                        <label style="display:inline-flex;align-items:center;gap:4px;margin-right:16px;font-size:.9rem;cursor:pointer;">
+                            <input type="radio" name="mode" value="update"> Update
+                        </label>
+                        <label style="display:inline-flex;align-items:center;gap:4px;font-size:.9rem;cursor:pointer;">
+                            <input type="radio" name="mode" value="replace"> Replace
+                        </label>
+                    </div>
+
+                    <div style="display:flex;gap:8px;">
+                        <button type="submit" style="flex:1;padding:10px;background:#6f42c1;color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Import</button>
+                        <button type="button" onclick="closeImportModal()" style="flex:1;padding:10px;background:#6c757d;color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Cancel</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Export modal -->
+    <div class="modal-overlay" id="exportModal">
+        <div class="modal-content" style="max-width:400px;">
+            <div class="modal-header">
+                <h3>Export to Excel</h3>
+                <button class="modal-close" onclick="closeExportModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <label style="display:block;margin-bottom:6px;font-size:.9rem;font-weight:600;">File name</label>
+                <input type="text" id="exportFileName" value="{{.CollectionName}}" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;margin-bottom:12px;outline:none;box-sizing:border-box;">
+                <label style="display:block;margin-bottom:6px;font-size:.9rem;font-weight:600;">Sheet name</label>
+                <input type="text" id="exportSheetName" value="Sheet1" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;margin-bottom:20px;outline:none;box-sizing:border-box;">
+                <button id="exportSubmitBtn" style="width:100%;padding:10px;background:#17a2b8;color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Export</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filter modal -->
+    <div class="modal-overlay" id="filterModal">
+        <div class="modal-content" style="max-width:400px;">
+            <div class="modal-header">
+                <h3>Set filter values</h3>
+                <button class="modal-close" onclick="closeFilterModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="filterModalBody"></div>
+        </div>
+    </div>
+
     <script>
         const fields = {{.FieldsJSON | safeJS}};
+        const fieldTypes = {{.FieldTypesJSON | safeJS}};
         const headers = {{.HeadersJSON | safeJS}};
         const allRecords = {{.RecordsJSON | safeJS}};
 
         const perPage = 20;
         let currentPage = 1;
         let sortField = "";
-        let sortDir = ""; // "asc", "desc", ""
+        let sortDir = "";
         let searchTerm = "";
 
+        function esc(s) {
+            if (s == null) return "";
+            const d = document.createElement("div");
+            d.textContent = String(s);
+            return d.innerHTML;
+        }
+
+        function renderCell(val, ft) {
+            switch (ft) {
+                case "text": case "email": case "password":
+                    return esc(val);
+                case "number":
+                    if (val === null || val === undefined) return "";
+                    return '<span class="num-cell">' + Number(val).toLocaleString() + '</span>';
+                case "bool":
+                    if (val === true) return '<span class="bool-true cell-icon">&#10003;</span>';
+                    if (val === false) return '<span class="bool-false cell-icon">&#10007;</span>';
+                    return "";
+                case "url":
+                    if (!val) return "";
+                    var url = String(val);
+                    var label = url.split('/').filter(Boolean).pop() || url;
+                    return '<a href="' + esc(url) + '" target="_blank">' + esc(label) + '</a>';
+                case "editor":
+                    if (!val) return "";
+                    var txt = val.replace(/<[^>]*>/g, '');
+                    return txt.length > 20 ? esc(txt.substring(0, 20)) + '&hellip;' : esc(txt);
+                case "select":
+                    return esc(val || "");
+                case "file":
+                    if (val && val.has) {
+                        return '<a href="' + esc(val.url) + '" target="_blank" title="' + esc(val.filename) + '"><span class="cell-icon">&#128206;</span></a>';
+                    }
+                    return "";
+                case "relation":
+                    if (val && val.count > 0) {
+                        return '<button class="rel-btn" data-ids=\'' + JSON.stringify(val.ids) + '\' data-coll="' + esc(val.collectionName) + '" onclick="openRelModal(this)">' + val.count + '</button>';
+                    }
+                    return "";
+                case "date": case "autodate":
+                    return val || "";
+                case "json":
+                    if (val) {
+                        return '<span class="cell-icon" title="' + esc(val) + '">{&hellip;}</span>';
+                    }
+                    return "";
+                case "geo":
+                    if (val && val.lat != null && val.lng != null) {
+                        return '<span class="cell-icon" title="' + esc(val.lat) + ', ' + esc(val.lng) + '">&#128205;</span>';
+                    }
+                    return "";
+                default:
+                    return esc(val || "");
+            }
+        }
+
         function getFiltered() {
-            let data = allRecords;
+            var data = allRecords;
             if (searchTerm) {
-                const st = searchTerm.toLowerCase();
-                data = data.filter(r => fields.some(f => String(r[f] || "").toLowerCase().includes(st)));
+                var st = searchTerm.toLowerCase();
+                data = data.filter(function(r) { return fields.some(function(f, i) {
+                    var ft = fieldTypes[i];
+                    var raw = r[f];
+                    var displayText = "";
+                    if (raw == null) return false;
+                    if (ft === "number") displayText = String(raw);
+                    else if (ft === "bool") displayText = raw ? "true" : "false";
+                    else if (ft === "file" || ft === "relation" || ft === "geo") displayText = "";
+                    else displayText = String(raw);
+                    return displayText.toLowerCase().includes(st);
+                }); });
+            }
+            if (filterActive && parsedFilterDef && parsedFilterDef.conditions.length) {
+                data = data.filter(function(r) { return evaluateFilter(r, parsedFilterDef); });
             }
             if (sortField && sortDir) {
-                data = data.slice().sort((a, b) => {
-                    const va = (a[sortField] || "").toLowerCase();
-                    const vb = (b[sortField] || "").toLowerCase();
-                    if (va < vb) return sortDir === "asc" ? -1 : 1;
-                    if (va > vb) return sortDir === "asc" ? 1 : -1;
+                data = data.slice().sort(function(a, b) {
+                    var va = a[sortField];
+                    var vb = b[sortField];
+                    if (va == null && vb == null) return 0;
+                    if (va == null) return 1;
+                    if (vb == null) return -1;
+                    if (typeof va === "number" && typeof vb === "number") {
+                        return sortDir === "asc" ? va - vb : vb - va;
+                    }
+                    var sa = String(va).toLowerCase();
+                    var sb = String(vb).toLowerCase();
+                    if (sa < sb) return sortDir === "asc" ? -1 : 1;
+                    if (sa > sb) return sortDir === "asc" ? 1 : -1;
                     return 0;
                 });
             }
@@ -107,46 +288,41 @@
         }
 
         function render() {
-            const filtered = getFiltered();
-            const totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
+            var filtered = getFiltered();
+            var totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
             if (currentPage > totalPages) currentPage = totalPages;
             if (currentPage < 1) currentPage = 1;
 
-            const start = (currentPage - 1) * perPage;
-            const pageRecords = filtered.slice(start, start + perPage);
+            var start = (currentPage - 1) * perPage;
+            var pageRecords = filtered.slice(start, start + perPage);
 
-            const tbody = document.getElementById("tableBody");
+            var tbody = document.getElementById("tableBody");
             if (!pageRecords.length) {
-                tbody.innerHTML = `<tr><td class="empty" colspan="${fields.length+1}">No records found</td></tr>`;
+                tbody.innerHTML = '<tr><td class="empty" colspan="' + (fields.length + 1) + '">No records found</td></tr>';
             } else {
-                const collName = "{{.CollectionName}}";
-                tbody.innerHTML = pageRecords.map(r =>
-                    "<tr>" +
-                    fields.map(f => `<td>${r[f] || ""}</td>`).join("") +
-                    `<td style="white-space:nowrap">
-                        <a href="/form/${collName}/${r.id}?view=1" style="display:inline-block;padding:4px 8px;background:#17a2b8;border-radius:4px;margin-right:4px;line-height:0">
-                            <img src="/assets/Binocular--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="View">
-                        </a>
-                        <a href="/form/${collName}/${r.id}" style="display:inline-block;padding:4px 8px;background:#007bff;border-radius:4px;margin-right:4px;line-height:0">
-                            <img src="/assets/Arrange-List-Descending-1--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="Edit">
-                        </a>
-                        <button onclick="deleteRecord('${collName}','${r.id}')" style="display:inline-block;padding:4px 8px;background:#dc3545;border:none;border-radius:4px;cursor:pointer;line-height:0">
-                            <img src="/assets/Bin-1--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="Delete">
-                        </button>
-                    </td>` + "</tr>"
-                ).join("");
+                var collName = "{{.CollectionName}}";
+                tbody.innerHTML = pageRecords.map(function(r) {
+                    return "<tr>" +
+                        fields.map(function(f, i) { return "<td>" + renderCell(r[f], fieldTypes[i]) + "</td>"; }).join("") +
+                        '<td style="white-space:nowrap">' +
+                        '<a href="/form/' + collName + '/' + r.id + '?view=1" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid #6c757d;border-radius:4px;margin-right:4px;line-height:0">' +
+                        '<img src="/assets/Binocular--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="View"></a>' +
+                        '<a href="/form/' + collName + '/' + r.id + '" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid #007bff;border-radius:4px;margin-right:4px;line-height:0">' +
+                        '<img src="/assets/Arrange-List-Descending-1--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="Edit"></a>' +
+                        '<button onclick="deleteRecord(\'' + collName + '\',\'' + r.id + '\')" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid #dc3545;border-radius:4px;cursor:pointer;line-height:0">' +
+                        '<img src="/assets/Bin-1--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="Delete"></button>' +
+                        "</td></tr>";
+                }).join("");
             }
 
-            // pagination controls
-            const pag = document.getElementById("pagination");
+            var pag = document.getElementById("pagination");
             if (pag) {
                 document.getElementById("firstBtn").disabled = currentPage <= 1;
                 document.getElementById("prevBtn").disabled = currentPage <= 1;
                 document.getElementById("nextBtn").disabled = currentPage >= totalPages;
                 document.getElementById("lastBtn").disabled = currentPage >= totalPages;
                 document.getElementById("pageInput").value = currentPage;
-                document.getElementById("pageInfo").textContent =
-                    `Page ${currentPage} of ${totalPages} (${filtered.length} records)`;
+                document.getElementById("pageInfo").textContent = "Page " + currentPage + " of " + totalPages + " (" + filtered.length + " records)";
             }
         }
 
@@ -159,23 +335,235 @@
         });
         {{end}}
 
-        // filter toggle
         let filterActive = false;
-        document.getElementById("filterBtn").addEventListener("click", function () {
-            filterActive = !filterActive;
-            document.getElementById("filterLabel").style.display = filterActive ? "" : "none";
-            this.style.background = filterActive ? "#e67e22" : "#6c757d";
+        let filterValues = [];
+        let parsedFilterDef = null;
+
+        function parseFilterDef(def) {
+            if (!def || !def.trim()) return null;
+            var tokens = [];
+            var i = 0;
+            while (i < def.length) {
+                if (/\s/.test(def[i])) { i++; continue; }
+                if (def[i] === '(' || def[i] === ')') {
+                    tokens.push(def[i]); i++;
+                } else if (def[i] === '"' || def[i] === "'") {
+                    var q = def[i]; i++;
+                    var s = '';
+                    while (i < def.length && def[i] !== q) { s += def[i]; i++; }
+                    if (i < def.length) i++;
+                    tokens.push(s);
+                } else {
+                    var t = '';
+                    while (i < def.length && !/[\s()]/.test(def[i])) { t += def[i]; i++; }
+                    tokens.push(t);
+                }
+            }
+            var conditions = [];
+            var chains = [];
+            var j = 0;
+            while (j < tokens.length) {
+                if (tokens[j] === '(') { j++; continue; }
+                if (tokens[j] === ')') { j++; continue; }
+                if (tokens[j] === '&&' || tokens[j] === '||') { chains.push(tokens[j]); j++; continue; }
+                if (j + 2 < tokens.length) {
+                    var field = tokens[j];
+                    var op = tokens[j + 1];
+                    var val = tokens[j + 2];
+                    conditions.push({ field: field, op: op, value: val });
+                    j += 3;
+                } else { j++; }
+            }
+            return { conditions: conditions, chains: chains };
+        }
+
+        function getFieldType(fieldName) {
+            var idx = fields.indexOf(fieldName);
+            if (idx === -1) return null;
+            return fieldTypes[idx];
+        }
+
+        function getColumnTitle(fieldName) {
+            var idx = fields.indexOf(fieldName);
+            if (idx === -1 || idx >= headers.length) return fieldName;
+            return headers[idx];
+        }
+
+        function coerceValue(val, fieldType) {
+            if (fieldType === 'number') {
+                var n = parseFloat(val);
+                return isNaN(n) ? null : n;
+            }
+            if (fieldType === 'date' || fieldType === 'autodate') {
+                return val ? val.trim() : '';
+            }
+            return String(val);
+        }
+
+        function compareValues(recordVal, filterVal, op, fieldType) {
+            if (fieldType === 'number') {
+                var rv = (recordVal == null) ? null : parseFloat(recordVal);
+                var fv = (filterVal == null) ? null : parseFloat(filterVal);
+                if (rv === null && op === '!=') return true;
+                if (fv === null) return false;
+                if (rv === null) return op === '!=';
+                switch (op) {
+                    case '<':  return rv < fv;
+                    case '>':  return rv > fv;
+                    case '<=': return rv <= fv;
+                    case '=>': return rv >= fv;
+                    case '!=': return rv !== fv;
+                    case '=':  return rv === fv;
+                    default:   return false;
+                }
+            }
+            if (fieldType === 'date' || fieldType === 'autodate') {
+                var rs = recordVal ? String(recordVal).trim() : '';
+                var fs = filterVal ? String(filterVal).trim() : '';
+                switch (op) {
+                    case '<':  return rs < fs;
+                    case '>':  return rs > fs;
+                    case '<=': return rs <= fs;
+                    case '=>': return rs >= fs;
+                    case '!=': return rs !== fs;
+                    case '=':  return rs === fs;
+                    default:   return false;
+                }
+            }
+            var rs2 = recordVal != null ? String(recordVal).toLowerCase() : '';
+            var fs2 = filterVal != null ? String(filterVal).toLowerCase() : '';
+            switch (op) {
+                case '=':  return rs2 === fs2;
+                case '!=': return rs2 !== fs2;
+                case '~':  return rs2.indexOf(fs2) !== -1;
+                default:   return false;
+            }
+        }
+
+        function evaluateFilter(record, parsed) {
+            if (!parsed || !parsed.conditions.length) return true;
+            var results = [];
+            for (var c = 0; c < parsed.conditions.length; c++) {
+                var cond = parsed.conditions[c];
+                var ft = getFieldType(cond.field);
+                if (!ft) { results.push(false); continue; }
+                var recVal = record[cond.field];
+                var fVal = cond.value === '?' ? filterValues[c] : cond.value;
+                if (fVal === undefined || fVal === null) fVal = '';
+                fVal = coerceValue(fVal, ft);
+                results.push(compareValues(recVal, fVal, cond.op, ft));
+            }
+            var finalResult = results[0];
+            for (var k = 0; k < parsed.chains.length; k++) {
+                var nextResult = results[k + 1];
+                if (parsed.chains[k] === '&&') finalResult = finalResult && nextResult;
+                else finalResult = finalResult || nextResult;
+            }
+            return finalResult;
+        }
+
+        function applyFilterDef(values) {
+            filterValues = values || [];
+            filterActive = true;
+            var display = filterDefStr;
+            if (parsedFilterDef) {
+                var parts = [];
+                for (var i = 0; i < parsedFilterDef.conditions.length; i++) {
+                    var c = parsedFilterDef.conditions[i];
+                    var title = getColumnTitle(c.field);
+                    var val = c.value === '?' ? (filterValues[i] || '?') : c.value;
+                    parts.push('(' + title + ' ' + c.op + ' ' + val + ')');
+                    if (i < parsedFilterDef.chains.length) parts.push(' ' + parsedFilterDef.chains[i] + ' ');
+                }
+                display = parts.join('');
+            }
+            document.getElementById("filterLabel").textContent = "Filter is: " + display;
+            document.getElementById("filterLabel").style.display = "";
+            document.getElementById("filterBtn").style.background = "#e67e22";
+            currentPage = 1;
+            render();
+        }
+
+        function clearFilter() {
+            filterActive = false;
+            filterValues = [];
+            document.getElementById("filterLabel").style.display = "none";
+            document.getElementById("filterBtn").style.background = "#6c757d";
+            currentPage = 1;
+            render();
+        }
+
+        function openFilterModal() {
+            var modalBody = document.getElementById("filterModalBody");
+            var params = parsedFilterDef.conditions.filter(function(c) { return c.value === '?'; });
+            var html = '';
+            params.forEach(function(p, idx) {
+                html += '<div class="filter-field-group"><label>' + esc(getColumnTitle(p.field)) + ' ' + esc(p.op) + '</label>';
+                var ft = getFieldType(p.field);
+                if (ft === 'date' || ft === 'autodate') {
+                    html += '<input type="datetime-local" id="filterParam' + idx + '">';
+                } else if (ft === 'number') {
+                    html += '<input type="number" id="filterParam' + idx + '" step="any">';
+                } else {
+                    html += '<input type="text" id="filterParam' + idx + '">';
+                }
+                html += '</div>';
+            });
+            html += '<div style="display:flex;gap:8px;margin-top:16px;">';
+            html += '<button onclick="setFilterFromModal()" style="flex:1;padding:10px;background:#28a745;color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Set filter</button>';
+            html += '<button onclick="cancelFilterFromModal()" style="flex:1;padding:10px;background:#6c757d;color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Cancel filter</button>';
+            html += '</div>';
+            modalBody.innerHTML = html;
+            document.getElementById("filterModal").classList.add("open");
+        }
+
+        function closeFilterModal() {
+            document.getElementById("filterModal").classList.remove("open");
+        }
+
+        function setFilterFromModal() {
+            var params = parsedFilterDef.conditions.filter(function(c) { return c.value === '?'; });
+            var values = [];
+            for (var i = 0; i < params.length; i++) {
+                var el = document.getElementById("filterParam" + i);
+                values.push(el ? el.value : '');
+            }
+            closeFilterModal();
+            applyFilterDef(values);
+        }
+
+        function cancelFilterFromModal() {
+            closeFilterModal();
+            clearFilter();
+        }
+
+        document.getElementById("filterModal").addEventListener("click", function(e) {
+            if (e.target === this) cancelFilterFromModal();
         });
+
+        // filter definition from config
+        {{if .Config.Filter}}
+        var filterDefStr = "{{.Config.Filter | safeJS}}";
+        parsedFilterDef = parseFilterDef(filterDefStr);
+        document.getElementById("filterBtn").addEventListener("click", function () {
+            if (!parsedFilterDef || !parsedFilterDef.conditions.length) return;
+            var hasQuestion = parsedFilterDef.conditions.some(function(c) { return c.value === '?'; });
+            if (hasQuestion) {
+                openFilterModal();
+            } else {
+                if (filterActive) { clearFilter(); } else { applyFilterDef([]); }
+            }
+        });
+        {{end}}
 
         // sort
         {{if .Config.ColumnSorting}}
-        document.querySelectorAll("th.sortable").forEach(th => {
+        document.querySelectorAll("th.sortable").forEach(function(th) {
             th.addEventListener("click", function () {
-                const field = this.dataset.field;
-                const icon = this.querySelector(".sort-icon");
+                var field = this.dataset.field;
+                var icon = this.querySelector(".sort-icon");
                 if (sortField !== field) {
-                    // reset previous
-                    document.querySelectorAll("th.sortable .sort-icon").forEach(el => { el.textContent = "↕"; el.className = "sort-icon"; });
+                    document.querySelectorAll("th.sortable .sort-icon").forEach(function(el) { el.textContent = "\u2195"; el.className = "sort-icon"; });
                     sortField = field;
                     sortDir = "asc";
                 } else {
@@ -184,10 +572,10 @@
                     else sortDir = "asc";
                 }
                 if (sortDir) {
-                    icon.textContent = sortDir === "asc" ? "▲" : "▼";
+                    icon.textContent = sortDir === "asc" ? "\u25B2" : "\u25BC";
                     icon.className = "sort-icon active";
                 } else {
-                    icon.textContent = "↕";
+                    icon.textContent = "\u2195";
                     icon.className = "sort-icon";
                     sortField = "";
                 }
@@ -199,20 +587,20 @@
 
         // pagination
         {{if .Config.Pagination}}
-        document.getElementById("firstBtn").addEventListener("click", () => { currentPage = 1; render(); });
-        document.getElementById("prevBtn").addEventListener("click", () => { if (currentPage > 1) { currentPage--; render(); } });
-        document.getElementById("nextBtn").addEventListener("click", () => {
-            const total = Math.max(1, Math.ceil(getFiltered().length / perPage));
+        document.getElementById("firstBtn").addEventListener("click", function() { currentPage = 1; render(); });
+        document.getElementById("prevBtn").addEventListener("click", function() { if (currentPage > 1) { currentPage--; render(); } });
+        document.getElementById("nextBtn").addEventListener("click", function() {
+            var total = Math.max(1, Math.ceil(getFiltered().length / perPage));
             if (currentPage < total) { currentPage++; render(); }
         });
-        document.getElementById("lastBtn").addEventListener("click", () => {
+        document.getElementById("lastBtn").addEventListener("click", function() {
             currentPage = Math.max(1, Math.ceil(getFiltered().length / perPage));
             render();
         });
-        document.getElementById("pageInput").addEventListener("keydown", function (e) {
+        document.getElementById("pageInput").addEventListener("keydown", function(e) {
             if (e.key === "Enter") {
-                const v = parseInt(this.value, 10);
-                const total = Math.max(1, Math.ceil(getFiltered().length / perPage));
+                var v = parseInt(this.value, 10);
+                var total = Math.max(1, Math.ceil(getFiltered().length / perPage));
                 if (!isNaN(v) && v >= 1 && v <= total) {
                     currentPage = v;
                     render();
@@ -228,21 +616,127 @@
         // delete record
         async function deleteRecord(collName, id) {
             if (!confirm("Really delete selected record?")) return;
-            const res = await fetch(`/form/${collName}/${id}/delete`, { method: "POST" });
+            var res = await fetch("/form/" + collName + "/" + id + "/delete", { method: "POST" });
             if (!res.ok) { alert("Failed to delete record."); return; }
-            const idx = allRecords.findIndex(r => r.id === id);
+            var idx = allRecords.findIndex(function(r) { return r.id === id; });
             if (idx !== -1) allRecords.splice(idx, 1);
             render();
             alert("Record deleted.");
         }
 
+        // relation modal
+        var cachedRelData = {};
+
+        function openRelModal(btn) {
+            var coll = btn.dataset.coll;
+            var ids = JSON.parse(btn.dataset.ids);
+            var title = document.getElementById("relModalTitle");
+            title.textContent = "Related: " + coll + " (" + ids.length + ")";
+
+            var body = document.getElementById("relModalBody");
+            body.innerHTML = '<div style="text-align:center;padding:20px;color:#999;">Loading&hellip;</div>';
+            document.getElementById("relModal").classList.add("open");
+
+            if (cachedRelData[coll]) {
+                renderRelModal(coll, ids, cachedRelData[coll]);
+                return;
+            }
+
+            fetch("/api/tabulator-data/" + coll)
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    cachedRelData[coll] = data;
+                    renderRelModal(coll, ids, data);
+                })
+                .catch(function() {
+                    body.innerHTML = '<div style="text-align:center;padding:20px;color:#dc3545;">Failed to load data.</div>';
+                });
+        }
+
+        function renderRelModal(coll, ids, data) {
+            var idSet = {};
+            ids.forEach(function(id) { idSet[id] = true; });
+            var related = data.records.filter(function(r) { return idSet[r.id]; });
+            var body = document.getElementById("relModalBody");
+            if (!related.length) {
+                body.innerHTML = '<div style="text-align:center;padding:20px;color:#999;">No related records found.</div>';
+                return;
+            }
+
+            var relFields = data.fields.filter(function(f) { return f !== "id"; });
+            var html = '<table><thead><tr>';
+            relFields.forEach(function(f) { html += "<th>" + esc(f) + "</th>"; });
+            html += '<th style="width:50px">View</th></tr></thead><tbody>';
+            related.forEach(function(r) {
+                html += "<tr>";
+                relFields.forEach(function(f) { html += "<td>" + esc(r[f]) + "</td>"; });
+                html += '<td><a href="/tabulator/' + coll + '" target="_blank" style="padding:2px 8px;background:#17a2b8;border-radius:4px;color:#fff;text-decoration:none;font-size:.8rem;">Open</a></td>';
+                html += "</tr>";
+            });
+            html += "</tbody></table>";
+            body.innerHTML = html;
+        }
+
+        function closeRelModal() {
+            document.getElementById("relModal").classList.remove("open");
+        }
+
+        document.getElementById("relModal").addEventListener("click", function(e) {
+            if (e.target === this) closeRelModal();
+        });
+
+        // import modal
+        document.getElementById("importBtn").addEventListener("click", function() {
+            document.getElementById("importModal").classList.add("open");
+        });
+
+        function closeImportModal() {
+            document.getElementById("importModal").classList.remove("open");
+        }
+
+        document.getElementById("importModal").addEventListener("click", function(e) {
+            if (e.target === this) closeImportModal();
+        });
+
+        document.getElementById("importForm").addEventListener("submit", function(e) {
+            var fileName = this.querySelector("[name=excelFileName]").value.trim();
+            var sheetName = this.querySelector("[name=sheetName]").value.trim();
+            if (!fileName || !sheetName) {
+                e.preventDefault();
+                alert("Please fill in both file name and sheet name.");
+                return;
+            }
+        });
+
+        // export modal
+        document.getElementById("exportBtn").addEventListener("click", function() {
+            document.getElementById("exportModal").classList.add("open");
+        });
+
+        function closeExportModal() {
+            document.getElementById("exportModal").classList.remove("open");
+        }
+
+        document.getElementById("exportModal").addEventListener("click", function(e) {
+            if (e.target === this) closeExportModal();
+        });
+
+        document.getElementById("exportSubmitBtn").addEventListener("click", function() {
+            var fileName = document.getElementById("exportFileName").value.trim();
+            var sheetName = document.getElementById("exportSheetName").value.trim();
+            if (!fileName || !sheetName) {
+                alert("Please fill in both file name and sheet name.");
+                return;
+            }
+            window.location.href = "/export/{{.CollectionName}}?excelFileName=" + encodeURIComponent(fileName) + "&sheetName=" + encodeURIComponent(sheetName);
+        });
+
         // flash message
-        const params = new URLSearchParams(window.location.search);
-        const msg = params.get("msg");
+        var params = new URLSearchParams(window.location.search);
+        var msg = params.get("msg");
         if (msg) {
             alert(msg);
-            // clean URL
-            const url = new URL(window.location);
+            var url = new URL(window.location);
             url.searchParams.delete("msg");
             window.history.replaceState({}, "", url);
         }

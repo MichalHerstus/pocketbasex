@@ -27,14 +27,23 @@ No CI, no tests.
 | `GET /login` | login form | Renders login.html |
 | `POST /login` | authenticate | Email/password auth via `users` collection, sets `pb_auth` cookie |
 | `GET /app` | dashboard | Menu of links grouped by `_app` collection records |
+| `GET /pbx-setup` | setup | Shows `_app`, `_tabulator`, `_form` tables |
 | `GET /tabulator/{collectionName}` | table view | All records as client-side JSON; 20/page, sort, search |
-| `GET /form/{collectionName}` | form view | Editable form, layout configured via `_form` collection |
+| `GET /form/{collectionName}` | form view | New record form, layout configured via `_form` collection |
+| `GET /form/{collectionName}/{id}` | form view | Edit existing record |
+| `POST /form/{collectionName}` | form submit | Create record |
+| `POST /form/{collectionName}/{id}` | form submit | Update record |
+| `POST /form/{collectionName}/{id}/delete` | delete record | Delete record, returns JSON |
+| `GET /api/tabulator-data/{collectionName}` | JSON API | Raw JSON for relation modal |
+| `GET /export/{collectionName}` | export | Export to Excel via `pbexcel` |
+| `POST /import/{collectionName}` | import | Import from Excel via `pbexcel` |
+| `GET /assets/{path...}` | static | Serves `views/assets/` files |
 
 **Auth**: Cookie-based `pb_auth` (JWT via PocketBase). Login uses `FindAuthRecordByEmail("users", ...)` — name field is the email.
 
 ## Template functions
 
-Defined in `main.go` (used in `views/*.html`): `add`, `sub`, `seq`, `safeJS`.
+Defined in `main.go` (used in `views/*.html`): `add`, `sub`, `seq`, `safeJS`, `safeHTML`.
 
 ## `_tabulator` collection
 
@@ -48,6 +57,7 @@ A record with `collName={collectionName}` configures `/tabulator/{collectionName
 - `columnSorting` — if true, clickable sort (↕→▲→▼)
 - `searchBox` — if true, search input filters across all columns
 - `pagination` — if true, « ‹ [input] › » controls
+- `filter` — filter expression for records
 
 ## `_form` collection
 
@@ -57,7 +67,7 @@ A record with `collName={collectionName}` configures `/form/{collectionName}`:
 - `formDescr` — description paragraph below heading
 - `displaySystemCol` — if true, shows `id`, `created`, `updated` as read-only
 - `columnOrder` — comma-delimited 1-based field indices (applied when no `formLayout`)
-- `formLayout` — semicolon-delimited rows, comma-delimited column indices (0-based, e.g. `"0,1;2,3"`)
+- `formLayout` — slash-delimited rows, parentheses for column groups: `"row:(1,2) (3,4) / row:(5,6)"` (0-based internally, 1-based in config)
 - `formLabels` — comma-delimited `field=Label` pairs (e.g. `"name=Jméno,email=E-mail"`)
 
 ## `_app` collection
@@ -65,6 +75,7 @@ A record with `collName={collectionName}` configures `/form/{collectionName}`:
 Configures the `/app` dashboard. Fields:
 
 - `group` / `group_label` — links are grouped under a heading
+- `group_icon` — uploaded icon file for the group
 - `collection` / `collectionLabel` — link target (`/tabulator/{collection}`) and display text
 
 ## Collections (from `_app`, `_tabulator`, `_form` records in DB)
@@ -75,10 +86,14 @@ Configures the `/app` dashboard. Fields:
 
 Add/modify collection fields via **JS SDK** in `pb_migrations/`. See `.opencode/skills/pocketbase-api-add-field/SKILL.md`.
 
+`pb_data/types.d.ts` is auto-generated — do not edit manually.
+
 ## Conventions
 
 - `pb_migrations/` — JS migrations, auto-applied on `serve`
 - `pb_hooks/` — does not exist; do not reference it
 - `pb_public/` — does not exist; do not reference it
-- `assets/` — CSS (`w3.css`) and static assets
+- `views/assets/` — icons (PNG) and `theme.css`; served via embedded FS
+- `pbexcel/` — Excel import/export logic (`pb-excel.go`)
+- `views/pages.go` — Go structs for template data (`TabulatorPageData`, `FormPageData`, `AppPageData`, etc.)
 - No `README.md` exists

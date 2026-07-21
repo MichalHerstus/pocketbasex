@@ -62,6 +62,10 @@ func main() {
 			se.Router.GET("/app", func(e *core.RequestEvent) error {
 				return handleApp(e)
 			})
+			// pbx setup: tables for _app, _tabulator, _form
+			se.Router.GET("/pbx-setup", func(e *core.RequestEvent) error {
+				return handlePbxSetup(e)
+			})
 			// collection tableform view
 			se.Router.GET("/tabulator/{collectionName}", func(e *core.RequestEvent) error {
 				return handleTabulator(e)
@@ -86,9 +90,17 @@ func main() {
 			se.Router.POST("/form/{collectionName}/{id}/delete", func(e *core.RequestEvent) error {
 				return handleDeleteRecord(e)
 			})
+			// JSON data for relation modal
+			se.Router.GET("/api/tabulator-data/{collectionName}", func(e *core.RequestEvent) error {
+				return handleTabulatorDataJSON(e)
+			})
 			// export collection to Excel
 			se.Router.GET("/export/{collectionName}", func(e *core.RequestEvent) error {
 				return handleExport(e)
+			})
+			// import collection from Excel
+			se.Router.POST("/import/{collectionName}", func(e *core.RequestEvent) error {
+				return handleImport(e)
 			})
 			// serve static assets
 			se.Router.GET("/assets/{path...}", func(e *core.RequestEvent) error {
@@ -238,17 +250,15 @@ func handleLoginPost(e *core.RequestEvent) error {
 
 // --- Tabulator ---
 
-func handleTabulator(e *core.RequestEvent) error {
-	collName := e.Request.PathValue("collectionName")
-
+func buildTabulatorData(e *core.RequestEvent, collName string) (*views.TabulatorPageData, error) {
 	collection, err := e.App.FindCachedCollectionByNameOrId(collName)
 	if err != nil {
-		return e.NotFoundError("Collection not found", err)
+		return nil, err
 	}
 
 	records, err := e.App.FindAllRecords(collName)
 	if err != nil {
-		return e.InternalServerError("Failed to fetch records", err)
+		return nil, err
 	}
 
 	var configRec *core.Record
@@ -267,6 +277,7 @@ func handleTabulator(e *core.RequestEvent) error {
 		cfg.SearchBox = configRec.GetBool("searchBox")
 		cfg.Pagination = configRec.GetBool("pagination")
 		cfg.DisplaySystemCol = configRec.GetBool("displaySystemCol")
+		cfg.Filter = configRec.GetString("filter")
 	}
 
 	fields := collection.Fields
@@ -291,7 +302,6 @@ func handleTabulator(e *core.RequestEvent) error {
 	}
 
 	var visibleFields []core.Field
-	var visibleHeaders []string
 	for _, i := range fieldIndices {
 		f := fields[i]
 		fName := f.GetName()
@@ -299,14 +309,26 @@ func handleTabulator(e *core.RequestEvent) error {
 			continue
 		}
 		visibleFields = append(visibleFields, f)
-		visibleHeaders = append(visibleHeaders, fName)
 	}
 
 	fieldNames := make([]string, len(visibleFields))
+	fieldTypes := make([]string, len(visibleFields))
 	headers := make([]string, len(visibleFields))
+
+	relCollNames := map[string]string{}
 	for i, f := range visibleFields {
-		fieldNames[i] = f.GetName()
-		headers[i] = f.GetName()
+		fn := f.GetName()
+		fieldNames[i] = fn
+		fieldTypes[i] = f.Type()
+		headers[i] = fn
+		if f.Type() == "relation" {
+			if rf, ok := f.(*core.RelationField); ok {
+				relColl, rerr := e.App.FindCachedCollectionByNameOrId(rf.CollectionId)
+				if rerr == nil {
+					relCollNames[fn] = relColl.Name
+				}
+			}
+		}
 	}
 
 	if cfg.ColumnTitles != "" {
@@ -316,6 +338,155 @@ func handleTabulator(e *core.RequestEvent) error {
 				headers[i] = strings.TrimSpace(p)
 			}
 		}
+	}
+
+	allData := make([]map[string]any, 0, len(records))
+	for _, rec := range records {
+		rm := map[string]any{}
+		for i, fn := range fieldNames {
+			f := visibleFields[i]
+			switch f.Type() {
+			case "bool":
+				rm[fn] = rec.GetBool(fn)
+			case "number":
+				if rec.Get(fn) != nil {
+					rm[fn] = rec.GetFloat(fn)
+				} else {
+					rm[fn] = nil
+				}
+			case "date", "autodate":
+				if t := rec.GetDateTime(fn).Time(); !t.IsZero() {
+					rm[fn] = t.Format("2006-01-02 15:04")
+				} else {
+					rm[fn] = nil
+				}
+			case "relation":
+				raw := rec.GetString(fn)
+				var ids []string
+				if raw != "" {
+					ids = strings.Split(raw, ",")
+				}
+				rm[fn] = map[string]any{
+					"ids":            ids,
+					"count":          len(ids),
+					"collectionName": relCollNames[fn],
+				}
+			case "file":
+				filename := rec.GetString(fn)
+				if filename != "" {
+					rm[fn] = map[string]any{
+						"filename": filename,
+						"url":      "/api/files/" + collection.Id + "/" + rec.GetString("id") + "/" + filename,
+						"has":      true,
+					}
+				} else {
+					rm[fn] = map[string]any{"has": false}
+				}
+			case "geo":
+				geoVal := rec.GetString(fn)
+				if geoVal != "" {
+					parts := strings.Split(geoVal, ",")
+					if len(parts) == 2 {
+						rm[fn] = map[string]any{"lat": strings.TrimSpace(parts[0]), "lng": strings.TrimSpace(parts[1])}
+					} else {
+						rm[fn] = nil
+					}
+				} else {
+					rm[fn] = nil
+				}
+			case "json":
+				jv := rec.GetString(fn)
+				if jv != "" && jv != "{}" && jv != "[]" && jv != "null" {
+					rm[fn] = jv
+				} else {
+					rm[fn] = nil
+				}
+			default:
+				rm[fn] = rec.GetString(fn)
+			}
+		}
+		rm["id"] = rec.GetString("id")
+		allData = append(allData, rm)
+	}
+
+	fieldsJSON, _ := json.Marshal(fieldNames)
+	fieldTypesJSON, _ := json.Marshal(fieldTypes)
+	headersJSON, _ := json.Marshal(headers)
+	recordsJSON, _ := json.Marshal(allData)
+
+	totalPages := int(math.Ceil(float64(len(records)) / 20))
+	if totalPages < 1 {
+		totalPages = 1
+	}
+
+	return &views.TabulatorPageData{
+		CollectionName: collName,
+		TotalRecords:   len(records),
+		Fields:         fieldNames,
+		FieldTypes:     fieldTypes,
+		ColumnHeaders:  headers,
+		FieldsJSON:     string(fieldsJSON),
+		FieldTypesJSON: string(fieldTypesJSON),
+		HeadersJSON:    string(headersJSON),
+		RecordsJSON:    string(recordsJSON),
+		PerPage:        20,
+		Page:           1,
+		TotalPages:     totalPages,
+		Config:         cfg,
+	}, nil
+}
+
+func handleTabulator(e *core.RequestEvent) error {
+	collName := e.Request.PathValue("collectionName")
+
+	data, err := buildTabulatorData(e, collName)
+	if err != nil {
+		return e.NotFoundError("Collection not found", err)
+	}
+
+	e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	return templates.ExecuteTemplate(e.Response, "tabulator.html", data)
+}
+
+// --- PBX Setup ---
+
+func handlePbxSetup(e *core.RequestEvent) error {
+	collections := []string{"_app", "_tabulator", "_form"}
+	sections := make([]views.TabulatorPageData, 0, len(collections))
+
+	for _, name := range collections {
+		data, err := buildTabulatorData(e, name)
+		if err != nil {
+			continue
+		}
+		sections = append(sections, *data)
+	}
+
+	pageData := views.PbxSetupPageData{Sections: sections}
+
+	e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	return templates.ExecuteTemplate(e.Response, "pbxsetup.html", pageData)
+}
+
+// --- Tabulator JSON data (for relation modal) ---
+
+func handleTabulatorDataJSON(e *core.RequestEvent) error {
+	collName := e.Request.PathValue("collectionName")
+
+	collection, err := e.App.FindCachedCollectionByNameOrId(collName)
+	if err != nil {
+		return e.NotFoundError("Collection not found", err)
+	}
+
+	records, err := e.App.FindAllRecords(collName)
+	if err != nil {
+		return e.InternalServerError("Failed to fetch records", err)
+	}
+
+	fields := collection.Fields
+	fieldNames := make([]string, 0, len(fields))
+	for _, f := range fields {
+		fieldNames = append(fieldNames, f.GetName())
 	}
 
 	allData := make([]map[string]string, 0, len(records))
@@ -328,31 +499,10 @@ func handleTabulator(e *core.RequestEvent) error {
 		allData = append(allData, rm)
 	}
 
-	fieldsJSON, _ := json.Marshal(fieldNames)
-	headersJSON, _ := json.Marshal(headers)
-	recordsJSON, _ := json.Marshal(allData)
-
-	totalPages := int(math.Ceil(float64(len(records)) / 20))
-	if totalPages < 1 {
-		totalPages = 1
-	}
-
-	data := views.TabulatorPageData{
-		CollectionName: collName,
-		TotalRecords:   len(records),
-		Fields:         fieldNames,
-		ColumnHeaders:  headers,
-		FieldsJSON:     string(fieldsJSON),
-		HeadersJSON:    string(headersJSON),
-		RecordsJSON:    string(recordsJSON),
-		PerPage:        20,
-		Page:           1,
-		TotalPages:     totalPages,
-		Config:         cfg,
-	}
-
-	e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
-	return templates.ExecuteTemplate(e.Response, "tabulator.html", data)
+	return e.JSON(http.StatusOK, map[string]any{
+		"fields": fieldNames,
+		"records": allData,
+	})
 }
 
 // --- Form ---
@@ -436,24 +586,49 @@ func handleForm(e *core.RequestEvent) error {
 		}
 	}
 
-	layout := [][]int{}
+	layout := [][][]int{}
 	if formLayout != "" {
-		rows := strings.Split(formLayout, ";")
-		for _, row := range rows {
-			row = strings.TrimSpace(row)
-			if row == "" {
+		rowStrs := strings.Split(formLayout, "/")
+		for _, rowStr := range rowStrs {
+			rowStr = strings.TrimSpace(rowStr)
+			if rowStr == "" {
 				continue
 			}
-			cols := strings.Split(row, ",")
-			colIndices := make([]int, 0, len(cols))
-			for _, c := range cols {
-				c = strings.TrimSpace(c)
-				if idx, err := strconv.Atoi(c); err == nil && idx >= 0 && idx < len(fields) {
-					colIndices = append(colIndices, idx)
+			rowStr = strings.TrimPrefix(rowStr, "row:")
+			rowStr = strings.TrimSpace(rowStr)
+			if rowStr == "" {
+				continue
+			}
+			cols := make([][]int, 0)
+			for i := 0; i < len(rowStr); i++ {
+				if rowStr[i] == '(' {
+					j := i + 1
+					depth := 1
+					for j < len(rowStr) && depth > 0 {
+						if rowStr[j] == '(' {
+							depth++
+						} else if rowStr[j] == ')' {
+							depth--
+						}
+						j++
+					}
+					group := rowStr[i+1 : j-1]
+					i = j - 1
+					parts := strings.Split(group, ",")
+					colFields := make([]int, 0, len(parts))
+					for _, p := range parts {
+						p = strings.TrimSpace(p)
+						if idx, err := strconv.Atoi(p); err == nil {
+							colFields = append(colFields, idx-1)
+						}
+					}
+					if len(colFields) > 0 {
+						cols = append(cols, colFields)
+					}
 				}
 			}
-			if len(colIndices) > 0 {
-				layout = append(layout, colIndices)
+			if len(cols) > 0 {
+				layout = append(layout, cols)
 			}
 		}
 	}
@@ -464,36 +639,33 @@ func handleForm(e *core.RequestEvent) error {
 	if displaySystemCol {
 		for _, f := range fields {
 			fName := f.GetName()
-			if systemCols[fName] {
-				val := ""
-				if record != nil {
-					if fName == "id" {
-						val = record.GetString("id")
-					} else {
-						val = record.GetString(fName)
-					}
-				}
-				sysFields = append(sysFields, views.FormFieldItem{
-					Name:  fName,
-					Label: fName,
-					Type:  "text",
-					Value: val,
-				})
+			if !systemCols[fName] {
+				continue
 			}
+			item := views.FormFieldItem{
+				Name: fName,
+				Label: fName,
+				Type: "text",
+				Data: map[string]any{},
+			}
+			if record != nil {
+				if fName == "id" {
+					item.Value = record.GetString("id")
+				} else if fName == "created" || fName == "updated" {
+					item.Type = "autodate"
+					if t := record.GetDateTime(fName).Time(); !t.IsZero() {
+						item.Value = t.Format("2006-01-02 15:04")
+					}
+				} else {
+					item.Value = record.GetString(fName)
+				}
+			}
+			sysFields = append(sysFields, item)
 		}
 	}
 
 	fieldType := func(f core.Field) string {
-		switch f.Type() {
-		case "bool":
-			return "bool"
-		case "number":
-			return "number"
-		case "editor":
-			return "editor"
-		default:
-			return "text"
-		}
+		return f.Type()
 	}
 
 	fieldLabel := func(fName string) string {
@@ -503,34 +675,123 @@ func handleForm(e *core.RequestEvent) error {
 		return fName
 	}
 
+	buildFieldItem := func(f core.Field, fName string) views.FormFieldItem {
+		item := views.FormFieldItem{
+			Name:  fName,
+			Label: fieldLabel(fName),
+			Type:  fieldType(f),
+			Data:  map[string]any{},
+		}
+		if record == nil {
+			return item
+		}
+		switch f.Type() {
+		case "bool":
+			item.Value = strconv.FormatBool(record.GetBool(fName))
+		case "number":
+			if record.Get(fName) != nil {
+				item.Value = strconv.FormatFloat(record.GetFloat(fName), 'f', -1, 64)
+			}
+		case "date", "autodate":
+			if t := record.GetDateTime(fName).Time(); !t.IsZero() {
+				item.Value = t.Format("2006-01-02 15:04")
+			}
+		case "email":
+			item.Value = record.GetString(fName)
+		case "url":
+			raw := record.GetString(fName)
+			item.Value = raw
+			if raw != "" {
+				if u, err := url.Parse(raw); err == nil {
+					parts := strings.Split(strings.TrimRight(u.Path, "/"), "/")
+					display := raw
+					for i := len(parts) - 1; i >= 0; i-- {
+						if parts[i] != "" {
+							display = parts[i]
+							break
+						}
+					}
+					item.Data["display"] = display
+				}
+			}
+		case "editor":
+			item.Value = record.GetString(fName)
+		case "file":
+			filename := record.GetString(fName)
+			if filename != "" {
+				item.Value = filename
+				item.Data["url"] = "/api/files/" + collection.Id + "/" + record.GetString("id") + "/" + filename
+				item.Data["has"] = true
+			} else {
+				item.Data["has"] = false
+			}
+		case "select":
+			item.Value = record.GetString(fName)
+			if sf, ok := f.(*core.SelectField); ok {
+				item.Data["options"] = sf.Values
+			}
+		case "relation":
+			raw := record.GetString(fName)
+			var ids []string
+			if raw != "" {
+				ids = strings.Split(raw, ",")
+			}
+			item.Data["ids"] = ids
+			item.Data["count"] = len(ids)
+			item.Value = strconv.Itoa(len(ids))
+			if rf, ok := f.(*core.RelationField); ok {
+				if relColl, rerr := e.App.FindCachedCollectionByNameOrId(rf.CollectionId); rerr == nil {
+					item.Data["collectionName"] = relColl.Name
+				}
+			}
+		case "json":
+			jv := record.GetString(fName)
+			if jv != "" && jv != "{}" && jv != "[]" && jv != "null" {
+				var parsed any
+				if err := json.Unmarshal([]byte(jv), &parsed); err == nil {
+					pretty, _ := json.MarshalIndent(parsed, "", "  ")
+					item.Value = string(pretty)
+				} else {
+					item.Value = jv
+				}
+			}
+		case "geo":
+			geoVal := record.GetString(fName)
+			if geoVal != "" {
+				parts := strings.Split(geoVal, ",")
+				if len(parts) == 2 {
+					item.Data["lat"] = strings.TrimSpace(parts[0])
+					item.Data["lng"] = strings.TrimSpace(parts[1])
+				}
+				item.Value = geoVal
+			}
+		default:
+			item.Value = record.GetString(fName)
+		}
+		return item
+	}
+
 	rows := make([]views.FormRow, 0)
 
 	if len(layout) > 0 {
 		for _, rowCols := range layout {
 			columns := make([]views.FormColumn, 0, len(rowCols))
-			for _, ci := range rowCols {
-				if ci < 0 || ci >= len(fields) {
-					continue
+			for _, colFieldIndices := range rowCols {
+				fieldItems := make([]views.FormFieldItem, 0, len(colFieldIndices))
+				for _, ci := range colFieldIndices {
+					if ci < 0 || ci >= len(fields) {
+						continue
+					}
+					f := fields[ci]
+					fName := f.GetName()
+					if systemCols[fName] && !displaySystemCol {
+						continue
+					}
+					fieldItems = append(fieldItems, buildFieldItem(f, fName))
 				}
-				f := fields[ci]
-				fName := f.GetName()
-				if systemCols[fName] && !displaySystemCol {
-					continue
+				if len(fieldItems) > 0 {
+					columns = append(columns, views.FormColumn{Fields: fieldItems})
 				}
-				val := ""
-				if record != nil {
-					val = record.GetString(fName)
-				}
-				columns = append(columns, views.FormColumn{
-					Fields: []views.FormFieldItem{
-						{
-							Name:  fName,
-							Label: fieldLabel(fName),
-							Type:  fieldType(f),
-							Value: val,
-						},
-					},
-				})
 			}
 			if len(columns) > 0 {
 				rows = append(rows, views.FormRow{Columns: columns})
@@ -564,16 +825,7 @@ func handleForm(e *core.RequestEvent) error {
 			if systemCols[fName] && !displaySystemCol {
 				continue
 			}
-			val := ""
-			if record != nil {
-				val = record.GetString(fName)
-			}
-			rowFields = append(rowFields, views.FormFieldItem{
-				Name:  fName,
-				Label: fieldLabel(fName),
-				Type:  fieldType(s.f),
-				Value: val,
-			})
+			rowFields = append(rowFields, buildFieldItem(s.f, fName))
 		}
 		if len(rowFields) > 0 {
 			rows = append(rows, views.FormRow{
@@ -664,6 +916,26 @@ func handleExport(e *core.RequestEvent) error {
 	}
 
 	msg := url.QueryEscape("Export successful")
+	return e.Redirect(http.StatusSeeOther, "/tabulator/"+collName+"?msg="+msg)
+}
+
+// --- Import ---
+
+func handleImport(e *core.RequestEvent) error {
+	collName := e.Request.PathValue("collectionName")
+	excelFileName := e.Request.FormValue("excelFileName")
+	sheetName := e.Request.FormValue("sheetName")
+	mode := e.Request.FormValue("mode")
+
+	if mode == "" {
+		mode = "insert"
+	}
+
+	if err := pbexcel.ImportFromExcel(e.App, excelFileName, sheetName, collName, mode); err != nil {
+		return e.InternalServerError("Import failed", err)
+	}
+
+	msg := url.QueryEscape("Import successful")
 	return e.Redirect(http.StatusSeeOther, "/tabulator/"+collName+"?msg="+msg)
 }
 

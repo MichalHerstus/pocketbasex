@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PBX Setup</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: sans-serif; margin: 0; padding: 20px; background: var(--body-bg, #f5f5f5); color: #333; }
+        h1 { margin: 0 0 4px 0; font-size: 1.8rem; }
+        .subtitle { margin: 0 0 12px 0; font-size: .95rem; color: #666; }
+        .section { margin-bottom: 32px; }
+        .section h2 { margin: 0 0 4px 0; font-size: 1.3rem; }
+        .section .subtitle { margin: 0 0 12px 0; font-size: .95rem; color: #666; }
+        .table-wrap { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+        th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #eee; white-space: nowrap; }
+        th { background: #fafafa; font-weight: 600; font-size: .85rem; text-transform: uppercase; letter-spacing: .03em; color: #555; user-select: none; position: relative; }
+        th.sortable { cursor: pointer; padding-right: 28px; }
+        th.sortable:hover { background: #f0f0f0; }
+        .sort-icon { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); font-size: .8rem; color: #999; }
+        .sort-icon.active { color: #007bff; }
+        tr:hover td { background: #f0f7ff; }
+        .empty { text-align: center; padding: 40px; color: #999; }
+        .pagination { display: flex; align-items: center; gap: 6px; margin-top: 16px; flex-wrap: wrap; }
+        .pagination button { padding: 6px 12px; border: 1px solid #ddd; border-radius: 6px; background: #fff; color: #333; cursor: pointer; font-size: .9rem; }
+        .pagination button:hover:not(:disabled) { background: #e9ecef; }
+        .pagination button:disabled { color: #aaa; border-color: #eee; cursor: default; }
+        .pagination button.active { background: #007bff; color: #fff; border-color: #007bff; }
+        .pagination .page-input { width: 50px; padding: 6px; text-align: center; border: 1px solid #ddd; border-radius: 6px; font-size: .9rem; outline: none; }
+        .pagination .page-input:focus { border-color: #007bff; }
+        .pagination .info { margin-left: auto; color: #666; font-size: .85rem; }
+        .bool-true { color: #28a745; font-weight: bold; }
+        .bool-false { color: #dc3545; }
+        .cell-icon { font-size: 1.1rem; cursor: default; }
+        .rel-btn { padding: 2px 10px; border: 1px solid #007bff; border-radius: 10px; background: #e7f1ff; color: #007bff; cursor: pointer; font-size: .85rem; font-weight: 600; }
+        .rel-btn:hover { background: #007bff; color: #fff; }
+        .num-cell { text-align: right; }
+        .toolbar { display:flex; align-items:center; gap:12px; margin-bottom:12px; flex-wrap:wrap; }
+        .modal-overlay { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,.4); align-items: center; justify-content: center; }
+        .modal-overlay.open { display: flex; }
+        .modal-content { background: #fff; border-radius: 10px; max-width: 80vw; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 4px 24px rgba(0,0,0,.2); }
+        .modal-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-bottom: 1px solid #eee; }
+        .modal-header h3 { margin: 0; font-size: 1.1rem; }
+        .modal-close { background: none; border: none; font-size: 1.4rem; cursor: pointer; color: #999; padding: 0 4px; }
+        .modal-close:hover { color: #333; }
+        .modal-body { padding: 16px 20px; overflow-y: auto; }
+        .modal-body table { font-size: .85rem; }
+        .modal-body th { font-size: .75rem; }
+        .modal-body td, .modal-body th { padding: 6px 10px; }
+    </style>
+</head>
+<body>
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">
+        <h1 style="margin:0">PBX Setup</h1>
+        <a href="/_/" style="padding:8px 16px;background:#6c757d;color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">Administration</a>
+    </div>
+    <p class="subtitle">Configuration collections overview</p>
+
+    {{range $sid, $s := .Sections}}
+    <div class="section">
+        <h2>{{if $s.Config.PageTitle}}{{$s.Config.PageTitle}}{{else}}{{$s.CollectionName}}{{end}}</h2>
+        <div class="subtitle">{{$s.TotalRecords}} record{{if ne $s.TotalRecords 1}}s{{end}}</div>
+        {{if $s.Config.CollectionDescr}}<div class="descr">{{$s.Config.CollectionDescr}}</div>{{end}}
+
+        <div class="toolbar">
+            <a href="/form/{{$s.CollectionName}}" style="padding:8px 16px;background:#28a745;color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">+ Add new</a>
+        </div>
+
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        {{range $i, $h := $s.ColumnHeaders}}
+                        <th class="{{if $s.Config.ColumnSorting}}sortable{{end}}" data-field="{{index $s.Fields $i}}" data-sid="{{$sid}}">
+                            {{$h}}
+                            {{if $s.Config.ColumnSorting}}<span class="sort-icon">↕</span>{{end}}
+                        </th>
+                        {{end}}
+                        <th style="width:130px">Actions</th>
+                    </tr>
+                </thead>
+                <tbody id="tableBody{{$sid}}"></tbody>
+            </table>
+        </div>
+
+        {{if $s.Config.Pagination}}
+        <div class="pagination" id="pagination{{$sid}}">
+            <button id="firstBtn{{$sid}}">«</button>
+            <button id="prevBtn{{$sid}}">‹</button>
+            <input type="text" class="page-input" id="pageInput{{$sid}}" inputmode="numeric">
+            <button id="nextBtn{{$sid}}">›</button>
+            <button id="lastBtn{{$sid}}">»</button>
+            <span class="info" id="pageInfo{{$sid}}"></span>
+        </div>
+        {{end}}
+    </div>
+    {{end}}
+
+    <!-- Relation modal -->
+    <div class="modal-overlay" id="relModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="relModalTitle">Related records</h3>
+                <button class="modal-close" onclick="closeRelModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="relModalBody"></div>
+        </div>
+    </div>
+
+    <script>
+        const sections = [
+            {{range $sid, $s := .Sections}}
+            {
+                fields: {{$s.FieldsJSON | safeJS}},
+                fieldTypes: {{$s.FieldTypesJSON | safeJS}},
+                headers: {{$s.HeadersJSON | safeJS}},
+                allRecords: {{$s.RecordsJSON | safeJS}},
+                collName: "{{$s.CollectionName}}",
+                columnSorting: {{$s.Config.ColumnSorting}},
+                pagination: {{$s.Config.Pagination}},
+            },
+            {{end}}
+        ];
+
+        const perPage = 20;
+        const state = sections.map(function() {
+            return { currentPage: 1, sortField: "", sortDir: "" };
+        });
+
+        function esc(s) {
+            if (s == null) return "";
+            const d = document.createElement("div");
+            d.textContent = String(s);
+            return d.innerHTML;
+        }
+
+        function renderCell(val, ft) {
+            switch (ft) {
+                case "text": case "email": case "password":
+                    return esc(val);
+                case "number":
+                    if (val === null || val === undefined) return "";
+                    return '<span class="num-cell">' + Number(val).toLocaleString() + '</span>';
+                case "bool":
+                    if (val === true) return '<span class="bool-true cell-icon">&#10003;</span>';
+                    if (val === false) return '<span class="bool-false cell-icon">&#10007;</span>';
+                    return "";
+                case "url":
+                    if (!val) return "";
+                    var url = String(val);
+                    var label = url.split('/').filter(Boolean).pop() || url;
+                    return '<a href="' + esc(url) + '" target="_blank">' + esc(label) + '</a>';
+                case "editor":
+                    if (!val) return "";
+                    var txt = val.replace(/<[^>]*>/g, '');
+                    return txt.length > 20 ? esc(txt.substring(0, 20)) + '&hellip;' : esc(txt);
+                case "select":
+                    return esc(val || "");
+                case "file":
+                    if (val && val.has) {
+                        return '<a href="' + esc(val.url) + '" target="_blank" title="' + esc(val.filename) + '"><span class="cell-icon">&#128206;</span></a>';
+                    }
+                    return "";
+                case "relation":
+                    if (val && val.count > 0) {
+                        return '<button class="rel-btn" data-ids=\'' + JSON.stringify(val.ids) + '\' data-coll="' + esc(val.collectionName) + '" onclick="openRelModal(this)">' + val.count + '</button>';
+                    }
+                    return "";
+                case "date": case "autodate":
+                    return val || "";
+                case "json":
+                    if (val) {
+                        return '<span class="cell-icon" title="' + esc(val) + '">{&hellip;}</span>';
+                    }
+                    return "";
+                case "geo":
+                    if (val && val.lat != null && val.lng != null) {
+                        return '<span class="cell-icon" title="' + esc(val.lat) + ', ' + esc(val.lng) + '">&#128205;</span>';
+                    }
+                    return "";
+                default:
+                    return esc(val || "");
+            }
+        }
+
+        function getFiltered(sid) {
+            var sec = sections[sid];
+            var st = state[sid];
+            var data = sec.allRecords;
+            if (st.sortField && st.sortDir) {
+                data = data.slice().sort(function(a, b) {
+                    var va = a[st.sortField];
+                    var vb = b[st.sortField];
+                    if (va == null && vb == null) return 0;
+                    if (va == null) return 1;
+                    if (vb == null) return -1;
+                    if (typeof va === "number" && typeof vb === "number") {
+                        return st.sortDir === "asc" ? va - vb : vb - va;
+                    }
+                    var sa = String(va).toLowerCase();
+                    var sb = String(vb).toLowerCase();
+                    if (sa < sb) return st.sortDir === "asc" ? -1 : 1;
+                    if (sa > sb) return st.sortDir === "asc" ? 1 : -1;
+                    return 0;
+                });
+            }
+            return data;
+        }
+
+        function render(sid) {
+            var sec = sections[sid];
+            var st = state[sid];
+            var filtered = getFiltered(sid);
+            var totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
+            if (st.currentPage > totalPages) st.currentPage = totalPages;
+            if (st.currentPage < 1) st.currentPage = 1;
+
+            var start = (st.currentPage - 1) * perPage;
+            var pageRecords = filtered.slice(start, start + perPage);
+
+            var tbody = document.getElementById("tableBody" + sid);
+            if (!pageRecords.length) {
+                tbody.innerHTML = '<tr><td class="empty" colspan="' + (sec.fields.length + 1) + '">No records found</td></tr>';
+            } else {
+                var collName = sec.collName;
+                tbody.innerHTML = pageRecords.map(function(r) {
+                    return "<tr>" +
+                        sec.fields.map(function(f, i) { return "<td>" + renderCell(r[f], sec.fieldTypes[i]) + "</td>"; }).join("") +
+                        '<td style="white-space:nowrap">' +
+                        '<a href="/form/' + collName + '/' + r.id + '?view=1" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid #6c757d;border-radius:4px;margin-right:4px;line-height:0">' +
+                        '<img src="/assets/Binocular--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="View"></a>' +
+                        '<a href="/form/' + collName + '/' + r.id + '" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid #007bff;border-radius:4px;margin-right:4px;line-height:0">' +
+                        '<img src="/assets/Arrange-List-Descending-1--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="Edit"></a>' +
+                        '<button onclick="deleteRecord(' + sid + ',\'' + collName + '\',\'' + r.id + '\')" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid #dc3545;border-radius:4px;cursor:pointer;line-height:0">' +
+                        '<img src="/assets/Bin-1--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="Delete"></button>' +
+                        "</td></tr>";
+                }).join("");
+            }
+
+            if (sec.pagination) {
+                document.getElementById("firstBtn" + sid).disabled = st.currentPage <= 1;
+                document.getElementById("prevBtn" + sid).disabled = st.currentPage <= 1;
+                document.getElementById("nextBtn" + sid).disabled = st.currentPage >= totalPages;
+                document.getElementById("lastBtn" + sid).disabled = st.currentPage >= totalPages;
+                document.getElementById("pageInput" + sid).value = st.currentPage;
+                document.getElementById("pageInfo" + sid).textContent = "Page " + st.currentPage + " of " + totalPages + " (" + filtered.length + " records)";
+            }
+        }
+
+        // sort
+        sections.forEach(function(sec, sid) {
+            if (sec.columnSorting) {
+                document.querySelectorAll("th.sortable[data-sid='" + sid + "']").forEach(function(th) {
+                    th.addEventListener("click", function() {
+                        var field = this.dataset.field;
+                        var icon = this.querySelector(".sort-icon");
+                        var st = state[sid];
+                        if (st.sortField !== field) {
+                            document.querySelectorAll("th.sortable[data-sid='" + sid + "'] .sort-icon").forEach(function(el) { el.textContent = "\u2195"; el.className = "sort-icon"; });
+                            st.sortField = field;
+                            st.sortDir = "asc";
+                        } else {
+                            if (st.sortDir === "asc") st.sortDir = "desc";
+                            else if (st.sortDir === "desc") st.sortDir = "";
+                            else st.sortDir = "asc";
+                        }
+                        if (st.sortDir) {
+                            icon.textContent = st.sortDir === "asc" ? "\u25B2" : "\u25BC";
+                            icon.className = "sort-icon active";
+                        } else {
+                            icon.textContent = "\u2195";
+                            icon.className = "sort-icon";
+                            st.sortField = "";
+                        }
+                        st.currentPage = 1;
+                        render(sid);
+                    });
+                });
+            }
+
+            // pagination
+            if (sec.pagination) {
+                document.getElementById("firstBtn" + sid).addEventListener("click", function() { state[sid].currentPage = 1; render(sid); });
+                document.getElementById("prevBtn" + sid).addEventListener("click", function() { if (state[sid].currentPage > 1) { state[sid].currentPage--; render(sid); } });
+                document.getElementById("nextBtn" + sid).addEventListener("click", function() {
+                    var total = Math.max(1, Math.ceil(getFiltered(sid).length / perPage));
+                    if (state[sid].currentPage < total) { state[sid].currentPage++; render(sid); }
+                });
+                document.getElementById("lastBtn" + sid).addEventListener("click", function() {
+                    state[sid].currentPage = Math.max(1, Math.ceil(getFiltered(sid).length / perPage));
+                    render(sid);
+                });
+                document.getElementById("pageInput" + sid).addEventListener("keydown", function(e) {
+                    if (e.key === "Enter") {
+                        var v = parseInt(this.value, 10);
+                        var total = Math.max(1, Math.ceil(getFiltered(sid).length / perPage));
+                        if (!isNaN(v) && v >= 1 && v <= total) {
+                            state[sid].currentPage = v;
+                            render(sid);
+                        } else {
+                            this.value = state[sid].currentPage;
+                        }
+                    }
+                });
+            }
+
+            render(sid);
+        });
+
+        // delete record
+        async function deleteRecord(sid, collName, id) {
+            if (!confirm("Really delete selected record?")) return;
+            var res = await fetch("/form/" + collName + "/" + id + "/delete", { method: "POST" });
+            if (!res.ok) { alert("Failed to delete record."); return; }
+            var idx = sections[sid].allRecords.findIndex(function(r) { return r.id === id; });
+            if (idx !== -1) sections[sid].allRecords.splice(idx, 1);
+            render(sid);
+            alert("Record deleted.");
+        }
+
+        // relation modal
+        var cachedRelData = {};
+
+        function openRelModal(btn) {
+            var coll = btn.dataset.coll;
+            var ids = JSON.parse(btn.dataset.ids);
+            var title = document.getElementById("relModalTitle");
+            title.textContent = "Related: " + coll + " (" + ids.length + ")";
+
+            var body = document.getElementById("relModalBody");
+            body.innerHTML = '<div style="text-align:center;padding:20px;color:#999;">Loading&hellip;</div>';
+            document.getElementById("relModal").classList.add("open");
+
+            if (cachedRelData[coll]) {
+                renderRelModal(coll, ids, cachedRelData[coll]);
+                return;
+            }
+
+            fetch("/api/tabulator-data/" + coll)
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    cachedRelData[coll] = data;
+                    renderRelModal(coll, ids, data);
+                })
+                .catch(function() {
+                    body.innerHTML = '<div style="text-align:center;padding:20px;color:#dc3545;">Failed to load data.</div>';
+                });
+        }
+
+        function renderRelModal(coll, ids, data) {
+            var idSet = {};
+            ids.forEach(function(id) { idSet[id] = true; });
+            var related = data.records.filter(function(r) { return idSet[r.id]; });
+            var body = document.getElementById("relModalBody");
+            if (!related.length) {
+                body.innerHTML = '<div style="text-align:center;padding:20px;color:#999;">No related records found.</div>';
+                return;
+            }
+
+            var relFields = data.fields.filter(function(f) { return f !== "id"; });
+            var html = '<table><thead><tr>';
+            relFields.forEach(function(f) { html += "<th>" + esc(f) + "</th>"; });
+            html += '<th style="width:50px">View</th></tr></thead><tbody>';
+            related.forEach(function(r) {
+                html += "<tr>";
+                relFields.forEach(function(f) { html += "<td>" + esc(r[f]) + "</td>"; });
+                html += '<td><a href="/tabulator/' + coll + '" target="_blank" style="padding:2px 8px;background:#17a2b8;border-radius:4px;color:#fff;text-decoration:none;font-size:.8rem;">Open</a></td>';
+                html += "</tr>";
+            });
+            html += "</tbody></table>";
+            body.innerHTML = html;
+        }
+
+        function closeRelModal() {
+            document.getElementById("relModal").classList.remove("open");
+        }
+
+        document.getElementById("relModal").addEventListener("click", function(e) {
+            if (e.target === this) closeRelModal();
+        });
+    </script>
+</body>
+</html>
