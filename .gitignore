@@ -5,6 +5,8 @@
 # PocketBase data
 pb_data/*.db
 pb_data/*.db-journal
+pb_data/*.db-shm
+pb_data/*.db-wal
 
 # OS files
 .DS_Store

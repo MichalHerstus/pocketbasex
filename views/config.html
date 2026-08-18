@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{if .IsNew}}New{{else}}Edit{{end}} {{.TypeLabel}} config - PBX</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: sans-serif; margin: 0; padding: 20px; background: var(--body-bg, #f5f5f5); color: #333; }
+        h1 { margin: 0 0 4px 0; font-size: 1.8rem; }
+        .subtitle { margin: 0 0 12px 0; font-size: .95rem; color: #666; }
+        form { background: #fff; border-radius: 8px; padding: 20px; max-width: 720px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+        label { display: block; font-weight: 600; font-size: .85rem; margin: 14px 0 4px; }
+        input[type=text], select, textarea { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 6px; font-size: .9rem; outline: none; font-family: monospace; }
+        input[type=text]:focus, select:focus, textarea:focus { border-color: #007bff; }
+        textarea { min-height: 260px; resize: vertical; }
+        .hint { font-size: .8rem; color: #888; margin: 4px 0 0; }
+        .toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
+        .btn { padding: 8px 16px; border-radius: 6px; text-decoration: none; font-size: .9rem; display: inline-block; border: none; cursor: pointer; }
+        .btn-green { background: #28a745; color: #fff; }
+        .btn-gray { background: #6c757d; color: #fff; }
+        .actions { margin-top: 20px; display: flex; gap: 12px; }
+    </style>
+</head>
+<body>
+    <div class="toolbar">
+        <h1 style="margin:0">{{if .IsNew}}New{{else}}Edit{{end}} {{.TypeLabel}} config</h1>
+        <button type="button" onclick="goBack('/pbx-config')" class="btn btn-gray" style="font-size:.9rem;cursor:pointer;margin-left:auto;">Close</button>
+        <a href="/pbx-config" class="btn btn-gray" style="font-size:.9rem;">Back to Config</a>
+    </div>
+    <p class="subtitle">Configuration name is used in URLs: /tabular/&#123;name&#125; or /form/&#123;name&#125;</p>
+
+    <form method="POST" action="/pbx-config/save">
+        <input type="hidden" name="type" value="{{.Type}}">
+
+        <label for="name">Name</label>
+        <input type="text" id="name" name="name" value="{{.Name}}" placeholder="e.g. produkty" {{if not .IsNew}}readonly{{end}}>
+        <p class="hint">Unique identifier used in the URL. Letters, digits, dashes and underscores.</p>
+
+        <label for="collName">Collection</label>
+        <select id="collName" name="collName">
+            <option value="">-- choose collection --</option>
+            {{range .Collections}}
+            <option value="{{.}}" {{if eq . $.CollName}}selected{{end}}>{{.}}</option>
+            {{end}}
+        </select>
+
+        <label for="config">Config JSON</label>
+        <textarea id="config" name="config" placeholder='{{if eq .Type "list"}}{"title":"...","description":"...","columns":[{"field":"name","title":"Name"}]}{{else}}{"title":"...","description":"...","layout":[[0,1],[2]],"labels":{"name":"Label"}}{{end}}'>{{.ConfigJSON}}</textarea>
+        <p class="hint">
+            {{if eq .Type "list"}}
+            Keys: title, description, displaySystemCol, searchBox, pagination, filter, columns (field, title, sortable, searchable).
+            {{else}}
+            Keys: title, description, displaySystemCol, layout (rows of column groups, 0-based field indices), labels (field=Label), collections (name, joinField).
+            {{end}}
+        </p>
+
+        <div class="actions">
+            <button type="submit" class="btn btn-green">Save</button>
+        </div>
+    </form>
+
+    <script>
+        function goBack(fallback) {
+            if (window.history.length > 1) {
+                window.history.back();
+            } else {
+                window.location.href = fallback;
+            }
+        }
+    </script>
+</body>
+</html>

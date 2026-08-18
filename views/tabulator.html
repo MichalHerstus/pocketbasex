@@ -55,7 +55,10 @@
     </style>
 </head>
 <body>
-    <h1>{{if .Config.PageTitle}}{{.Config.PageTitle}}{{else}}{{.CollectionName}}{{end}}</h1>
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">
+        <h1 style="margin:0">{{if .Config.PageTitle}}{{.Config.PageTitle}}{{else}}{{.CollectionName}}{{end}}</h1>
+        <button type="button" onclick="goBack('/app')" style="padding:8px 16px;background:#6c757d;color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;margin-left:auto;">Close</button>
+    </div>
     <div class="subtitle">{{.TotalRecords}} record{{if ne .TotalRecords 1}}s{{end}}</div>
     {{if .Config.CollectionDescr}}<div class="descr">{{.Config.CollectionDescr}}</div>{{end}}
 
@@ -73,7 +76,7 @@
         <button id="exportBtn" style="padding:8px 16px;background:#17a2b8;color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
             <img src="/assets/Upload-Brackets--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="Export"> Export
         </button>
-        <a href="/form/{{.CollectionName}}" style="padding:8px 16px;background:#28a745;color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">+ Add new</a>
+        <a href="/form/{{.ConfigName}}" style="padding:8px 16px;background:#28a745;color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">+ Add new</a>
     </div>
 
     <div class="table-wrap">
@@ -300,16 +303,16 @@
             if (!pageRecords.length) {
                 tbody.innerHTML = '<tr><td class="empty" colspan="' + (fields.length + 1) + '">No records found</td></tr>';
             } else {
-                var collName = "{{.CollectionName}}";
+                var configName = "{{.ConfigName}}";
                 tbody.innerHTML = pageRecords.map(function(r) {
                     return "<tr>" +
                         fields.map(function(f, i) { return "<td>" + renderCell(r[f], fieldTypes[i]) + "</td>"; }).join("") +
                         '<td style="white-space:nowrap">' +
-                        '<a href="/form/' + collName + '/' + r.id + '?view=1" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid #6c757d;border-radius:4px;margin-right:4px;line-height:0">' +
+                        '<a href="/form/' + configName + '/' + r.id + '?view=1" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid #6c757d;border-radius:4px;margin-right:4px;line-height:0">' +
                         '<img src="/assets/Binocular--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="View"></a>' +
-                        '<a href="/form/' + collName + '/' + r.id + '" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid #007bff;border-radius:4px;margin-right:4px;line-height:0">' +
+                        '<a href="/form/' + configName + '/' + r.id + '" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid #007bff;border-radius:4px;margin-right:4px;line-height:0">' +
                         '<img src="/assets/Arrange-List-Descending-1--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="Edit"></a>' +
-                        '<button onclick="deleteRecord(\'' + collName + '\',\'' + r.id + '\')" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid #dc3545;border-radius:4px;cursor:pointer;line-height:0">' +
+                        '<button onclick="deleteRecord(\'' + configName + '\',\'' + r.id + '\')" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid #dc3545;border-radius:4px;cursor:pointer;line-height:0">' +
                         '<img src="/assets/Bin-1--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="Delete"></button>' +
                         "</td></tr>";
                 }).join("");
@@ -739,6 +742,14 @@
             var url = new URL(window.location);
             url.searchParams.delete("msg");
             window.history.replaceState({}, "", url);
+        }
+
+        function goBack(fallback) {
+            if (window.history.length > 1) {
+                window.history.back();
+            } else {
+                window.location.href = fallback;
+            }
         }
     </script>
 </body>

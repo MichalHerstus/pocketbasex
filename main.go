@@ -3,16 +3,21 @@ package main
 import (
 	"embed"
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"log"
 	"math"
+	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/plugins/jsvm"
 	"github.com/pocketbase/pocketbase/tools/hook"
 
 	"pbx/pbexcel"
@@ -46,6 +51,13 @@ func init() {
 func main() {
 	app := pocketbase.New()
 
+	// load jsvm so pb_migrations/*.js migrations are auto-applied on serve
+	jsvm.MustRegister(app, jsvm.Config{
+		MigrationsDir: "pb_migrations",
+		HooksDir:      "pb_hooks",
+		HooksWatch:    false,
+	})
+
 	// all endpoints
 	app.OnServe().Bind(&hook.Handler[*core.ServeEvent]{
 		Func: func(se *core.ServeEvent) error {
@@ -58,6 +70,17 @@ func main() {
 			se.Router.POST("/login", func(e *core.RequestEvent) error {
 				return handleLoginPost(e)
 			})
+			// logout: clear the auth cookie and redirect to the login page
+			se.Router.GET("/logout", func(e *core.RequestEvent) error {
+				e.SetCookie(&http.Cookie{
+					Name:     "pb_auth",
+					Value:    "",
+					Path:     "/",
+					HttpOnly: true,
+					MaxAge:   -1,
+				})
+				return e.Redirect(http.StatusSeeOther, "/login")
+			})
 			// main app page: list of collections, export/import, etc.
 			se.Router.GET("/app", func(e *core.RequestEvent) error {
 				return handleApp(e)
@@ -66,28 +89,56 @@ func main() {
 			se.Router.GET("/pbx-setup", func(e *core.RequestEvent) error {
 				return handlePbxSetup(e)
 			})
-			// collection tableform view
-			se.Router.GET("/tabulator/{collectionName}", func(e *core.RequestEvent) error {
+			// pbx config editor (super admin)
+			se.Router.GET("/pbx-config", func(e *core.RequestEvent) error {
+				return handlePbxConfig(e)
+			})
+			se.Router.GET("/pbx-config/list/new", func(e *core.RequestEvent) error {
+				e.Request.SetPathValue("configType", "list")
+				e.Request.SetPathValue("name", "new")
+				return handlePbxConfigEditor(e)
+			})
+			se.Router.GET("/pbx-config/list/{name}", func(e *core.RequestEvent) error {
+				e.Request.SetPathValue("configType", "list")
+				return handlePbxConfigEditor(e)
+			})
+			se.Router.GET("/pbx-config/form/new", func(e *core.RequestEvent) error {
+				e.Request.SetPathValue("configType", "form")
+				e.Request.SetPathValue("name", "new")
+				return handlePbxConfigEditor(e)
+			})
+			se.Router.GET("/pbx-config/form/{name}", func(e *core.RequestEvent) error {
+				e.Request.SetPathValue("configType", "form")
+				return handlePbxConfigEditor(e)
+			})
+			se.Router.POST("/pbx-config/save", func(e *core.RequestEvent) error {
+				return handlePbxConfigSave(e)
+			})
+			se.Router.POST("/pbx-config/delete", func(e *core.RequestEvent) error {
+				return handlePbxConfigDelete(e)
+			})
+			// collection tableform view by configuration name
+			se.Router.GET("/tabular/{configName}", func(e *core.RequestEvent) error {
 				return handleTabulator(e)
 			})
-			// collection form view (new or edit)
-			se.Router.GET("/form/{collectionName}", func(e *core.RequestEvent) error {
+			// collection form view (new or edit) by configuration name
+			se.Router.GET("/form/{configName}", func(e *core.RequestEvent) error {
 				return handleForm(e)
 			})
 
-			se.Router.GET("/form/{collectionName}/{id}", func(e *core.RequestEvent) error {
+			se.Router.GET("/form/{configName}/{id}", func(e *core.RequestEvent) error {
 				return handleForm(e)
 			})
 
-			se.Router.POST("/form/{collectionName}", func(e *core.RequestEvent) error {
+			se.Router.POST("/form/{configName}", func(e *core.RequestEvent) error {
 				return handleFormPost(e)
 			})
 
-			se.Router.POST("/form/{collectionName}/{id}", func(e *core.RequestEvent) error {
+			se.Router.POST("/form/{configName}/{id}", func(e *core.RequestEvent) error {
 				return handleFormPost(e)
 			})
 			// delete record
-			se.Router.POST("/form/{collectionName}/{id}/delete", func(e *core.RequestEvent) error {
+			se.Router.POST("/form/{configName}/{id}/delete", func(e *core.RequestEvent) error {
 				return handleDeleteRecord(e)
 			})
 			// JSON data for relation modal
@@ -123,7 +174,9 @@ func main() {
 				return nil
 			})
 
-			return se.Next()
+			err := se.Next()
+			printPbxEndpoints(se)
+			return err
 		},
 	})
 
@@ -132,16 +185,54 @@ func main() {
 	}
 }
 
+// printPbxEndpoints prints the PBX endpoints to stdout once the server is up,
+// right after the standard PocketBase startup banner.
+func printPbxEndpoints(se *core.ServeEvent) {
+	host := se.Server.Addr
+	if host == "" || strings.HasSuffix(host, ":http") || strings.HasSuffix(host, ":https") {
+		host = "127.0.0.1"
+	}
+	baseURL := "http://" + host
+
+	go func() {
+		// wait until the server starts accepting connections so the PBX
+		// endpoints appear after the standard startup banner
+		for {
+			conn, err := net.DialTimeout("tcp", host, 200*time.Millisecond)
+			if err == nil {
+				conn.Close()
+				break
+			}
+			time.Sleep(200 * time.Millisecond)
+		}
+
+		cyan := func(s string) string {
+			return "\x1b[36m" + s + "\x1b[0m"
+		}
+
+		println("┌─ PBX app:      " + cyan(baseURL+"/app"))
+		println("├─ PBX list:     " + cyan(baseURL+"/tabular/{configName}"))
+		println("├─ PBX form:     " + cyan(baseURL+"/form/{configName}"))
+		println("├─ PBX setup:    " + cyan(baseURL+"/pbx-setup"))
+		println("└─ PBX config:   " + cyan(baseURL+"/pbx-config"))
+	}()
+}
+
 // --- App ---
 
 func handleApp(e *core.RequestEvent) error {
 	var userName string
+	signedIn := false
 
 	cookie, cookieErr := e.Request.Cookie("pb_auth")
 	if cookieErr == nil {
 		record, findErr := e.App.FindAuthRecordByToken(cookie.Value, core.TokenTypeAuth)
 		if findErr == nil && record != nil {
+			signedIn = true
 			userName = record.GetString("name")
+			if userName == "" {
+				userName = record.GetString("email")
+			}
 		}
 	}
 
@@ -161,6 +252,7 @@ func handleApp(e *core.RequestEvent) error {
 		groupLabel string
 		groupIcon  string
 		collection string
+		configName string
 		label      string
 	}
 
@@ -175,6 +267,7 @@ func handleApp(e *core.RequestEvent) error {
 			groupLabel: rec.GetString("group_label"),
 			groupIcon:  iconURL,
 			collection: rec.GetString("collection"),
+			configName: rec.GetString("configName"),
 			label:      rec.GetString("collectionLabel"),
 		})
 	}
@@ -188,9 +281,19 @@ func handleApp(e *core.RequestEvent) error {
 			groups[ent.group] = g
 			groupOrder = append(groupOrder, ent.group)
 		}
+		linkURL := ent.configName
+		if linkURL == "" {
+			if def := defaultListConfig(e, ent.collection); def != nil {
+				linkURL = def.GetString("_name")
+			}
+		}
+		if linkURL == "" {
+			linkURL = ent.collection
+		}
 		g.Links = append(g.Links, views.AppLink{
 			Collection: ent.collection,
 			Label:      ent.label,
+			URL:        "/tabular/" + linkURL,
 		})
 	}
 
@@ -203,7 +306,7 @@ func handleApp(e *core.RequestEvent) error {
 		Name:   userName,
 		Groups: grouped,
 	}
-	if userName == "" {
+	if !signedIn {
 		data.Error = "Please sign in"
 	}
 
@@ -225,32 +328,139 @@ func handleLoginPost(e *core.RequestEvent) error {
 	}
 
 	record, err := e.App.FindAuthRecordByEmail("users", name)
-	if err != nil || !record.ValidatePassword(password) {
-		e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
-		return templates.ExecuteTemplate(e.Response, "login.html", map[string]string{
-			"Error": "Invalid name or password",
-		})
+	if err == nil {
+		if record.ValidatePassword(password) {
+			token, tokenErr := record.NewAuthToken()
+			if tokenErr != nil {
+				return e.InternalServerError("Failed to create auth token", tokenErr)
+			}
+			e.SetCookie(&http.Cookie{
+				Name:     "pb_auth",
+				Value:    token,
+				Path:     "/",
+				HttpOnly: true,
+				Secure:   false,
+			})
+			return e.Redirect(http.StatusSeeOther, "/app")
+		}
 	}
 
-	token, tokenErr := record.NewAuthToken()
-	if tokenErr != nil {
-		return e.InternalServerError("Failed to create auth token", tokenErr)
+	record, err = e.App.FindAuthRecordByEmail("_superusers", name)
+	if err == nil {
+		if record.ValidatePassword(password) {
+			token, tokenErr := record.NewAuthToken()
+			if tokenErr != nil {
+				return e.InternalServerError("Failed to create auth token", tokenErr)
+			}
+			e.SetCookie(&http.Cookie{
+				Name:     "pb_auth",
+				Value:    token,
+				Path:     "/",
+				HttpOnly: true,
+				Secure:   false,
+			})
+			return e.Redirect(http.StatusSeeOther, "/pbx-setup")
+		}
 	}
 
-	e.SetCookie(&http.Cookie{
-		Name:     "pb_auth",
-		Value:    token,
-		Path:     "/",
-		HttpOnly: true,
-		Secure:   false,
+	e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	return templates.ExecuteTemplate(e.Response, "login.html", map[string]string{
+		"Error": "Invalid name or password",
 	})
+}
 
-	return e.Redirect(http.StatusSeeOther, "/app")
+// --- Config resolution ---
+
+// findConfigByAttr returns the first record of a setup collection matching an attribute value.
+func findConfigByAttr(e *core.RequestEvent, setupColl, attr, value string) *core.Record {
+	if value == "" {
+		return nil
+	}
+	recs, err := e.App.FindRecordsByFilter(setupColl, attr+" = {:v}", "", 1, 0, nil, map[string]any{"v": value})
+	if err != nil || len(recs) == 0 {
+		return nil
+	}
+	return recs[0]
+}
+
+// resolveListConfig resolves a list configuration by its _name and returns the target
+// collection name plus the configuration record.
+func resolveListConfig(e *core.RequestEvent, configName string) (string, *core.Record, error) {
+	rec := findConfigByAttr(e, "_tabulator", "_name", configName)
+	if rec == nil {
+		return "", nil, fmt.Errorf("list configuration %q not found", configName)
+	}
+	return rec.GetString("collName"), rec, nil
+}
+
+// resolveFormConfig resolves a form configuration by its _name.
+func resolveFormConfig(e *core.RequestEvent, configName string) (string, *core.Record, error) {
+	rec := findConfigByAttr(e, "_form", "_name", configName)
+	if rec == nil {
+		return "", nil, fmt.Errorf("form configuration %q not found", configName)
+	}
+	return rec.GetString("collName"), rec, nil
+}
+
+// defaultListConfig returns the default (first) list configuration record for a collection.
+func defaultListConfig(e *core.RequestEvent, collName string) *core.Record {
+	recs, err := e.App.FindRecordsByFilter("_tabulator", "collName = {:c}", "", 1, 0, nil, map[string]any{"c": collName})
+	if err != nil || len(recs) == 0 {
+		return nil
+	}
+	return recs[0]
+}
+
+func parseListConfig(rec *core.Record) views.ListConfig {
+	var lc views.ListConfig
+	if rec == nil {
+		return lc
+	}
+	if raw := configRaw(rec, "config"); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &lc)
+	}
+	return lc
+}
+
+func parseMssqlConfig(rec *core.Record) views.MssqlConfig {
+	var mc views.MssqlConfig
+	if rec == nil {
+		return mc
+	}
+	if raw := rec.GetString("_mssql"); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &mc)
+	}
+	return mc
+}
+
+func parseFormConfigJSON(rec *core.Record) views.FormConfigJSON {
+	var fc views.FormConfigJSON
+	if rec == nil {
+		return fc
+	}
+	if raw := configRaw(rec, "config"); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &fc)
+	}
+	return fc
+}
+
+// configRaw returns the normalized raw JSON stored in a record field, or "" when the
+// field holds an empty/absent value ("", "null", "\"\"" are all treated as empty).
+func configRaw(rec *core.Record, field string) string {
+	if rec == nil {
+		return ""
+	}
+	raw := strings.TrimSpace(rec.GetString(field))
+	switch raw {
+	case "", "null", `""`, "{}", "[]":
+		return ""
+	}
+	return raw
 }
 
 // --- Tabulator ---
 
-func buildTabulatorData(e *core.RequestEvent, collName string) (*views.TabulatorPageData, error) {
+func buildTabulatorData(e *core.RequestEvent, collName string, configRec *core.Record) (*views.TabulatorPageData, error) {
 	collection, err := e.App.FindCachedCollectionByNameOrId(collName)
 	if err != nil {
 		return nil, err
@@ -261,11 +471,7 @@ func buildTabulatorData(e *core.RequestEvent, collName string) (*views.Tabulator
 		return nil, err
 	}
 
-	var configRec *core.Record
-	configRecs, _ := e.App.FindRecordsByFilter("_tabulator", "collName = {:name}", "", 1, 0, nil, map[string]any{"name": collName})
-	if len(configRecs) > 0 {
-		configRec = configRecs[0]
-	}
+	lc := parseListConfig(configRec)
 
 	cfg := views.TabulatorConfig{}
 	if configRec != nil {
@@ -279,18 +485,50 @@ func buildTabulatorData(e *core.RequestEvent, collName string) (*views.Tabulator
 		cfg.DisplaySystemCol = configRec.GetBool("displaySystemCol")
 		cfg.Filter = configRec.GetString("filter")
 	}
+	// JSON config overrides scalar values where set
+	if lc.Title != "" {
+		cfg.PageTitle = lc.Title
+	}
+	if lc.Description != "" {
+		cfg.CollectionDescr = lc.Description
+	}
+	if lc.SearchBox {
+		cfg.SearchBox = true
+	}
+	if lc.Pagination {
+		cfg.Pagination = true
+	}
+	if lc.DisplaySystemCol {
+		cfg.DisplaySystemCol = true
+	}
+	if lc.Filter != "" {
+		cfg.Filter = lc.Filter
+	}
 
 	fields := collection.Fields
 
 	systemCols := map[string]bool{"id": true, "created": true, "updated": true}
 
 	var fieldIndices []int
-	if cfg.ColumnOrder != "" {
+	var headers []string
+	if len(lc.Columns) > 0 {
+		nameToIdx := map[string]int{}
+		for i, f := range fields {
+			nameToIdx[f.GetName()] = i
+		}
+		for _, col := range lc.Columns {
+			if idx, ok := nameToIdx[col.Field]; ok {
+				fieldIndices = append(fieldIndices, idx)
+				headers = append(headers, col.Title)
+			}
+		}
+	} else if cfg.ColumnOrder != "" {
 		parts := strings.Split(cfg.ColumnOrder, ",")
 		for _, p := range parts {
 			idx, err := strconv.Atoi(strings.TrimSpace(p))
 			if err == nil && idx >= 1 && idx <= len(fields) {
 				fieldIndices = append(fieldIndices, idx-1)
+				headers = append(headers, "")
 			}
 		}
 	}
@@ -299,28 +537,36 @@ func buildTabulatorData(e *core.RequestEvent, collName string) (*views.Tabulator
 		for i := range fields {
 			fieldIndices = append(fieldIndices, i)
 		}
+		headers = make([]string, len(fieldIndices))
 	}
 
 	var visibleFields []core.Field
-	for _, i := range fieldIndices {
+	var visibleHeaders []string
+	for j, i := range fieldIndices {
 		f := fields[i]
 		fName := f.GetName()
 		if !cfg.DisplaySystemCol && systemCols[fName] {
 			continue
 		}
 		visibleFields = append(visibleFields, f)
+		h := ""
+		if j < len(headers) {
+			h = headers[j]
+		}
+		if h == "" {
+			h = fName
+		}
+		visibleHeaders = append(visibleHeaders, h)
 	}
 
 	fieldNames := make([]string, len(visibleFields))
 	fieldTypes := make([]string, len(visibleFields))
-	headers := make([]string, len(visibleFields))
 
 	relCollNames := map[string]string{}
 	for i, f := range visibleFields {
 		fn := f.GetName()
 		fieldNames[i] = fn
 		fieldTypes[i] = f.Type()
-		headers[i] = fn
 		if f.Type() == "relation" {
 			if rf, ok := f.(*core.RelationField); ok {
 				relColl, rerr := e.App.FindCachedCollectionByNameOrId(rf.CollectionId)
@@ -331,11 +577,11 @@ func buildTabulatorData(e *core.RequestEvent, collName string) (*views.Tabulator
 		}
 	}
 
-	if cfg.ColumnTitles != "" {
+	if len(lc.Columns) == 0 && cfg.ColumnTitles != "" {
 		parts := strings.Split(cfg.ColumnTitles, ",")
 		for i, p := range parts {
-			if i < len(headers) {
-				headers[i] = strings.TrimSpace(p)
+			if i < len(visibleHeaders) {
+				visibleHeaders[i] = strings.TrimSpace(p)
 			}
 		}
 	}
@@ -411,7 +657,7 @@ func buildTabulatorData(e *core.RequestEvent, collName string) (*views.Tabulator
 
 	fieldsJSON, _ := json.Marshal(fieldNames)
 	fieldTypesJSON, _ := json.Marshal(fieldTypes)
-	headersJSON, _ := json.Marshal(headers)
+	headersJSON, _ := json.Marshal(visibleHeaders)
 	recordsJSON, _ := json.Marshal(allData)
 
 	totalPages := int(math.Ceil(float64(len(records)) / 20))
@@ -424,7 +670,7 @@ func buildTabulatorData(e *core.RequestEvent, collName string) (*views.Tabulator
 		TotalRecords:   len(records),
 		Fields:         fieldNames,
 		FieldTypes:     fieldTypes,
-		ColumnHeaders:  headers,
+		ColumnHeaders:  visibleHeaders,
 		FieldsJSON:     string(fieldsJSON),
 		FieldTypesJSON: string(fieldTypesJSON),
 		HeadersJSON:    string(headersJSON),
@@ -437,12 +683,18 @@ func buildTabulatorData(e *core.RequestEvent, collName string) (*views.Tabulator
 }
 
 func handleTabulator(e *core.RequestEvent) error {
-	collName := e.Request.PathValue("collectionName")
+	configName := e.Request.PathValue("configName")
 
-	data, err := buildTabulatorData(e, collName)
+	collName, configRec, err := resolveListConfig(e, configName)
+	if err != nil {
+		return e.NotFoundError("Configuration not found", err)
+	}
+
+	data, err := buildTabulatorData(e, collName, configRec)
 	if err != nil {
 		return e.NotFoundError("Collection not found", err)
 	}
+	data.ConfigName = configName
 
 	e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	return templates.ExecuteTemplate(e.Response, "tabulator.html", data)
@@ -455,7 +707,7 @@ func handlePbxSetup(e *core.RequestEvent) error {
 	sections := make([]views.TabulatorPageData, 0, len(collections))
 
 	for _, name := range collections {
-		data, err := buildTabulatorData(e, name)
+		data, err := buildTabulatorData(e, name, nil)
 		if err != nil {
 			continue
 		}
@@ -508,8 +760,13 @@ func handleTabulatorDataJSON(e *core.RequestEvent) error {
 // --- Form ---
 
 func handleForm(e *core.RequestEvent) error {
-	collName := e.Request.PathValue("collectionName")
+	configName := e.Request.PathValue("configName")
 	recordID := e.Request.PathValue("id")
+
+	collName, configRec, err := resolveFormConfig(e, configName)
+	if err != nil {
+		return e.NotFoundError("Configuration not found", err)
+	}
 
 	collection, err := e.App.FindCachedCollectionByNameOrId(collName)
 	if err != nil {
@@ -524,12 +781,6 @@ func handleForm(e *core.RequestEvent) error {
 		if err != nil {
 			return e.NotFoundError("Record not found", err)
 		}
-	}
-
-	var configRec *core.Record
-	configRecs, _ := e.App.FindRecordsByFilter("_form", "collName = {:name}", "", 1, 0, nil, map[string]any{"name": collName})
-	if len(configRecs) > 0 {
-		configRec = configRecs[0]
 	}
 
 	title := collName
@@ -564,6 +815,17 @@ func handleForm(e *core.RequestEvent) error {
 		formLabels = configRec.GetString("formLabels")
 	}
 
+	fc := parseFormConfigJSON(configRec)
+	if fc.Title != "" {
+		title = fc.Title
+	}
+	if fc.Description != "" {
+		description = fc.Description
+	}
+	if fc.DisplaySystemCol {
+		displaySystemCol = true
+	}
+
 	labelsOverride := map[string]string{}
 	if formLabels != "" {
 		parts := strings.Split(formLabels, ",")
@@ -573,6 +835,9 @@ func handleForm(e *core.RequestEvent) error {
 				labelsOverride[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
 			}
 		}
+	}
+	for k, v := range fc.Labels {
+		labelsOverride[k] = v
 	}
 
 	orderMap := map[int]int{}
@@ -587,7 +852,9 @@ func handleForm(e *core.RequestEvent) error {
 	}
 
 	layout := [][][]int{}
-	if formLayout != "" {
+	if len(fc.Layout) > 0 {
+		layout = fc.Layout
+	} else if formLayout != "" {
 		rowStrs := strings.Split(formLayout, "/")
 		for _, rowStr := range rowStrs {
 			rowStr = strings.TrimSpace(rowStr)
@@ -835,6 +1102,7 @@ func handleForm(e *core.RequestEvent) error {
 	}
 
 	data := views.FormPageData{
+		ConfigName:     configName,
 		CollectionName: collName,
 		ID:             recordID,
 		Title:          title,
@@ -852,8 +1120,13 @@ func handleForm(e *core.RequestEvent) error {
 // --- Form POST (create/update) ---
 
 func handleFormPost(e *core.RequestEvent) error {
-	collName := e.Request.PathValue("collectionName")
+	configName := e.Request.PathValue("configName")
 	recordID := e.Request.PathValue("id")
+
+	collName, _, err := resolveFormConfig(e, configName)
+	if err != nil {
+		return e.NotFoundError("Configuration not found", err)
+	}
 
 	collection, err := e.App.FindCachedCollectionByNameOrId(collName)
 	if err != nil {
@@ -901,7 +1174,7 @@ func handleFormPost(e *core.RequestEvent) error {
 		msg = "Record successfully updated."
 	}
 
-	return e.Redirect(http.StatusSeeOther, "/tabulator/"+collName+"?msg="+url.QueryEscape(msg))
+	return e.Redirect(http.StatusSeeOther, "/tabular/"+configName+"?msg="+url.QueryEscape(msg))
 }
 
 // --- Export ---
@@ -916,7 +1189,7 @@ func handleExport(e *core.RequestEvent) error {
 	}
 
 	msg := url.QueryEscape("Export successful")
-	return e.Redirect(http.StatusSeeOther, "/tabulator/"+collName+"?msg="+msg)
+	return e.Redirect(http.StatusSeeOther, "/tabular/"+collName+"?msg="+msg)
 }
 
 // --- Import ---
@@ -936,14 +1209,19 @@ func handleImport(e *core.RequestEvent) error {
 	}
 
 	msg := url.QueryEscape("Import successful")
-	return e.Redirect(http.StatusSeeOther, "/tabulator/"+collName+"?msg="+msg)
+	return e.Redirect(http.StatusSeeOther, "/tabular/"+collName+"?msg="+msg)
 }
 
 // --- Delete record ---
 
 func handleDeleteRecord(e *core.RequestEvent) error {
-	collName := e.Request.PathValue("collectionName")
+	configName := e.Request.PathValue("configName")
 	recordID := e.Request.PathValue("id")
+
+	collName, _, err := resolveFormConfig(e, configName)
+	if err != nil {
+		return e.NotFoundError("Configuration not found", err)
+	}
 
 	record, err := e.App.FindRecordById(collName, recordID)
 	if err != nil {
@@ -955,4 +1233,195 @@ func handleDeleteRecord(e *core.RequestEvent) error {
 	}
 
 	return e.JSON(http.StatusOK, map[string]any{"ok": true})
+}
+
+// --- PBX Config editor (super admin) ---
+
+// requireSuperAdmin returns nil only when the request carries a valid _superusers auth token.
+func requireSuperAdmin(e *core.RequestEvent) error {
+	cookie, err := e.Request.Cookie("pb_auth")
+	if err != nil {
+		return e.Redirect(http.StatusSeeOther, "/login")
+	}
+	record, err := e.App.FindAuthRecordByToken(cookie.Value, core.TokenTypeAuth)
+	if err != nil || record == nil {
+		return e.Redirect(http.StatusSeeOther, "/login")
+	}
+	if record.Collection().Name != "_superusers" {
+		return e.Redirect(http.StatusSeeOther, "/app")
+	}
+	return nil
+}
+
+// listCollections returns all non-system collection names, ordered by name.
+func listCollections(e *core.RequestEvent) []string {
+	colls, err := e.App.FindAllCollections()
+	if err != nil {
+		return nil
+	}
+	names := make([]string, 0, len(colls))
+	for _, c := range colls {
+		n := c.Name
+		if strings.HasPrefix(n, "_") {
+			continue
+		}
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names
+}
+
+func handlePbxConfig(e *core.RequestEvent) error {
+	if err := requireSuperAdmin(e); err != nil {
+		return err
+	}
+
+	pageData := views.PbxConfigPageData{}
+
+	if recs, err := e.App.FindAllRecords("_tabulator"); err == nil {
+		for _, rec := range recs {
+			pageData.ListConfigs = append(pageData.ListConfigs, views.ConfigEntry{
+				Type:      "list",
+				Name:      rec.GetString("_name"),
+				CollName:  rec.GetString("collName"),
+				Title:     rec.GetString("pageTitle"),
+				HasConfig: configRaw(rec, "config") != "",
+			})
+		}
+	}
+	if recs, err := e.App.FindAllRecords("_form"); err == nil {
+		for _, rec := range recs {
+			pageData.FormConfigs = append(pageData.FormConfigs, views.ConfigEntry{
+				Type:      "form",
+				Name:      rec.GetString("_name"),
+				CollName:  rec.GetString("collName"),
+				Title:     rec.GetString("formTitle"),
+				HasConfig: configRaw(rec, "config") != "",
+			})
+		}
+	}
+
+	e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	return templates.ExecuteTemplate(e.Response, "pbxconfig.html", pageData)
+}
+
+func handlePbxConfigEditor(e *core.RequestEvent) error {
+	if err := requireSuperAdmin(e); err != nil {
+		return err
+	}
+
+	cfgType := e.Request.PathValue("configType")
+	name := e.Request.PathValue("name")
+	isNew := name == "new"
+
+	if cfgType != "list" && cfgType != "form" {
+		return e.NotFoundError("Unknown config type", nil)
+	}
+
+	pageData := views.ConfigEditorPageData{
+		Type:        cfgType,
+		TypeLabel:   "List",
+		Collections: listCollections(e),
+		IsNew:       isNew,
+	}
+	if cfgType == "form" {
+		pageData.TypeLabel = "Form"
+	}
+
+	if !isNew {
+		rec := findConfigByAttr(e, "_tabulator", "_name", name)
+		if cfgType == "form" {
+			rec = findConfigByAttr(e, "_form", "_name", name)
+		}
+		if rec == nil {
+			return e.NotFoundError("Configuration not found", nil)
+		}
+		pageData.Name = rec.GetString("_name")
+		pageData.CollName = rec.GetString("collName")
+		pageData.ConfigJSON = configRaw(rec, "config")
+	}
+
+	e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	return templates.ExecuteTemplate(e.Response, "config.html", pageData)
+}
+
+func handlePbxConfigSave(e *core.RequestEvent) error {
+	if err := requireSuperAdmin(e); err != nil {
+		return err
+	}
+
+	cfgType := e.Request.FormValue("type")
+	name := e.Request.FormValue("name")
+	collName := e.Request.FormValue("collName")
+	configJSON := e.Request.FormValue("config")
+
+	if cfgType != "list" && cfgType != "form" {
+		return e.NotFoundError("Unknown config type", nil)
+	}
+	name = strings.TrimSpace(name)
+	collName = strings.TrimSpace(collName)
+	if name == "" || collName == "" {
+		e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
+		return templates.ExecuteTemplate(e.Response, "config.html", views.ConfigEditorPageData{
+			Type:        cfgType,
+			TypeLabel:   "List",
+			Name:        name,
+			CollName:    collName,
+			ConfigJSON:  configJSON,
+			Collections: listCollections(e),
+			IsNew:       true,
+		})
+	}
+
+	setupColl := "_tabulator"
+	if cfgType == "form" {
+		setupColl = "_form"
+	}
+
+	rec := findConfigByAttr(e, setupColl, "_name", name)
+	if rec == nil {
+		setupCollection, err := e.App.FindCachedCollectionByNameOrId(setupColl)
+		if err != nil {
+			return e.InternalServerError("Setup collection not found", err)
+		}
+		rec = core.NewRecord(setupCollection)
+	}
+
+	rec.Set("_name", name)
+	rec.Set("collName", collName)
+	rec.Set("config", configJSON)
+	if cfgType == "list" {
+		rec.Set("pageTitle", parseListConfig(rec).Title)
+	} else {
+		rec.Set("formTitle", parseFormConfigJSON(rec).Title)
+	}
+
+	if err := e.App.Save(rec); err != nil {
+		return e.InternalServerError("Failed to save configuration", err)
+	}
+
+	return e.Redirect(http.StatusSeeOther, "/pbx-config")
+}
+
+func handlePbxConfigDelete(e *core.RequestEvent) error {
+	if err := requireSuperAdmin(e); err != nil {
+		return err
+	}
+
+	cfgType := e.Request.FormValue("type")
+	name := e.Request.FormValue("name")
+
+	setupColl := "_tabulator"
+	if cfgType == "form" {
+		setupColl = "_form"
+	}
+
+	rec := findConfigByAttr(e, setupColl, "_name", name)
+	if rec != nil {
+		if err := e.App.Delete(rec); err != nil {
+			return e.InternalServerError("Failed to delete configuration", err)
+		}
+	}
+
+	return e.Redirect(http.StatusSeeOther, "/pbx-config")
 }

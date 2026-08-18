@@ -53,6 +53,9 @@
 <body>
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">
         <h1 style="margin:0">PBX Setup</h1>
+        <button type="button" onclick="goBack('/app')" style="padding:8px 16px;background:#6c757d;color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;margin-left:auto;">Close</button>
+        <a href="/app" style="padding:8px 16px;background:#28a745;color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">Applications</a>
+        <a href="/pbx-config" style="padding:8px 16px;background:#007bff;color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">Config editor</a>
         <a href="/_/" style="padding:8px 16px;background:#6c757d;color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">Administration</a>
     </div>
     <p class="subtitle">Configuration collections overview</p>
@@ -379,6 +382,14 @@
         document.getElementById("relModal").addEventListener("click", function(e) {
             if (e.target === this) closeRelModal();
         });
+
+        function goBack(fallback) {
+            if (window.history.length > 1) {
+                window.history.back();
+            } else {
+                window.location.href = fallback;
+            }
+        }
     </script>
 </body>
 </html>

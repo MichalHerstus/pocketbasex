@@ -25,7 +25,10 @@
     </style>
 </head>
 <body>
-    <h1>PBX - Pocketbase Extended</h1>
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">
+        <h1 style="margin:0">PBX - Pocketbase Extended</h1>
+        <button type="button" onclick="goBack('/login')" style="padding:8px 16px;background:#6c757d;color:#fff;border:none;border-radius:6px;text-decoration:none;font-size:.9rem;cursor:pointer;margin-left:auto;">Close</button>
+    </div>
     <p class="subtitle">configurable application to view and manage PB data collections</p>
 
     {{if .Error}}
@@ -36,7 +39,7 @@
     {{else}}
     <div class="user-bar">
         <span>Signed in as <span class="name">{{.Name}}</span></span>
-        <a href="/login">Sign out</a>
+        <a href="/logout" style="color:#dc3545;">Logout</a>
     </div>
     {{end}}
 
@@ -45,12 +48,22 @@
         <div class="group-header">{{if .GroupIcon}}<img src="{{.GroupIcon}}" style="width:20px;height:20px;vertical-align:middle;margin-right:6px;">{{end}}{{.GroupLabel}}</div>
         <ul class="group-links">
             {{range .Links}}
-            <li><a href="/tabulator/{{.Collection}}">{{.Label}}</a></li>
+            <li><a href="{{.URL}}">{{.Label}}</a></li>
             {{end}}
         </ul>
     </div>
     {{end}}
 
     <p class="copyright"><i>(c)POINT.X 2026, MH</i></p>
+
+    <script>
+        function goBack(fallback) {
+            if (window.history.length > 1) {
+                window.history.back();
+            } else {
+                window.location.href = fallback;
+            }
+        }
+    </script>
 </body>
 </html>

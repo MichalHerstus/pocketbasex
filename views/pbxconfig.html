@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PBX Config</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { font-family: sans-serif; margin: 0; padding: 20px; background: var(--body-bg, #f5f5f5); color: #333; }
+        h1 { margin: 0 0 4px 0; font-size: 1.8rem; }
+        .subtitle { margin: 0 0 12px 0; font-size: .95rem; color: #666; }
+        .section { margin-bottom: 32px; }
+        .section h2 { margin: 0 0 4px 0; font-size: 1.3rem; }
+        .section .subtitle { margin: 0 0 12px 0; font-size: .95rem; color: #666; }
+        .table-wrap { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+        th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #eee; white-space: nowrap; }
+        th { background: #fafafa; font-weight: 600; font-size: .85rem; text-transform: uppercase; letter-spacing: .03em; color: #555; }
+        tr:hover td { background: #f0f7ff; }
+        .empty { text-align: center; padding: 40px; color: #999; }
+        .btn { padding: 8px 16px; border-radius: 6px; text-decoration: none; font-size: .9rem; display: inline-block; border: none; cursor: pointer; }
+        .btn-green { background: #28a745; color: #fff; }
+        .btn-gray { background: #6c757d; color: #fff; }
+        .btn-blue { background: #007bff; color: #fff; }
+        .btn-red { background: #dc3545; color: #fff; padding: 4px 10px; font-size: .85rem; }
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: .75rem; font-weight: 600; }
+        .badge-on { background: #d4edda; color: #155724; }
+        .badge-off { background: #e9ecef; color: #495057; }
+        .toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+    </style>
+</head>
+<body>
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">
+        <h1 style="margin:0">PBX Config</h1>
+        <button type="button" onclick="goBack('/pbx-setup')" style="padding:8px 16px;background:#6c757d;color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;margin-left:auto;">Close</button>
+        <a href="/pbx-setup" class="btn btn-gray" style="font-size:.9rem;">Back to Setup</a>
+    </div>
+    <p class="subtitle">Manage list and form view configurations</p>
+
+    <div class="section">
+        <div class="toolbar">
+            <h2 style="margin:0">List configurations</h2>
+            <a href="/pbx-config/list/new" class="btn btn-green">+ New list config</a>
+        </div>
+        <div class="table-wrap">
+            <table>
+                <tr><th>Name</th><th>Collection</th><th>Title</th><th>JSON config</th><th></th></tr>
+                {{range .ListConfigs}}
+                <tr>
+                    <td>{{.Name}}</td>
+                    <td>{{.CollName}}</td>
+                    <td>{{.Title}}</td>
+                    <td>{{if .HasConfig}}<span class="badge badge-on">yes</span>{{else}}<span class="badge badge-off">no</span>{{end}}</td>
+                    <td style="white-space:nowrap">
+                        <a href="/tabular/{{.Name}}" class="btn btn-blue" style="padding:4px 10px;font-size:.85rem;">View</a>
+                        <a href="/pbx-config/list/{{.Name}}" class="btn btn-gray" style="padding:4px 10px;font-size:.85rem;">Edit</a>
+                        <form method="POST" action="/pbx-config/delete" style="display:inline">
+                            <input type="hidden" name="type" value="list">
+                            <input type="hidden" name="name" value="{{.Name}}">
+                            <button type="submit" class="btn btn-red" onclick="return confirm('Delete list config {{.Name}}?')">Delete</button>
+                        </form>
+                    </td>
+                </tr>
+                {{else}}
+                <tr><td colspan="5" class="empty">No list configurations yet.</td></tr>
+                {{end}}
+            </table>
+        </div>
+    </div>
+
+    <div class="section">
+        <div class="toolbar">
+            <h2 style="margin:0">Form configurations</h2>
+            <a href="/pbx-config/form/new" class="btn btn-green">+ New form config</a>
+        </div>
+        <div class="table-wrap">
+            <table>
+                <tr><th>Name</th><th>Collection</th><th>Title</th><th>JSON config</th><th></th></tr>
+                {{range .FormConfigs}}
+                <tr>
+                    <td>{{.Name}}</td>
+                    <td>{{.CollName}}</td>
+                    <td>{{.Title}}</td>
+                    <td>{{if .HasConfig}}<span class="badge badge-on">yes</span>{{else}}<span class="badge badge-off">no</span>{{end}}</td>
+                    <td style="white-space:nowrap">
+                        <a href="/form/{{.Name}}" class="btn btn-blue" style="padding:4px 10px;font-size:.85rem;">View</a>
+                        <a href="/pbx-config/form/{{.Name}}" class="btn btn-gray" style="padding:4px 10px;font-size:.85rem;">Edit</a>
+                        <form method="POST" action="/pbx-config/delete" style="display:inline">
+                            <input type="hidden" name="type" value="form">
+                            <input type="hidden" name="name" value="{{.Name}}">
+                            <button type="submit" class="btn btn-red" onclick="return confirm('Delete form config {{.Name}}?')">Delete</button>
+                        </form>
+                    </td>
+                </tr>
+                {{else}}
+                <tr><td colspan="5" class="empty">No form configurations yet.</td></tr>
+                {{end}}
+            </table>
+        </div>
+    </div>
+
+    <script>
+        function goBack(fallback) {
+            if (window.history.length > 1) {
+                window.history.back();
+            } else {
+                window.location.href = fallback;
+            }
+        }
+    </script>
+</body>
+</html>
