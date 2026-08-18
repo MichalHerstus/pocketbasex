@@ -51,6 +51,7 @@ type MssqlConfig struct {
 }
 
 type TabulatorPageData struct {
+	Theme          string
 	ConfigName     string
 	CollectionName string
 	TotalRecords   int
@@ -110,6 +111,7 @@ type FormConfigJSON struct {
 }
 
 type FormPageData struct {
+	Theme          string
 	ConfigName     string
 	CollectionName string
 	ID             string
@@ -134,12 +136,14 @@ type AppGroup struct {
 }
 
 type AppPageData struct {
+	Theme  string
 	Name   string
 	Error  string
 	Groups []AppGroup
 }
 
 type PbxSetupPageData struct {
+	Theme    string
 	Sections []TabulatorPageData
 }
 
@@ -153,12 +157,14 @@ type ConfigEntry struct {
 }
 
 type PbxConfigPageData struct {
+	Theme       string
 	ListConfigs []ConfigEntry
 	FormConfigs []ConfigEntry
 }
 
 // ConfigEditorPageData backs the /pbx-config/{type}/new|{name} editor form.
 type ConfigEditorPageData struct {
+	Theme       string
 	Type        string
 	TypeLabel   string
 	Name        string

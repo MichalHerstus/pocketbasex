@@ -53,11 +53,13 @@
         .filter-field-group input { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 6px; font-size: .9rem; outline: none; box-sizing: border-box; }
         .filter-field-group input:focus { border-color: #007bff; }
     </style>
+    <link rel="stylesheet" href="/assets/theme.css">
 </head>
-<body>
+<body data-theme="{{.Theme}}">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">
         <h1 style="margin:0">{{if .Config.PageTitle}}{{.Config.PageTitle}}{{else}}{{.CollectionName}}{{end}}</h1>
-        <button type="button" onclick="goBack('/app')" style="padding:8px 16px;background:#6c757d;color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;margin-left:auto;">Close</button>
+        <button type="button" id="themeBtn" onclick="toggleTheme()" style="padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">🌙 Dark</button>
+        <button type="button" onclick="goBack('/app')" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;margin-left:auto;">Close</button>
     </div>
     <div class="subtitle">{{.TotalRecords}} record{{if ne .TotalRecords 1}}s{{end}}</div>
     {{if .Config.CollectionDescr}}<div class="descr">{{.Config.CollectionDescr}}</div>{{end}}
@@ -69,14 +71,14 @@
         </div>
         {{end}}
         <span id="filterLabel" style="display:none;font-size:.9rem;color:#e67e22;font-weight:600;"></span>
-        <button id="filterBtn" style="padding:8px 16px;background:#6c757d;color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">Filter</button>
-        <button id="importBtn" style="margin-left:auto;padding:8px 16px;background:#6f42c1;color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
+        <button id="filterBtn" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">Filter</button>
+        <button id="importBtn" style="margin-left:auto;padding:8px 16px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
             <img src="/assets/Monitor-Download--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="Import"> Import
         </button>
-        <button id="exportBtn" style="padding:8px 16px;background:#17a2b8;color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
+        <button id="exportBtn" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
             <img src="/assets/Upload-Brackets--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="Export"> Export
         </button>
-        <a href="/form/{{.ConfigName}}" style="padding:8px 16px;background:#28a745;color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">+ Add new</a>
+        <a href="/form/{{.ConfigName}}" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">+ Add new</a>
     </div>
 
     <div class="table-wrap">
@@ -147,8 +149,8 @@
                     </div>
 
                     <div style="display:flex;gap:8px;">
-                        <button type="submit" style="flex:1;padding:10px;background:#6f42c1;color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Import</button>
-                        <button type="button" onclick="closeImportModal()" style="flex:1;padding:10px;background:#6c757d;color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Cancel</button>
+                        <button type="submit" style="flex:1;padding:10px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Import</button>
+                        <button type="button" onclick="closeImportModal()" style="flex:1;padding:10px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Cancel</button>
                     </div>
                 </form>
             </div>
@@ -167,7 +169,7 @@
                 <input type="text" id="exportFileName" value="{{.CollectionName}}" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;margin-bottom:12px;outline:none;box-sizing:border-box;">
                 <label style="display:block;margin-bottom:6px;font-size:.9rem;font-weight:600;">Sheet name</label>
                 <input type="text" id="exportSheetName" value="Sheet1" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;margin-bottom:20px;outline:none;box-sizing:border-box;">
-                <button id="exportSubmitBtn" style="width:100%;padding:10px;background:#17a2b8;color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Export</button>
+                <button id="exportSubmitBtn" style="width:100%;padding:10px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Export</button>
             </div>
         </div>
     </div>
@@ -308,11 +310,11 @@
                     return "<tr>" +
                         fields.map(function(f, i) { return "<td>" + renderCell(r[f], fieldTypes[i]) + "</td>"; }).join("") +
                         '<td style="white-space:nowrap">' +
-                        '<a href="/form/' + configName + '/' + r.id + '?view=1" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid #6c757d;border-radius:4px;margin-right:4px;line-height:0">' +
+                        '<a href="/form/' + configName + '/' + r.id + '?view=1" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid var(--btn-neutral);border-radius:4px;margin-right:4px;line-height:0">' +
                         '<img src="/assets/Binocular--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="View"></a>' +
                         '<a href="/form/' + configName + '/' + r.id + '" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid #007bff;border-radius:4px;margin-right:4px;line-height:0">' +
                         '<img src="/assets/Arrange-List-Descending-1--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="Edit"></a>' +
-                        '<button onclick="deleteRecord(\'' + configName + '\',\'' + r.id + '\')" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid #dc3545;border-radius:4px;cursor:pointer;line-height:0">' +
+                        '<button onclick="deleteRecord(\'' + configName + '\',\'' + r.id + '\')" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid var(--btn-danger);border-radius:4px;cursor:pointer;line-height:0">' +
                         '<img src="/assets/Bin-1--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="Delete"></button>' +
                         "</td></tr>";
                 }).join("");
@@ -491,7 +493,7 @@
             filterActive = false;
             filterValues = [];
             document.getElementById("filterLabel").style.display = "none";
-            document.getElementById("filterBtn").style.background = "#6c757d";
+            document.getElementById("filterBtn").style.background = "var(--btn-neutral)";
             currentPage = 1;
             render();
         }
@@ -513,8 +515,8 @@
                 html += '</div>';
             });
             html += '<div style="display:flex;gap:8px;margin-top:16px;">';
-            html += '<button onclick="setFilterFromModal()" style="flex:1;padding:10px;background:#28a745;color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Set filter</button>';
-            html += '<button onclick="cancelFilterFromModal()" style="flex:1;padding:10px;background:#6c757d;color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Cancel filter</button>';
+            html += '<button onclick="setFilterFromModal()" style="flex:1;padding:10px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Set filter</button>';
+            html += '<button onclick="cancelFilterFromModal()" style="flex:1;padding:10px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Cancel filter</button>';
             html += '</div>';
             modalBody.innerHTML = html;
             document.getElementById("filterModal").classList.add("open");
@@ -673,7 +675,7 @@
             related.forEach(function(r) {
                 html += "<tr>";
                 relFields.forEach(function(f) { html += "<td>" + esc(r[f]) + "</td>"; });
-                html += '<td><a href="/tabulator/' + coll + '" target="_blank" style="padding:2px 8px;background:#17a2b8;border-radius:4px;color:#fff;text-decoration:none;font-size:.8rem;">Open</a></td>';
+                html += '<td><a href="/tabulator/' + coll + '" target="_blank" style="padding:2px 8px;background:var(--btn-primary);border-radius:4px;color:#fff;text-decoration:none;font-size:.8rem;">Open</a></td>';
                 html += "</tr>";
             });
             html += "</tbody></table>";
@@ -751,6 +753,24 @@
                 window.location.href = fallback;
             }
         }
+
+        function currentTheme() {
+            var t = localStorage.getItem('pbx-theme');
+            if (t === 'dark' || t === 'light') return t;
+            return document.body.getAttribute('data-theme') || 'light';
+        }
+        function applyTheme(mode) {
+            document.body.setAttribute('data-theme', mode);
+            var btn = document.getElementById('themeBtn');
+            if (btn) btn.textContent = mode === 'dark' ? '☀️ Light' : '🌙 Dark';
+        }
+        function toggleTheme() {
+            var next = currentTheme() === 'dark' ? 'light' : 'dark';
+            localStorage.setItem('pbx-theme', next);
+            applyTheme(next);
+            fetch('/api/theme/' + next, { method: 'POST' }).catch(function(){});
+        }
+        applyTheme(currentTheme());
     </script>
 </body>
 </html>

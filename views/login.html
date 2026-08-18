@@ -101,8 +101,10 @@
         font-size: 0.9rem;
       }
     </style>
+    <link rel="stylesheet" href="/assets/theme.css">
   </head>
-  <body>
+  <body data-theme="{{.Theme}}">
+    <button type="button" id="themeBtn" onclick="toggleTheme()" style="position:fixed;top:16px;right:16px;padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;z-index:10;">🌙 Dark</button>
     <div class="login-card">
       <h1>Sign In</h1>
       <p class="subtitle">Enter your credentials to continue</p>
@@ -123,5 +125,24 @@
         </div>
       </form>
     </div>
+    <script>
+      function currentTheme() {
+        var t = localStorage.getItem('pbx-theme');
+        if (t === 'dark' || t === 'light') return t;
+        return document.body.getAttribute('data-theme') || 'light';
+      }
+      function applyTheme(mode) {
+        document.body.setAttribute('data-theme', mode);
+        var btn = document.getElementById('themeBtn');
+        if (btn) btn.textContent = mode === 'dark' ? '☀️ Light' : '🌙 Dark';
+      }
+      function toggleTheme() {
+        var next = currentTheme() === 'dark' ? 'light' : 'dark';
+        localStorage.setItem('pbx-theme', next);
+        applyTheme(next);
+        fetch('/api/theme/' + next, { method: 'POST' }).catch(function(){});
+      }
+      applyTheme(currentTheme());
+    </script>
   </body>
 </html>

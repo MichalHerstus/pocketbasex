@@ -17,15 +17,17 @@
         .hint { font-size: .8rem; color: #888; margin: 4px 0 0; }
         .toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 4px; }
         .btn { padding: 8px 16px; border-radius: 6px; text-decoration: none; font-size: .9rem; display: inline-block; border: none; cursor: pointer; }
-        .btn-green { background: #28a745; color: #fff; }
-        .btn-gray { background: #6c757d; color: #fff; }
+        .btn-green { background: var(--btn-primary); color: #fff; }
+        .btn-gray { background: var(--btn-neutral); color: #fff; }
         .actions { margin-top: 20px; display: flex; gap: 12px; }
     </style>
+    <link rel="stylesheet" href="/assets/theme.css">
 </head>
-<body>
+<body data-theme="{{.Theme}}">
     <div class="toolbar">
         <h1 style="margin:0">{{if .IsNew}}New{{else}}Edit{{end}} {{.TypeLabel}} config</h1>
         <button type="button" onclick="goBack('/pbx-config')" class="btn btn-gray" style="font-size:.9rem;cursor:pointer;margin-left:auto;">Close</button>
+        <button type="button" id="themeBtn" onclick="toggleTheme()" class="btn btn-gray" style="font-size:.9rem;cursor:pointer;">🌙 Dark</button>
         <a href="/pbx-config" class="btn btn-gray" style="font-size:.9rem;">Back to Config</a>
     </div>
     <p class="subtitle">Configuration name is used in URLs: /tabular/&#123;name&#125; or /form/&#123;name&#125;</p>
@@ -68,6 +70,24 @@
                 window.location.href = fallback;
             }
         }
+
+        function currentTheme() {
+            var t = localStorage.getItem('pbx-theme');
+            if (t === 'dark' || t === 'light') return t;
+            return document.body.getAttribute('data-theme') || 'light';
+        }
+        function applyTheme(mode) {
+            document.body.setAttribute('data-theme', mode);
+            var btn = document.getElementById('themeBtn');
+            if (btn) btn.textContent = mode === 'dark' ? '☀️ Light' : '🌙 Dark';
+        }
+        function toggleTheme() {
+            var next = currentTheme() === 'dark' ? 'light' : 'dark';
+            localStorage.setItem('pbx-theme', next);
+            applyTheme(next);
+            fetch('/api/theme/' + next, { method: 'POST' }).catch(function(){});
+        }
+        applyTheme(currentTheme());
     </script>
 </body>
 </html>

@@ -49,16 +49,28 @@
         .modal-body th { font-size: .75rem; }
         .modal-body td, .modal-body th { padding: 6px 10px; }
     </style>
+    <link rel="stylesheet" href="/assets/theme.css">
 </head>
-<body>
+<body data-theme="{{.Theme}}">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">
         <h1 style="margin:0">PBX Setup</h1>
-        <button type="button" onclick="goBack('/app')" style="padding:8px 16px;background:#6c757d;color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;margin-left:auto;">Close</button>
-        <a href="/app" style="padding:8px 16px;background:#28a745;color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">Applications</a>
-        <a href="/pbx-config" style="padding:8px 16px;background:#007bff;color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">Config editor</a>
-        <a href="/_/" style="padding:8px 16px;background:#6c757d;color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">Administration</a>
+        <button type="button" onclick="goBack('/app')" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;margin-left:auto;">Close</button>
+        <button type="button" id="themeBtn" onclick="toggleTheme()" style="padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">🌙 Dark</button>
+        <a href="/app" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">Applications</a>
+        <a href="/pbx-config" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">Config editor</a>
+        <a href="/_/" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">Administration</a>
     </div>
     <p class="subtitle">Configuration collections overview</p>
+
+    <div class="section">
+        <h2>Theme</h2>
+        <div class="subtitle">Default theme used across the whole application</div>
+        <div class="toolbar" style="margin-bottom:0;">
+            <button type="button" onclick="setTheme('light')" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">☀️ Light</button>
+            <button type="button" onclick="setTheme('dark')" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">🌙 Dark</button>
+            <span id="themeStatus" style="font-size:.9rem;color:#666;">Current: {{.Theme}}</span>
+        </div>
+    </div>
 
     {{range $sid, $s := .Sections}}
     <div class="section">
@@ -67,7 +79,7 @@
         {{if $s.Config.CollectionDescr}}<div class="descr">{{$s.Config.CollectionDescr}}</div>{{end}}
 
         <div class="toolbar">
-            <a href="/form/{{$s.CollectionName}}" style="padding:8px 16px;background:#28a745;color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">+ Add new</a>
+            <a href="/form/{{$s.CollectionName}}" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">+ Add new</a>
         </div>
 
         <div class="table-wrap">
@@ -231,11 +243,11 @@
                     return "<tr>" +
                         sec.fields.map(function(f, i) { return "<td>" + renderCell(r[f], sec.fieldTypes[i]) + "</td>"; }).join("") +
                         '<td style="white-space:nowrap">' +
-                        '<a href="/form/' + collName + '/' + r.id + '?view=1" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid #6c757d;border-radius:4px;margin-right:4px;line-height:0">' +
+                        '<a href="/form/' + collName + '/' + r.id + '?view=1" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid var(--btn-neutral);border-radius:4px;margin-right:4px;line-height:0">' +
                         '<img src="/assets/Binocular--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="View"></a>' +
-                        '<a href="/form/' + collName + '/' + r.id + '" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid #007bff;border-radius:4px;margin-right:4px;line-height:0">' +
+                        '<a href="/form/' + collName + '/' + r.id + '" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid var(--btn-primary);border-radius:4px;margin-right:4px;line-height:0">' +
                         '<img src="/assets/Arrange-List-Descending-1--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="Edit"></a>' +
-                        '<button onclick="deleteRecord(' + sid + ',\'' + collName + '\',\'' + r.id + '\')" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid #dc3545;border-radius:4px;cursor:pointer;line-height:0">' +
+                        '<button onclick="deleteRecord(' + sid + ',\'' + collName + '\',\'' + r.id + '\')" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid var(--btn-danger);border-radius:4px;cursor:pointer;line-height:0">' +
                         '<img src="/assets/Bin-1--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="Delete"></button>' +
                         "</td></tr>";
                 }).join("");
@@ -368,7 +380,7 @@
             related.forEach(function(r) {
                 html += "<tr>";
                 relFields.forEach(function(f) { html += "<td>" + esc(r[f]) + "</td>"; });
-                html += '<td><a href="/tabulator/' + coll + '" target="_blank" style="padding:2px 8px;background:#17a2b8;border-radius:4px;color:#fff;text-decoration:none;font-size:.8rem;">Open</a></td>';
+                html += '<td><a href="/tabulator/' + coll + '" target="_blank" style="padding:2px 8px;background:var(--btn-primary);border-radius:4px;color:#fff;text-decoration:none;font-size:.8rem;">Open</a></td>';
                 html += "</tr>";
             });
             html += "</tbody></table>";
@@ -390,6 +402,34 @@
                 window.location.href = fallback;
             }
         }
+
+        function currentTheme() {
+            var t = localStorage.getItem('pbx-theme');
+            if (t === 'dark' || t === 'light') return t;
+            return document.body.getAttribute('data-theme') || 'light';
+        }
+        function applyTheme(mode) {
+            document.body.setAttribute('data-theme', mode);
+            var btn = document.getElementById('themeBtn');
+            if (btn) btn.textContent = mode === 'dark' ? '☀️ Light' : '🌙 Dark';
+        }
+        function toggleTheme() {
+            var next = currentTheme() === 'dark' ? 'light' : 'dark';
+            localStorage.setItem('pbx-theme', next);
+            applyTheme(next);
+            fetch('/api/theme/' + next, { method: 'POST' }).catch(function(){});
+        }
+        function setTheme(mode) {
+            localStorage.setItem('pbx-theme', mode);
+            applyTheme(mode);
+            fetch('/api/theme/' + mode, { method: 'POST' })
+                .then(function() {
+                    var s = document.getElementById('themeStatus');
+                    if (s) s.textContent = 'Current: ' + mode;
+                })
+                .catch(function(){});
+        }
+        applyTheme(currentTheme());
     </script>
 </body>
 </html>

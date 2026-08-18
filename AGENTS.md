@@ -27,13 +27,14 @@ No CI, no tests.
 | `GET /login` | login form | Renders login.html |
 | `POST /login` | authenticate | Email/password auth via `users` collection, sets `pb_auth` cookie |
 | `GET /app` | dashboard | Menu of links grouped by `_app` collection records |
-| `GET /pbx-setup` | setup | Shows `_app`, `_tabulator`, `_form` tables |
-| `GET /tabulator/{collectionName}` | table view | All records as client-side JSON; 20/page, sort, search |
-| `GET /form/{collectionName}` | form view | New record form, layout configured via `_form` collection |
-| `GET /form/{collectionName}/{id}` | form view | Edit existing record |
-| `POST /form/{collectionName}` | form submit | Create record |
-| `POST /form/{collectionName}/{id}` | form submit | Update record |
-| `POST /form/{collectionName}/{id}/delete` | delete record | Delete record, returns JSON |
+| `GET /pbx-setup` | setup | Shows `_app`, `_tabulator`, `_form` tables + Theme setup |
+| `GET /tabular/{configName}` | table view | All records as client-side JSON; 20/page, sort, search |
+| `GET /form/{configName}` | form view | New record form, layout configured via `_form` collection |
+| `GET /form/{configName}/{id}` | form view | Edit existing record |
+| `POST /form/{configName}` | form submit | Create record |
+| `POST /form/{configName}/{id}` | form submit | Update record |
+| `POST /form/{configName}/{id}/delete` | delete record | Delete record, returns JSON |
+| `POST /api/theme/{mode}` | set theme | Persist global default theme (`light`/`dark`) to `pb_data/theme.json` |
 | `GET /api/tabulator-data/{collectionName}` | JSON API | Raw JSON for relation modal |
 | `GET /export/{collectionName}` | export | Export to Excel via `pbexcel` |
 | `POST /import/{collectionName}` | import | Import from Excel via `pbexcel` |
@@ -45,9 +46,16 @@ No CI, no tests.
 
 Defined in `main.go` (used in `views/*.html`): `add`, `sub`, `seq`, `safeJS`, `safeHTML`.
 
+## Theme
+
+- Global default stored in `pb_data/theme.json` (`{"mode":"light"|"dark"}`); set via `POST /api/theme/{mode}` (also from the `/pbx-setup` Theme section or the topbar switch on any page).
+- Every page data struct has a `Theme` field; templates render `<body data-theme="{{.Theme}}">` and link `/assets/theme.css` (light + `[data-theme="dark"]` variable sets).
+- The topbar switch also stores a per-browser override in `localStorage` key `pbx-theme`; on load the override wins, otherwise the server default applies.
+- `login.html` uses its own `:root` variables plus the shared `theme.css`.
+
 ## `_tabulator` collection
 
-A record with `collName={collectionName}` configures `/tabulator/{collectionName}`:
+A record with `_name={configName}` configures `/tabular/{configName}`:
 
 - `pageTitle` — custom `<h1>` heading (falls back to collection name)
 - `collectionDescr` — italic text below record count
@@ -61,7 +69,7 @@ A record with `collName={collectionName}` configures `/tabulator/{collectionName
 
 ## `_form` collection
 
-A record with `collName={collectionName}` configures `/form/{collectionName}`:
+A record with `collName={collectionName}` and `_name={configName}` configures `/form/{configName}`:
 
 - `formTitle` — custom heading (falls back to collection name)
 - `formDescr` — description paragraph below heading
@@ -76,7 +84,7 @@ Configures the `/app` dashboard. Fields:
 
 - `group` / `group_label` — links are grouped under a heading
 - `group_icon` — uploaded icon file for the group
-- `collection` / `collectionLabel` — link target (`/tabulator/{collection}`) and display text
+- `collection` / `collectionLabel` — link target (`/tabular/{configName}`, falls back to default config then collection name) and display text
 
 ## Collections (from `_app`, `_tabulator`, `_form` records in DB)
 

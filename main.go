@@ -10,6 +10,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -64,7 +66,9 @@ func main() {
 			// login dialog
 			se.Router.GET("/login", func(e *core.RequestEvent) error {
 				e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
-				return templates.ExecuteTemplate(e.Response, "login.html", map[string]string{})
+				return templates.ExecuteTemplate(e.Response, "login.html", map[string]string{
+					"Theme": getThemeMode(e.App),
+				})
 			})
 			// login form submission
 			se.Router.POST("/login", func(e *core.RequestEvent) error {
@@ -172,6 +176,17 @@ func main() {
 				e.Response.Header().Set("Content-Type", ct)
 				e.Response.Write(data)
 				return nil
+			})
+			// set the global default theme (light/dark), persisted in pb_data/theme.json
+			se.Router.POST("/api/theme/{mode}", func(e *core.RequestEvent) error {
+				mode := e.Request.PathValue("mode")
+				if mode != "light" && mode != "dark" {
+					return e.BadRequestError("Invalid theme mode", nil)
+				}
+				if err := setThemeMode(e.App, mode); err != nil {
+					return e.InternalServerError("Failed to save theme", err)
+				}
+				return e.JSON(http.StatusOK, map[string]any{"ok": true, "mode": mode})
 			})
 
 			err := se.Next()
@@ -303,6 +318,7 @@ func handleApp(e *core.RequestEvent) error {
 	}
 
 	data := views.AppPageData{
+		Theme:  getThemeMode(e.App),
 		Name:   userName,
 		Groups: grouped,
 	}
@@ -324,6 +340,7 @@ func handleLoginPost(e *core.RequestEvent) error {
 		e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		return templates.ExecuteTemplate(e.Response, "login.html", map[string]string{
 			"Error": "Name and password are required",
+			"Theme": getThemeMode(e.App),
 		})
 	}
 
@@ -366,7 +383,42 @@ func handleLoginPost(e *core.RequestEvent) error {
 	e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	return templates.ExecuteTemplate(e.Response, "login.html", map[string]string{
 		"Error": "Invalid name or password",
+		"Theme": getThemeMode(e.App),
 	})
+}
+
+// --- Theme ---
+
+// themeFilePath returns the JSON file that stores the global default theme.
+func themeFilePath(app core.App) string {
+	return filepath.Join(app.DataDir(), "theme.json")
+}
+
+// getThemeMode returns the global default theme ("light" or "dark").
+func getThemeMode(app core.App) string {
+	data, err := os.ReadFile(themeFilePath(app))
+	if err != nil {
+		return "light"
+	}
+	var cfg struct {
+		Mode string `json:"mode"`
+	}
+	if json.Unmarshal(data, &cfg) != nil || (cfg.Mode != "light" && cfg.Mode != "dark") {
+		return "light"
+	}
+	return cfg.Mode
+}
+
+// setThemeMode persists the global default theme to pb_data/theme.json.
+func setThemeMode(app core.App, mode string) error {
+	if mode != "light" && mode != "dark" {
+		return fmt.Errorf("invalid theme mode %q", mode)
+	}
+	data, err := json.Marshal(map[string]string{"mode": mode})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(themeFilePath(app), data, 0o644)
 }
 
 // --- Config resolution ---
@@ -666,6 +718,7 @@ func buildTabulatorData(e *core.RequestEvent, collName string, configRec *core.R
 	}
 
 	return &views.TabulatorPageData{
+		Theme:          getThemeMode(e.App),
 		CollectionName: collName,
 		TotalRecords:   len(records),
 		Fields:         fieldNames,
@@ -714,7 +767,10 @@ func handlePbxSetup(e *core.RequestEvent) error {
 		sections = append(sections, *data)
 	}
 
-	pageData := views.PbxSetupPageData{Sections: sections}
+	pageData := views.PbxSetupPageData{
+		Theme:    getThemeMode(e.App),
+		Sections: sections,
+	}
 
 	e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	return templates.ExecuteTemplate(e.Response, "pbxsetup.html", pageData)
@@ -1102,6 +1158,7 @@ func handleForm(e *core.RequestEvent) error {
 	}
 
 	data := views.FormPageData{
+		Theme:          getThemeMode(e.App),
 		ConfigName:     configName,
 		CollectionName: collName,
 		ID:             recordID,
@@ -1276,7 +1333,9 @@ func handlePbxConfig(e *core.RequestEvent) error {
 		return err
 	}
 
-	pageData := views.PbxConfigPageData{}
+	pageData := views.PbxConfigPageData{
+		Theme: getThemeMode(e.App),
+	}
 
 	if recs, err := e.App.FindAllRecords("_tabulator"); err == nil {
 		for _, rec := range recs {
@@ -1319,6 +1378,7 @@ func handlePbxConfigEditor(e *core.RequestEvent) error {
 	}
 
 	pageData := views.ConfigEditorPageData{
+		Theme:       getThemeMode(e.App),
 		Type:        cfgType,
 		TypeLabel:   "List",
 		Collections: listCollections(e),
