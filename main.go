@@ -813,6 +813,528 @@ func handleTabulatorDataJSON(e *core.RequestEvent) error {
 	})
 }
 
+// --- Form helpers ---
+
+// buildFormLabels parses formLabels string and JSON labels into a unified map.
+func buildFormLabels(formLabels string, fcLabels map[string]string) map[string]string {
+	labels := map[string]string{}
+	if formLabels != "" {
+		for _, p := range strings.Split(formLabels, ",") {
+			p = strings.TrimSpace(p)
+			if kv := strings.SplitN(p, "=", 2); len(kv) == 2 {
+				labels[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
+			}
+		}
+	}
+	for k, v := range fcLabels {
+		labels[k] = v
+	}
+	return labels
+}
+
+// buildFieldItemFor creates a FormFieldItem for a field on a given record.
+func buildFieldItemFor(app core.App, collection *core.Collection, record *core.Record, f core.Field, fName string, labelsOverride map[string]string) views.FormFieldItem {
+	label := fName
+	if l, ok := labelsOverride[fName]; ok {
+		label = l
+	}
+	item := views.FormFieldItem{
+		Name:  fName,
+		Label: label,
+		Type:  f.Type(),
+		Data:  map[string]any{},
+	}
+	if record == nil {
+		return item
+	}
+	switch f.Type() {
+	case "bool":
+		item.Value = strconv.FormatBool(record.GetBool(fName))
+	case "number":
+		if record.Get(fName) != nil {
+			item.Value = strconv.FormatFloat(record.GetFloat(fName), 'f', -1, 64)
+		}
+	case "date", "autodate":
+		if t := record.GetDateTime(fName).Time(); !t.IsZero() {
+			item.Value = t.Format("2006-01-02 15:04")
+		}
+	case "email":
+		item.Value = record.GetString(fName)
+	case "url":
+		raw := record.GetString(fName)
+		item.Value = raw
+		if raw != "" {
+			if u, err := url.Parse(raw); err == nil {
+				parts := strings.Split(strings.TrimRight(u.Path, "/"), "/")
+				display := raw
+				for i := len(parts) - 1; i >= 0; i-- {
+					if parts[i] != "" {
+						display = parts[i]
+						break
+					}
+				}
+				item.Data["display"] = display
+			}
+		}
+	case "editor":
+		item.Value = record.GetString(fName)
+	case "file":
+		filename := record.GetString(fName)
+		if filename != "" {
+			item.Value = filename
+			item.Data["url"] = "/api/files/" + collection.Id + "/" + record.GetString("id") + "/" + filename
+			item.Data["has"] = true
+		} else {
+			item.Data["has"] = false
+		}
+	case "select":
+		item.Value = record.GetString(fName)
+		if sf, ok := f.(*core.SelectField); ok {
+			item.Data["options"] = sf.Values
+		}
+	case "relation":
+		raw := record.GetString(fName)
+		var ids []string
+		if raw != "" {
+			ids = strings.Split(raw, ",")
+		}
+		item.Data["ids"] = ids
+		item.Data["count"] = len(ids)
+		item.Value = strconv.Itoa(len(ids))
+		if rf, ok := f.(*core.RelationField); ok {
+			if relColl, rerr := app.FindCachedCollectionByNameOrId(rf.CollectionId); rerr == nil {
+				item.Data["collectionName"] = relColl.Name
+			}
+		}
+	case "json":
+		jv := record.GetString(fName)
+		if jv != "" && jv != "{}" && jv != "[]" && jv != "null" {
+			var parsed any
+			if err := json.Unmarshal([]byte(jv), &parsed); err == nil {
+				pretty, _ := json.MarshalIndent(parsed, "", "  ")
+				item.Value = string(pretty)
+			} else {
+				item.Value = jv
+			}
+		}
+	case "geo":
+		geoVal := record.GetString(fName)
+		if geoVal != "" {
+			parts := strings.Split(geoVal, ",")
+			if len(parts) == 2 {
+				item.Data["lat"] = strings.TrimSpace(parts[0])
+				item.Data["lng"] = strings.TrimSpace(parts[1])
+			}
+			item.Value = geoVal
+		}
+	default:
+		item.Value = record.GetString(fName)
+	}
+	return item
+}
+
+// --- View editing ---
+
+// viewEditSection holds editable field info for one base collection within a view.
+type viewEditSection struct {
+	BaseCollName string   // name of the base collection
+	EditableCols []string // non-system, non-join fields present in the view
+	JoinField    string   // field on this base collection that links to the main (parent→child)
+	MainRefField string   // field on the main base collection that links here (child→parent)
+}
+
+// viewEditModel describes how to edit a view collection.
+type viewEditModel struct {
+	MainCollName string
+	Sections     []viewEditSection
+}
+
+// buildViewEditModel resolves which base collections to edit for a view.
+// Uses config override from _form.config.collections, or falls back to query parsing.
+func buildViewEditModel(app core.App, viewColl *core.Collection, fc views.FormConfigJSON, labelsOverride map[string]string) (*viewEditModel, error) {
+	if !viewColl.IsView() {
+		return nil, fmt.Errorf("collection %s is not a view", viewColl.Name)
+	}
+
+	viewQI := parseViewQuery(viewColl.ViewQuery)
+	if len(viewQI.Columns) == 0 {
+		return nil, fmt.Errorf("failed to parse view query for %s", viewColl.Name)
+	}
+
+	// resolve main (FROM) collection
+	mainFrom := viewQI.From.Name
+	mainColl, err := app.FindCachedCollectionByNameOrId(mainFrom)
+	if err != nil {
+		return nil, fmt.Errorf("base collection %q not found", mainFrom)
+	}
+	if mainColl.IsView() {
+		return nil, fmt.Errorf("base collection %q is itself a view", mainFrom)
+	}
+
+	model := &viewEditModel{MainCollName: mainColl.Name}
+
+	if len(fc.Collections) > 0 {
+		// config override: each collection entry defines a section
+		for _, cr := range fc.Collections {
+			coll, cerr := app.FindCachedCollectionByNameOrId(cr.Name)
+			if cerr != nil {
+				continue
+			}
+			if coll.IsView() {
+				continue
+			}
+			sec := viewEditSection{
+				BaseCollName: coll.Name,
+				JoinField:    cr.JoinField,
+			}
+			// collect editable fields: fields present in view columns that belong to this base
+			for _, col := range viewQI.Columns {
+				if strings.EqualFold(col.Table, cr.Name) || col.Table == "" && coll.Name == mainColl.Name {
+					fName := col.Field
+					if fName == "*" {
+						continue
+					}
+					if !isSystemField(fName) && !strings.EqualFold(fName, cr.JoinField) {
+						sec.EditableCols = append(sec.EditableCols, fName)
+					}
+				}
+			}
+			if len(sec.EditableCols) > 0 {
+				model.Sections = append(model.Sections, sec)
+			}
+		}
+		// infer MainRefField for each section by checking which section links back to main
+		for i := range model.Sections {
+			sec := &model.Sections[i]
+			if sec.BaseCollName == mainColl.Name {
+				continue // main section, no parent ref needed
+			}
+			if sec.JoinField != "" {
+				// the join field is on this child section; the main's field is inferred from ON condition
+				for _, j := range viewQI.Joins {
+					if j.On.RightTable == sec.BaseCollName && j.On.RightField == sec.JoinField {
+						sec.MainRefField = j.On.LeftField
+						break
+					}
+				}
+			}
+		}
+	} else {
+		// auto-infer from parsed query
+		mainSec := viewEditSection{BaseCollName: mainColl.Name}
+		for _, col := range viewQI.Columns {
+			if col.Table == "" || strings.EqualFold(col.Table, mainColl.Name) || strings.EqualFold(col.Table, viewQI.From.Alias) {
+				fName := col.Field
+				if fName != "*" && !isSystemField(fName) {
+					mainSec.EditableCols = append(mainSec.EditableCols, fName)
+				}
+			}
+		}
+		model.Sections = append(model.Sections, mainSec)
+
+		for _, j := range viewQI.Joins {
+			joinColl, jerr := app.FindCachedCollectionByNameOrId(j.Table.Name)
+			if jerr != nil || joinColl.IsView() {
+				continue
+			}
+			sec := viewEditSection{
+				BaseCollName: joinColl.Name,
+				MainRefField: j.On.LeftField,
+				JoinField:    j.On.RightField,
+			}
+			for _, col := range viewQI.Columns {
+				if strings.EqualFold(col.Table, joinColl.Name) || strings.EqualFold(col.Table, j.Table.Alias) {
+					fName := col.Field
+					if fName != "*" && !isSystemField(fName) && !strings.EqualFold(fName, j.On.RightField) {
+						sec.EditableCols = append(sec.EditableCols, fName)
+					}
+				}
+			}
+			if len(sec.EditableCols) > 0 {
+				model.Sections = append(model.Sections, sec)
+			}
+		}
+	}
+
+	return model, nil
+}
+
+func isSystemField(name string) bool {
+	return name == "id" || name == "created" || name == "updated"
+}
+
+// handleViewForm renders a form for editing a view collection record.
+func handleViewForm(e *core.RequestEvent, configName, recordID string, configRec *core.Record) error {
+	viewColl, err := e.App.FindCachedCollectionByNameOrId(configRec.GetString("collName"))
+	if err != nil {
+		return e.NotFoundError("View collection not found", err)
+	}
+
+	fc := parseFormConfigJSON(configRec)
+	title := viewColl.Name
+	if fc.Title != "" {
+		title = fc.Title
+	} else if t := configRec.GetString("formTitle"); t != "" {
+		title = t
+	}
+	description := fc.Description
+	if description == "" {
+		description = configRec.GetString("formDescr")
+	}
+	displaySystemCol := fc.DisplaySystemCol || configRec.GetBool("displaySystemCol")
+
+	labelsOverride := buildFormLabels(configRec.GetString("formLabels"), fc.Labels)
+
+	model, err := buildViewEditModel(e.App, viewColl, fc, labelsOverride)
+	if err != nil {
+		return e.InternalServerError("Failed to build view model", err)
+	}
+
+	// fetch the view record
+	var viewRecord *core.Record
+	if recordID != "" {
+		viewRecord, err = e.App.FindRecordById(viewColl.Name, recordID)
+		if err != nil {
+			return e.NotFoundError("Record not found", err)
+		}
+	}
+
+	sections := make([]views.FormSection, 0, len(model.Sections))
+
+	for _, sec := range model.Sections {
+		coll, cerr := e.App.FindCachedCollectionByNameOrId(sec.BaseCollName)
+		if cerr != nil {
+			continue
+		}
+
+		var baseRecord *core.Record
+		if viewRecord != nil {
+			if sec.BaseCollName == model.MainCollName {
+				// main record: for single-table views the view ID is the base ID
+				if len(model.Sections) == 1 {
+					baseRecord, _ = e.App.FindRecordById(sec.BaseCollName, recordID)
+				}
+			} else if sec.MainRefField != "" && sec.JoinField != "" {
+				// find child via parent→child (MainRefField on main = JoinField on child)
+				mainID := ""
+				if sec.MainRefField == "id" {
+					mainID = recordID
+				} else if viewRecord.Get(sec.MainRefField) != nil {
+					mainID = viewRecord.GetString(sec.MainRefField)
+				}
+				if mainID != "" {
+					recs, rerr := e.App.FindRecordsByFilter(sec.BaseCollName, sec.JoinField+" = {:v}", "", 1, 0, nil, map[string]any{"v": mainID})
+					if rerr == nil && len(recs) > 0 {
+						baseRecord = recs[0]
+					}
+				}
+			}
+		}
+
+		// build rows: one row per editable column
+		var rows []views.FormRow
+		if displaySystemCol {
+			var sysFields []views.FormFieldItem
+			for _, f := range coll.Fields {
+				if isSystemField(f.GetName()) {
+					item := views.FormFieldItem{Name: f.GetName(), Label: f.GetName(), Type: "text", Data: map[string]any{}}
+					if baseRecord != nil {
+						if f.GetName() == "id" {
+							item.Value = baseRecord.GetString("id")
+						} else if f.GetName() == "created" || f.GetName() == "updated" {
+							item.Type = "autodate"
+							if t := baseRecord.GetDateTime(f.GetName()).Time(); !t.IsZero() {
+								item.Value = t.Format("2006-01-02 15:04")
+							}
+						} else {
+							item.Value = baseRecord.GetString(f.GetName())
+						}
+					}
+					sysFields = append(sysFields, item)
+				}
+			}
+			if len(sysFields) > 0 {
+				sections = append(sections, views.FormSection{
+					CollectionName: sec.BaseCollName + " (system)",
+					Rows:           []views.FormRow{{Columns: []views.FormColumn{{Fields: sysFields}}}},
+				})
+			}
+		}
+
+		for _, eName := range sec.EditableCols {
+			var field core.Field
+			for _, f := range coll.Fields {
+				if strings.EqualFold(f.GetName(), eName) {
+					field = f
+					break
+				}
+			}
+			if field == nil {
+				continue
+			}
+			// namespace the field name as collName.fieldName to avoid collisions
+			nsName := sec.BaseCollName + "." + eName
+			nsLabels := map[string]string{nsName: labelsOverride[eName]}
+			if labelsOverride[eName] == "" {
+				nsLabels[nsName] = eName
+			}
+			item := buildFieldItemFor(e.App, coll, baseRecord, field, nsName, nsLabels)
+			item.Name = nsName
+			rows = append(rows, views.FormRow{
+				Columns: []views.FormColumn{{Fields: []views.FormFieldItem{item}}},
+			})
+		}
+		if len(rows) > 0 {
+			sections = append(sections, views.FormSection{
+				CollectionName: sec.BaseCollName,
+				Rows:           rows,
+			})
+		}
+	}
+
+	data := views.FormPageData{
+		Theme:          getThemeMode(e.App),
+		ConfigName:     configName,
+		CollectionName: viewColl.Name,
+		ID:             recordID,
+		Title:          title,
+		Description:    description,
+		Sections:       sections,
+		HasConfig:      true,
+		ViewOnly:       e.Request.URL.Query().Get("view") == "1",
+	}
+
+	e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	return templates.ExecuteTemplate(e.Response, "form.html", data)
+}
+
+// handleViewFormPost saves a view form submission across multiple base collections.
+func handleViewFormPost(e *core.RequestEvent, configName, recordID string, configRec *core.Record) error {
+	viewColl, err := e.App.FindCachedCollectionByNameOrId(configRec.GetString("collName"))
+	if err != nil {
+		return e.NotFoundError("View collection not found", err)
+	}
+
+	fc := parseFormConfigJSON(configRec)
+	labelsOverride := buildFormLabels(configRec.GetString("formLabels"), fc.Labels)
+
+	model, err := buildViewEditModel(e.App, viewColl, fc, labelsOverride)
+	if err != nil {
+		return e.InternalServerError("Failed to build view model", err)
+	}
+
+	// collect per-base-collection form values
+	type baseUpdate struct {
+		collName string
+		record   *core.Record
+		isNew    bool
+	}
+	var updates []baseUpdate
+	mainUpdate := -1
+
+	for _, sec := range model.Sections {
+		coll, cerr := e.App.FindCachedCollectionByNameOrId(sec.BaseCollName)
+		if cerr != nil {
+			continue
+		}
+
+		var baseRecord *core.Record
+		isNew := false
+
+		if sec.BaseCollName == model.MainCollName && recordID != "" {
+			baseRecord, _ = e.App.FindRecordById(sec.BaseCollName, recordID)
+		}
+		if baseRecord == nil {
+			baseRecord = core.NewRecord(coll)
+			isNew = true
+		}
+
+		// set field values from namespaced form input
+		for _, eName := range sec.EditableCols {
+			nsName := sec.BaseCollName + "." + eName
+			val := e.Request.FormValue(nsName)
+			var field core.Field
+			for _, f := range coll.Fields {
+				if strings.EqualFold(f.GetName(), eName) {
+					field = f
+					break
+				}
+			}
+			if field == nil {
+				continue
+			}
+			switch field.Type() {
+			case "bool":
+				baseRecord.Set(eName, val == "on")
+			case "number":
+				if val == "" {
+					baseRecord.Set(eName, nil)
+				} else {
+					baseRecord.Set(eName, val)
+				}
+			default:
+				baseRecord.Set(eName, val)
+			}
+		}
+		updates = append(updates, baseUpdate{collName: sec.BaseCollName, record: baseRecord, isNew: isNew})
+		if sec.BaseCollName == model.MainCollName {
+			mainUpdate = len(updates) - 1
+		}
+	}
+
+	// for new child sections, set the join field to point to the main record's ID
+	for i, u := range updates {
+		if u.isNew && u.collName != model.MainCollName {
+			for _, sec := range model.Sections {
+				if sec.BaseCollName == u.collName && sec.JoinField != "" && mainUpdate >= 0 {
+					updates[i].record.Set(sec.JoinField, updates[mainUpdate].record.GetString("id"))
+				}
+			}
+		}
+	}
+
+	// save all in a transaction
+	if err := e.App.RunInTransaction(func(txApp core.App) error {
+		for i := range updates {
+			if err := txApp.Save(updates[i].record); err != nil {
+				return fmt.Errorf("failed to save %s: %w", updates[i].collName, err)
+			}
+		}
+		return nil
+	}); err != nil {
+		return e.InternalServerError("Failed to save record", err)
+	}
+
+	msg := "Record successfully added."
+	if recordID != "" {
+		msg = "Record successfully updated."
+	}
+	return e.Redirect(http.StatusSeeOther, "/form/"+configName+"?msg="+url.QueryEscape(msg))
+}
+
+// handleViewDelete deletes the main base record for a view collection.
+func handleViewDelete(e *core.RequestEvent, recordID string, configRec *core.Record) error {
+	viewColl, err := e.App.FindCachedCollectionByNameOrId(configRec.GetString("collName"))
+	if err != nil {
+		return e.NotFoundError("View collection not found", err)
+	}
+	if !viewColl.IsView() {
+		return e.BadRequestError("Not a view collection", nil)
+	}
+
+	viewQI := parseViewQuery(viewColl.ViewQuery)
+	mainFrom := viewQI.From.Name
+
+	record, err := e.App.FindRecordById(mainFrom, recordID)
+	if err != nil {
+		return e.NotFoundError("Record not found", err)
+	}
+	if err := e.App.Delete(record); err != nil {
+		return e.InternalServerError("Failed to delete record", err)
+	}
+	return e.JSON(http.StatusOK, map[string]any{"ok": true})
+}
+
 // --- Form ---
 
 func handleForm(e *core.RequestEvent) error {
@@ -827,6 +1349,10 @@ func handleForm(e *core.RequestEvent) error {
 	collection, err := e.App.FindCachedCollectionByNameOrId(collName)
 	if err != nil {
 		return e.NotFoundError("Collection not found", err)
+	}
+
+	if collection.IsView() {
+		return handleViewForm(e, configName, recordID, configRec)
 	}
 
 	fields := collection.Fields
@@ -882,19 +1408,7 @@ func handleForm(e *core.RequestEvent) error {
 		displaySystemCol = true
 	}
 
-	labelsOverride := map[string]string{}
-	if formLabels != "" {
-		parts := strings.Split(formLabels, ",")
-		for _, p := range parts {
-			p = strings.TrimSpace(p)
-			if kv := strings.SplitN(p, "=", 2); len(kv) == 2 {
-				labelsOverride[strings.TrimSpace(kv[0])] = strings.TrimSpace(kv[1])
-			}
-		}
-	}
-	for k, v := range fc.Labels {
-		labelsOverride[k] = v
-	}
+	labelsOverride := buildFormLabels(formLabels, fc.Labels)
 
 	orderMap := map[int]int{}
 	if columnOrder != "" {
@@ -987,113 +1501,6 @@ func handleForm(e *core.RequestEvent) error {
 		}
 	}
 
-	fieldType := func(f core.Field) string {
-		return f.Type()
-	}
-
-	fieldLabel := func(fName string) string {
-		if l, ok := labelsOverride[fName]; ok {
-			return l
-		}
-		return fName
-	}
-
-	buildFieldItem := func(f core.Field, fName string) views.FormFieldItem {
-		item := views.FormFieldItem{
-			Name:  fName,
-			Label: fieldLabel(fName),
-			Type:  fieldType(f),
-			Data:  map[string]any{},
-		}
-		if record == nil {
-			return item
-		}
-		switch f.Type() {
-		case "bool":
-			item.Value = strconv.FormatBool(record.GetBool(fName))
-		case "number":
-			if record.Get(fName) != nil {
-				item.Value = strconv.FormatFloat(record.GetFloat(fName), 'f', -1, 64)
-			}
-		case "date", "autodate":
-			if t := record.GetDateTime(fName).Time(); !t.IsZero() {
-				item.Value = t.Format("2006-01-02 15:04")
-			}
-		case "email":
-			item.Value = record.GetString(fName)
-		case "url":
-			raw := record.GetString(fName)
-			item.Value = raw
-			if raw != "" {
-				if u, err := url.Parse(raw); err == nil {
-					parts := strings.Split(strings.TrimRight(u.Path, "/"), "/")
-					display := raw
-					for i := len(parts) - 1; i >= 0; i-- {
-						if parts[i] != "" {
-							display = parts[i]
-							break
-						}
-					}
-					item.Data["display"] = display
-				}
-			}
-		case "editor":
-			item.Value = record.GetString(fName)
-		case "file":
-			filename := record.GetString(fName)
-			if filename != "" {
-				item.Value = filename
-				item.Data["url"] = "/api/files/" + collection.Id + "/" + record.GetString("id") + "/" + filename
-				item.Data["has"] = true
-			} else {
-				item.Data["has"] = false
-			}
-		case "select":
-			item.Value = record.GetString(fName)
-			if sf, ok := f.(*core.SelectField); ok {
-				item.Data["options"] = sf.Values
-			}
-		case "relation":
-			raw := record.GetString(fName)
-			var ids []string
-			if raw != "" {
-				ids = strings.Split(raw, ",")
-			}
-			item.Data["ids"] = ids
-			item.Data["count"] = len(ids)
-			item.Value = strconv.Itoa(len(ids))
-			if rf, ok := f.(*core.RelationField); ok {
-				if relColl, rerr := e.App.FindCachedCollectionByNameOrId(rf.CollectionId); rerr == nil {
-					item.Data["collectionName"] = relColl.Name
-				}
-			}
-		case "json":
-			jv := record.GetString(fName)
-			if jv != "" && jv != "{}" && jv != "[]" && jv != "null" {
-				var parsed any
-				if err := json.Unmarshal([]byte(jv), &parsed); err == nil {
-					pretty, _ := json.MarshalIndent(parsed, "", "  ")
-					item.Value = string(pretty)
-				} else {
-					item.Value = jv
-				}
-			}
-		case "geo":
-			geoVal := record.GetString(fName)
-			if geoVal != "" {
-				parts := strings.Split(geoVal, ",")
-				if len(parts) == 2 {
-					item.Data["lat"] = strings.TrimSpace(parts[0])
-					item.Data["lng"] = strings.TrimSpace(parts[1])
-				}
-				item.Value = geoVal
-			}
-		default:
-			item.Value = record.GetString(fName)
-		}
-		return item
-	}
-
 	rows := make([]views.FormRow, 0)
 
 	if len(layout) > 0 {
@@ -1110,7 +1517,7 @@ func handleForm(e *core.RequestEvent) error {
 					if systemCols[fName] && !displaySystemCol {
 						continue
 					}
-					fieldItems = append(fieldItems, buildFieldItem(f, fName))
+					fieldItems = append(fieldItems, buildFieldItemFor(e.App, collection, record, f, fName, labelsOverride))
 				}
 				if len(fieldItems) > 0 {
 					columns = append(columns, views.FormColumn{Fields: fieldItems})
@@ -1148,7 +1555,7 @@ func handleForm(e *core.RequestEvent) error {
 			if systemCols[fName] && !displaySystemCol {
 				continue
 			}
-			rowFields = append(rowFields, buildFieldItem(s.f, fName))
+			rowFields = append(rowFields, buildFieldItemFor(e.App, collection, record, s.f, fName, labelsOverride))
 		}
 		if len(rowFields) > 0 {
 			rows = append(rows, views.FormRow{
@@ -1180,7 +1587,7 @@ func handleFormPost(e *core.RequestEvent) error {
 	configName := e.Request.PathValue("configName")
 	recordID := e.Request.PathValue("id")
 
-	collName, _, err := resolveFormConfig(e, configName)
+	collName, configRec, err := resolveFormConfig(e, configName)
 	if err != nil {
 		return e.NotFoundError("Configuration not found", err)
 	}
@@ -1188,6 +1595,10 @@ func handleFormPost(e *core.RequestEvent) error {
 	collection, err := e.App.FindCachedCollectionByNameOrId(collName)
 	if err != nil {
 		return e.NotFoundError("Collection not found", err)
+	}
+
+	if collection.IsView() {
+		return handleViewFormPost(e, configName, recordID, configRec)
 	}
 
 	var record *core.Record
@@ -1275,9 +1686,18 @@ func handleDeleteRecord(e *core.RequestEvent) error {
 	configName := e.Request.PathValue("configName")
 	recordID := e.Request.PathValue("id")
 
-	collName, _, err := resolveFormConfig(e, configName)
+	collName, configRec, err := resolveFormConfig(e, configName)
 	if err != nil {
 		return e.NotFoundError("Configuration not found", err)
+	}
+
+	collection, err := e.App.FindCachedCollectionByNameOrId(collName)
+	if err != nil {
+		return e.NotFoundError("Collection not found", err)
+	}
+
+	if collection.IsView() {
+		return handleViewDelete(e, recordID, configRec)
 	}
 
 	record, err := e.App.FindRecordById(collName, recordID)

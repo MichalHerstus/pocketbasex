@@ -85,6 +85,12 @@ type FormRow struct {
 	Columns []FormColumn
 }
 
+// FormSection groups rows under a base collection name for view editing.
+type FormSection struct {
+	CollectionName string
+	Rows           []FormRow
+}
+
 type FormConfig struct {
 	FormTitle        string
 	FormDescr        string
@@ -119,6 +125,7 @@ type FormPageData struct {
 	Description    string
 	SystemFields   []FormFieldItem
 	Rows           []FormRow
+	Sections       []FormSection
 	HasConfig      bool
 	ViewOnly       bool
 }
