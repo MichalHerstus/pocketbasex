@@ -78,6 +78,11 @@
         <button id="exportBtn" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
             <img src="/assets/Upload-Brackets--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="Export"> Export
         </button>
+        {{if .Mssql}}
+        <button id="mssqlBtn" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
+            MSSQL
+        </button>
+        {{end}}
         <a href="/form/{{.ConfigName}}" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">+ Add new</a>
     </div>
 
@@ -173,6 +178,47 @@
             </div>
         </div>
     </div>
+
+    <!-- MSSQL modal -->
+    {{if .Mssql}}
+    <div class="modal-overlay" id="mssqlModal">
+        <div class="modal-content" style="max-width:600px;">
+            <div class="modal-header">
+                <h3>MSSQL Sync</h3>
+                <button class="modal-close" onclick="closeMssqlModal()">&times;</button>
+            </div>
+            <div class="modal-body" id="mssqlModalBody">
+                <label style="display:block;margin-bottom:6px;font-size:.9rem;font-weight:600;">DSN</label>
+                <input type="text" id="mssqlDsn" value="{{.Mssql.DSN}}" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;margin-bottom:12px;outline:none;box-sizing:border-box;">
+
+                <label style="display:block;margin-bottom:6px;font-size:.9rem;font-weight:600;">Table</label>
+                <input type="text" id="mssqlTable" value="{{.Mssql.Table}}" placeholder="dbo.MyTable" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;margin-bottom:12px;outline:none;box-sizing:border-box;">
+
+                <label style="display:block;margin-bottom:6px;font-size:.9rem;font-weight:600;">Mode</label>
+                <div style="margin-bottom:12px;">
+                    <label style="display:inline-flex;align-items:center;gap:4px;margin-right:16px;font-size:.9rem;cursor:pointer;">
+                        <input type="radio" name="mssqlMode" value="insert" {{if or (eq .Mssql.Mode "insert") (eq .Mssql.Mode "")}}checked{{end}}> Insert
+                    </label>
+                    <label style="display:inline-flex;align-items:center;gap:4px;margin-right:16px;font-size:.9rem;cursor:pointer;">
+                        <input type="radio" name="mssqlMode" value="update" {{if eq .Mssql.Mode "update"}}checked{{end}}> Update
+                    </label>
+                    <label style="display:inline-flex;align-items:center;gap:4px;font-size:.9rem;cursor:pointer;">
+                        <input type="radio" name="mssqlMode" value="replace" {{if eq .Mssql.Mode "replace"}}checked{{end}}> Replace
+                    </label>
+                </div>
+
+                <div style="display:flex;gap:8px;margin-bottom:12px;">
+                    <button id="mssqlExportBtn" style="flex:1;padding:10px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Export to MSSQL</button>
+                    <button id="mssqlImportBtn" style="flex:1;padding:10px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Import from MSSQL</button>
+                </div>
+
+                <div style="flex:1;display:flex;gap:8px;">
+                    <button type="button" onclick="closeMssqlModal()" style="flex:1;padding:8px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    {{end}}
 
     <!-- Filter modal -->
     <div class="modal-overlay" id="filterModal">
@@ -735,6 +781,72 @@
             }
             window.location.href = "/export/{{.CollectionName}}?excelFileName=" + encodeURIComponent(fileName) + "&sheetName=" + encodeURIComponent(sheetName);
         });
+
+        // mssql modal
+        var mssqlBtn = document.getElementById("mssqlBtn");
+        if (mssqlBtn) {
+            mssqlBtn.addEventListener("click", function() {
+                document.getElementById("mssqlModal").classList.add("open");
+            });
+        }
+
+        function closeMssqlModal() {
+            document.getElementById("mssqlModal").classList.remove("open");
+        }
+
+        var mssqlModal = document.getElementById("mssqlModal");
+        if (mssqlModal) {
+            mssqlModal.addEventListener("click", function(e) {
+                if (e.target === this) closeMssqlModal();
+            });
+        }
+
+        function getMssqlParams() {
+            return {
+                dsn: document.getElementById("mssqlDsn").value.trim(),
+                table: document.getElementById("mssqlTable").value.trim(),
+                mode: document.querySelector("input[name=mssqlMode]:checked").value
+            };
+        }
+
+        var mssqlExportBtn = document.getElementById("mssqlExportBtn");
+        if (mssqlExportBtn) {
+            mssqlExportBtn.addEventListener("click", function() {
+                var p = getMssqlParams();
+                if (!p.dsn || !p.table) { alert("Please fill in DSN and table."); return; }
+                var fd = new FormData();
+                fd.append("dsn", p.dsn);
+                fd.append("table", p.table);
+                fd.append("mode", p.mode);
+                fetch("/mssql-export/{{.CollectionName}}", { method: "POST", body: fd })
+                    .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
+                    .then(function(res) {
+                        if (res.ok) alert("MSSQL export successful: " + res.data.message);
+                        else alert("Export failed: " + (res.data.message || "unknown error"));
+                    })
+                    .catch(function() { alert("Export failed."); });
+            });
+        }
+
+        var mssqlImportBtn = document.getElementById("mssqlImportBtn");
+        if (mssqlImportBtn) {
+            mssqlImportBtn.addEventListener("click", function() {
+                var p = getMssqlParams();
+                if (!p.dsn || !p.table) { alert("Please fill in DSN and table."); return; }
+                if (!confirm("Really import from MSSQL? Existing data may be modified.")) return;
+                var fd = new FormData();
+                fd.append("dsn", p.dsn);
+                fd.append("table", p.table);
+                fd.append("mode", p.mode);
+                fetch("/mssql-import/{{.CollectionName}}", { method: "POST", body: fd })
+                    .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
+                    .then(function(res) {
+                        if (res.ok) alert("MSSQL import successful: " + res.data.message);
+                        else alert("Import failed: " + (res.data.message || "unknown error"));
+                    })
+                    .catch(function() { alert("Import failed."); });
+            });
+        }
 
         // flash message
         var params = new URLSearchParams(window.location.search);

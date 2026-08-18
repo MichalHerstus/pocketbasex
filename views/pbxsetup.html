@@ -72,6 +72,16 @@
         </div>
     </div>
 
+    <div class="section">
+        <h2>MSSQL</h2>
+        <div class="subtitle">Global default DSN used by the MSSQL Sync feature</div>
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            <input type="text" id="mssqlDsn" value="{{.MssqlDSN}}" placeholder="sqlserver://user:pass@host:1433?database=db&amp;encrypt=disable" style="flex:1;min-width:300px;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;outline:none;font-family:monospace;">
+            <button type="button" onclick="saveMssqlDsn()" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">Save DSN</button>
+            <span id="mssqlDsnStatus" style="font-size:.9rem;color:#666;"></span>
+        </div>
+    </div>
+
     {{range $sid, $s := .Sections}}
     <div class="section">
         <h2>{{if $s.Config.PageTitle}}{{$s.Config.PageTitle}}{{else}}{{$s.CollectionName}}{{end}}</h2>
@@ -428,6 +438,32 @@
                     if (s) s.textContent = 'Current: ' + mode;
                 })
                 .catch(function(){});
+        }
+        function saveMssqlDsn() {
+            var dsn = document.getElementById('mssqlDsn').value.trim();
+            if (!dsn) {
+                alert('Please enter a DSN.');
+                return;
+            }
+            var fd = new FormData();
+            fd.append('dsn', dsn);
+            fetch('/api/mssql-dsn', { method: 'POST', body: fd })
+                .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
+                .then(function(res) {
+                    var s = document.getElementById('mssqlDsnStatus');
+                    if (res.ok) {
+                        s.textContent = 'Saved.';
+                        s.style.color = '#28a745';
+                    } else {
+                        s.textContent = 'Save failed: ' + (res.data.message || 'unknown error');
+                        s.style.color = '#dc3545';
+                    }
+                })
+                .catch(function() {
+                    var s = document.getElementById('mssqlDsnStatus');
+                    s.textContent = 'Save failed.';
+                    s.style.color = '#dc3545';
+                });
         }
         applyTheme(currentTheme());
     </script>

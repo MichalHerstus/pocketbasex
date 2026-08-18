@@ -35,9 +35,13 @@ No CI, no tests.
 | `POST /form/{configName}/{id}` | form submit | Update record |
 | `POST /form/{configName}/{id}/delete` | delete record | Delete record, returns JSON |
 | `POST /api/theme/{mode}` | set theme | Persist global default theme (`light`/`dark`) to `pb_data/theme.json` |
+| `POST /api/mssql-dsn` | set MSSQL DSN | Persist global default MSSQL DSN to `pb_data/mssql.json` |
 | `GET /api/tabulator-data/{collectionName}` | JSON API | Raw JSON for relation modal |
 | `GET /export/{collectionName}` | export | Export to Excel via `pbexcel` |
 | `POST /import/{collectionName}` | import | Import from Excel via `pbexcel` |
+| `POST /mssql-export/{collectionName}` | MSSQL export | Push PocketBase records to a MSSQL table (JSON response) |
+| `POST /mssql-import/{collectionName}` | MSSQL import | Pull rows from a MSSQL table into PocketBase (JSON response) |
+| `GET /mssql-introspect` | MSSQL introspect | List MSSQL table columns from `INFORMATION_SCHEMA` |
 | `GET /assets/{path...}` | static | Serves `views/assets/` files |
 
 **Auth**: Cookie-based `pb_auth` (JWT via PocketBase). Login uses `FindAuthRecordByEmail("users", ...)` — name field is the email.
@@ -66,6 +70,13 @@ A record with `_name={configName}` configures `/tabular/{configName}`:
 - `searchBox` — if true, search input filters across all columns
 - `pagination` — if true, « ‹ [input] › » controls
 - `filter` — filter expression for records
+- `_mssql` — JSON config `{dsn, table, mode, mapping:[{pbField,dbField}]}` enabling the MSSQL Sync modal (DSN falls back to the global DSN from `/pbx-setup`)
+
+## MSSQL sync
+
+- Package `pbmssql/pb-mssql.go` provides `ExportToMSSQL`, `ImportFromMSSQL`, `IntrospectTable` with a DSN-keyed connection pool (driver `sqlserver`).
+- Global default DSN persisted in `pb_data/mssql.json`, editable from `/pbx-setup` via `POST /api/mssql-dsn`.
+- `mode` semantics (insert/update/replace) mirror the Excel importer; unique single-column indexes are used to match records on import.
 
 ## `_form` collection
 
@@ -103,5 +114,6 @@ Add/modify collection fields via **JS SDK** in `pb_migrations/`. See `.opencode/
 - `pb_public/` — does not exist; do not reference it
 - `views/assets/` — icons (PNG) and `theme.css`; served via embedded FS
 - `pbexcel/` — Excel import/export logic (`pb-excel.go`)
+- `pbmssql/` — MSSQL import/export/introspection logic (`pb-mssql.go`)
 - `views/pages.go` — Go structs for template data (`TabulatorPageData`, `FormPageData`, `AppPageData`, etc.)
 - No `README.md` exists

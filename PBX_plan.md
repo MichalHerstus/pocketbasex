@@ -88,11 +88,11 @@ Decisions confirmed with user:
 4. Phase 4 (MSSQL) → `go mod tidy`, build/vet (needs a reachable MSSQL to test).
 5. Phase 5 (collection creation) → build/vet.
 6. Phase 6 docs/cleanup.
-
+  
+**Not in this iteration (later phases):** Lua actions, card/kanban/detail/report views, print-to-PDF, MySQL/Postgres support.
 ## Future development 
+- multilanguage UI (i118n?), languages setup in source code, before building
 - LUA scripting
 - reporting
 - mobile access (optimized views for mobile phone/tablet)
 - AI built-in agent for operations (insert record from paln text/PDF/md/image, create collection and configuration, summary of data etc.). Use LLMs through OpenRouter.
-  
-**Not in this iteration (later phases):** Lua actions, card/kanban/detail/report views, print-to-PDF, MySQL/Postgres support.

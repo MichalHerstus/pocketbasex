@@ -57,6 +57,12 @@
             {{end}}
         </p>
 
+        {{if eq .Type "list"}}
+        <label for="mssql">MSSQL config (JSON)</label>
+        <textarea id="mssql" name="mssql" placeholder='{"dsn":"sqlserver://user:pass@host:1433?database=db&amp;encrypt=disable","table":"dbo.MyTable","mode":"insert","mapping":[{"pbField":"name","dbField":"name"}]}'>{{.MssqlJSON}}</textarea>
+        <p class="hint">Optional. Enables the MSSQL Sync button on the tabular view. Keys: dsn, table, mode (insert/update/replace), mapping (pbField &harr; dbField pairs). Leave empty to disable.</p>
+        {{end}}
+
         <div class="actions">
             <button type="submit" class="btn btn-green">Save</button>
         </div>

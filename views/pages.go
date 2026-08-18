@@ -66,6 +66,7 @@ type TabulatorPageData struct {
 	Page           int
 	TotalPages     int
 	Config         TabulatorConfig
+	Mssql          *MssqlConfig
 }
 
 type FormFieldItem struct {
@@ -151,6 +152,7 @@ type AppPageData struct {
 
 type PbxSetupPageData struct {
 	Theme    string
+	MssqlDSN string
 	Sections []TabulatorPageData
 }
 
@@ -179,4 +181,5 @@ type ConfigEditorPageData struct {
 	ConfigJSON  string
 	Collections []string
 	IsNew       bool
+	MssqlJSON   string
 }

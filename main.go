@@ -23,6 +23,7 @@ import (
 	"github.com/pocketbase/pocketbase/tools/hook"
 
 	"pbx/pbexcel"
+	"pbx/pbmssql"
 	"pbx/views"
 )
 
@@ -157,6 +158,18 @@ func main() {
 			se.Router.POST("/import/{collectionName}", func(e *core.RequestEvent) error {
 				return handleImport(e)
 			})
+			// MSSQL export
+			se.Router.POST("/mssql-export/{collectionName}", func(e *core.RequestEvent) error {
+				return handleMssqlExport(e)
+			})
+			// MSSQL import
+			se.Router.POST("/mssql-import/{collectionName}", func(e *core.RequestEvent) error {
+				return handleMssqlImport(e)
+			})
+			// MSSQL introspect table
+			se.Router.GET("/mssql-introspect", func(e *core.RequestEvent) error {
+				return handleMssqlIntrospect(e)
+			})
 			// serve static assets
 			se.Router.GET("/assets/{path...}", func(e *core.RequestEvent) error {
 				path := e.Request.PathValue("path")
@@ -187,6 +200,17 @@ func main() {
 					return e.InternalServerError("Failed to save theme", err)
 				}
 				return e.JSON(http.StatusOK, map[string]any{"ok": true, "mode": mode})
+			})
+			// save the global default MSSQL DSN, persisted in pb_data/mssql.json
+			se.Router.POST("/api/mssql-dsn", func(e *core.RequestEvent) error {
+				dsn := e.Request.FormValue("dsn")
+				if strings.TrimSpace(dsn) == "" {
+					return e.BadRequestError("DSN cannot be empty", nil)
+				}
+				if err := setMssqlDSN(e.App, dsn); err != nil {
+					return e.InternalServerError("Failed to save MSSQL DSN", err)
+				}
+				return e.JSON(http.StatusOK, map[string]any{"ok": true, "dsn": dsn})
 			})
 
 			err := se.Next()
@@ -419,6 +443,40 @@ func setThemeMode(app core.App, mode string) error {
 		return err
 	}
 	return os.WriteFile(themeFilePath(app), data, 0o644)
+}
+
+// --- MSSQL global DSN ---
+
+// mssqlDSNFilePath returns the JSON file that stores the global default MSSQL DSN.
+func mssqlDSNFilePath(app core.App) string {
+	return filepath.Join(app.DataDir(), "mssql.json")
+}
+
+// getMssqlDSN returns the global default MSSQL DSN ("" when unset).
+func getMssqlDSN(app core.App) string {
+	data, err := os.ReadFile(mssqlDSNFilePath(app))
+	if err != nil {
+		return ""
+	}
+	var cfg struct {
+		DSN string `json:"dsn"`
+	}
+	if json.Unmarshal(data, &cfg) != nil {
+		return ""
+	}
+	return cfg.DSN
+}
+
+// setMssqlDSN persists the global default MSSQL DSN to pb_data/mssql.json.
+func setMssqlDSN(app core.App, dsn string) error {
+	if strings.TrimSpace(dsn) == "" {
+		return fmt.Errorf("dsn cannot be empty")
+	}
+	data, err := json.Marshal(map[string]string{"dsn": dsn})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(mssqlDSNFilePath(app), data, 0o644)
 }
 
 // --- Config resolution ---
@@ -732,7 +790,21 @@ func buildTabulatorData(e *core.RequestEvent, collName string, configRec *core.R
 		Page:           1,
 		TotalPages:     totalPages,
 		Config:         cfg,
+		Mssql:          effectiveMssqlConfig(parseMssqlConfig(configRec), getMssqlDSN(e.App)),
 	}, nil
+}
+
+// effectiveMssqlConfig returns the MSSQL config for a tabular view, falling back
+// to the global default DSN when the record config does not provide one. The
+// pointer is nil when nothing MSSQL-related has been configured.
+func effectiveMssqlConfig(mc views.MssqlConfig, globalDSN string) *views.MssqlConfig {
+	if mc.DSN == "" {
+		mc.DSN = globalDSN
+	}
+	if mc.DSN == "" {
+		return nil
+	}
+	return &mc
 }
 
 func handleTabulator(e *core.RequestEvent) error {
@@ -769,6 +841,7 @@ func handlePbxSetup(e *core.RequestEvent) error {
 
 	pageData := views.PbxSetupPageData{
 		Theme:    getThemeMode(e.App),
+		MssqlDSN: getMssqlDSN(e.App),
 		Sections: sections,
 	}
 
@@ -1680,6 +1753,86 @@ func handleImport(e *core.RequestEvent) error {
 	return e.Redirect(http.StatusSeeOther, "/tabular/"+collName+"?msg="+msg)
 }
 
+// --- MSSQL Export ---
+
+func handleMssqlExport(e *core.RequestEvent) error {
+	collName := e.Request.PathValue("collectionName")
+	dsn := e.Request.FormValue("dsn")
+	table := e.Request.FormValue("table")
+	mode := e.Request.FormValue("mode")
+
+	if dsn == "" || table == "" {
+		return e.BadRequestError("DSN and table are required", nil)
+	}
+
+	if mode == "" {
+		mode = "insert"
+	}
+
+	var mapping []struct {
+		PBField string `json:"pbField"`
+		DBField string `json:"dbField"`
+	}
+	if raw := e.Request.FormValue("mapping"); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &mapping)
+	}
+
+	if err := pbmssql.ExportToMSSQL(e.App, collName, dsn, table, mode, mapping); err != nil {
+		return e.InternalServerError("MSSQL export failed", err)
+	}
+
+	return e.JSON(http.StatusOK, map[string]any{"ok": true, "message": "Export successful"})
+}
+
+// --- MSSQL Import ---
+
+func handleMssqlImport(e *core.RequestEvent) error {
+	collName := e.Request.PathValue("collectionName")
+	dsn := e.Request.FormValue("dsn")
+	table := e.Request.FormValue("table")
+	mode := e.Request.FormValue("mode")
+
+	if dsn == "" || table == "" {
+		return e.BadRequestError("DSN and table are required", nil)
+	}
+
+	if mode == "" {
+		mode = "insert"
+	}
+
+	var mapping []struct {
+		PBField string `json:"pbField"`
+		DBField string `json:"dbField"`
+	}
+	if raw := e.Request.FormValue("mapping"); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &mapping)
+	}
+
+	if err := pbmssql.ImportFromMSSQL(e.App, collName, dsn, table, mode, mapping); err != nil {
+		return e.InternalServerError("MSSQL import failed", err)
+	}
+
+	return e.JSON(http.StatusOK, map[string]any{"ok": true, "message": "Import successful"})
+}
+
+// --- MSSQL Introspect ---
+
+func handleMssqlIntrospect(e *core.RequestEvent) error {
+	dsn := e.Request.URL.Query().Get("dsn")
+	table := e.Request.URL.Query().Get("table")
+
+	if dsn == "" || table == "" {
+		return e.BadRequestError("DSN and table are required", nil)
+	}
+
+	columns, err := pbmssql.IntrospectTable(dsn, table)
+	if err != nil {
+		return e.InternalServerError("Introspect failed", err)
+	}
+
+	return e.JSON(http.StatusOK, map[string]any{"columns": columns})
+}
+
 // --- Delete record ---
 
 func handleDeleteRecord(e *core.RequestEvent) error {
@@ -1819,6 +1972,9 @@ func handlePbxConfigEditor(e *core.RequestEvent) error {
 		pageData.Name = rec.GetString("_name")
 		pageData.CollName = rec.GetString("collName")
 		pageData.ConfigJSON = configRaw(rec, "config")
+		if cfgType == "list" {
+			pageData.MssqlJSON = rec.GetString("_mssql")
+		}
 	}
 
 	e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -1850,6 +2006,7 @@ func handlePbxConfigSave(e *core.RequestEvent) error {
 			ConfigJSON:  configJSON,
 			Collections: listCollections(e),
 			IsNew:       true,
+			MssqlJSON:   e.Request.FormValue("mssql"),
 		})
 	}
 
@@ -1870,6 +2027,9 @@ func handlePbxConfigSave(e *core.RequestEvent) error {
 	rec.Set("_name", name)
 	rec.Set("collName", collName)
 	rec.Set("config", configJSON)
+	if cfgType == "list" {
+		rec.Set("_mssql", e.Request.FormValue("mssql"))
+	}
 	if cfgType == "list" {
 		rec.Set("pageTitle", parseListConfig(rec).Title)
 	} else {
