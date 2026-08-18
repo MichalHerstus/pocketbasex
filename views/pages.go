@@ -42,12 +42,43 @@ type MssqlMapping struct {
 	DBField string `json:"dbField"`
 }
 
-// MssqlConfig is the JSON _mssql field of a list config record.
+// MssqlConfig is the JSON _mssql field of a view config record.
 type MssqlConfig struct {
 	DSN     string         `json:"dsn"`
 	Table   string         `json:"table"`
 	Mode    string         `json:"mode"`
 	Mapping []MssqlMapping `json:"mapping"`
+}
+
+// ViewTabulatorConfig is the JSON stored in a _views record's _tabulator field.
+// It holds all settings previously spread across _tabulator collection scalar
+// fields plus the list JSON config.
+type ViewTabulatorConfig struct {
+	PageTitle        string       `json:"pageTitle"`
+	CollectionDescr  string       `json:"collectionDescr"`
+	ColumnTitles     string       `json:"columnTitles"`
+	ColumnOrder      string       `json:"columnOrder"`
+	ColumnSorting    bool         `json:"columnSorting"`
+	SearchBox        bool         `json:"searchBox"`
+	Pagination       bool         `json:"pagination"`
+	DisplaySystemCol bool         `json:"displaySystemCol"`
+	Filter           string       `json:"filter"`
+	Columns          []ListColumn `json:"columns,omitempty"`
+}
+
+// ViewFormConfig is the JSON stored in a _views record's _form field. It holds
+// all settings previously in the _form collection scalar fields plus the form
+// JSON config (layout/labels/collections).
+type ViewFormConfig struct {
+	FormTitle        string              `json:"formTitle"`
+	FormDescr        string              `json:"formDescr"`
+	FormLabels       string              `json:"formLabels"`
+	FormLayout       string              `json:"formLayout"`
+	ColumnOrder      string              `json:"columnOrder"`
+	DisplaySystemCol bool                `json:"displaySystemCol"`
+	Layout           [][][]int           `json:"layout,omitempty"`
+	Labels           map[string]string   `json:"labels,omitempty"`
+	Collections      []FormCollectionRef `json:"collections,omitempty"`
 }
 
 type TabulatorPageData struct {
@@ -171,17 +202,17 @@ type PbxConfigPageData struct {
 	FormConfigs []ConfigEntry
 }
 
-// ConfigEditorPageData backs the /pbx-config/{type}/new|{name} editor form.
+// ConfigEditorPageData backs the /pbx-config/view/new|{name} editor form for a
+// unified _views record (holds list + form config in one record).
 type ConfigEditorPageData struct {
-	Theme       string
-	Type        string
-	TypeLabel   string
-	Name        string
-	CollName    string
-	ConfigJSON  string
-	Collections []string
-	IsNew       bool
-	MssqlJSON   string
+	Theme          string
+	Name           string
+	CollName       string
+	TabulatorJSON  string
+	FormJSON       string
+	MssqlJSON      string
+	Collections    []string
+	IsNew          bool
 }
 
 // WizardColumn is one editable column in the import wizard preview step.

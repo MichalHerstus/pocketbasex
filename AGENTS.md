@@ -27,15 +27,15 @@ No CI, no tests.
 | `GET /login` | login form | Renders login.html |
 | `POST /login` | authenticate | Email/password auth via `users` collection, sets `pb_auth` cookie |
 | `GET /app` | dashboard | Menu of links grouped by `_app` collection records |
-| `GET /pbx-setup` | setup | Shows `_app`, `_tabulator`, `_form` tables + Theme setup |
-| `GET /pbx-config` | config editor | List `_tabulator` + `_form` configs |
-| `GET /pbx-config/{list|form}/new|{name}` | config editor | Edit list/form config JSON + `_mssql` |
-| `POST /pbx-config/save` | config save | Persist config record |
-| `POST /pbx-config/delete` | config delete | Delete config record |
+| `GET /pbx-setup` | setup | Shows `_app`, `_views` tables + Theme setup |
+| `GET /pbx-config` | config editor | List `_views` configs |
+| `GET /pbx-config/view/new|{name}` | config editor | Edit `_views` `_tabulator`/`_form`/`_mssql` JSON |
+| `POST /pbx-config/save` | config save | Persist `_views` record |
+| `POST /pbx-config/delete` | config delete | Delete `_views` record |
 | `GET/POST /pbx-config/import-excel` | import wizard | 3-step wizard: introspect Excel → preview schema → create collection (+ optional data import) |
 | `GET/POST /pbx-config/import-mssql` | import wizard | 3-step wizard: introspect MSSQL table → preview schema → create collection (+ optional data import) |
 | `GET /tabular/{configName}` | table view | All records as client-side JSON; 20/page, sort, search |
-| `GET /form/{configName}` | form view | New record form, layout configured via `_form` collection |
+| `GET /form/{configName}` | form view | New record form, layout configured via `_views` `_form` |
 | `GET /form/{configName}/{id}` | form view | Edit existing record |
 | `POST /form/{configName}` | form submit | Create record |
 | `POST /form/{configName}/{id}` | form submit | Update record |
@@ -63,20 +63,34 @@ Defined in `main.go` (used in `views/*.html`): `add`, `sub`, `seq`, `safeJS`, `s
 - The topbar switch also stores a per-browser override in `localStorage` key `pbx-theme`; on load the override wins, otherwise the server default applies.
 - `login.html` uses its own `:root` variables plus the shared `theme.css`.
 
-## `_tabulator` collection
+## `_views` collection (unified config)
 
-A record with `_name={configName}` configures `/tabular/{configName}`:
+A record with `_name={configName}` configures BOTH `/tabular/{configName}` and `/form/{configName}` for the collection named in `_collName`. Holds all settings that used to live in the separate `_tabulator` and `_form` collections:
 
-- `pageTitle` — custom `<h1>` heading (falls back to collection name)
-- `collectionDescr` — italic text below record count
-- `columnTitles` — comma-delimited override for column headers
-- `columnOrder` — comma-delimited 1-based absolute field indices (applied before `displaySystemCol`)
-- `displaySystemCol` — if false, hides `id`, `created`, `updated`
-- `columnSorting` — if true, clickable sort (↕→▲→▼)
-- `searchBox` — if true, search input filters across all columns
-- `pagination` — if true, « ‹ [input] › » controls
-- `filter` — filter expression for records
+- `_name` — configuration name (endpoint `/tabular/{_name}`, `/form/{_name}`)
+- `_collName` — collection the view is configured for
+- `_tabulator` — JSON with tabulator (list) settings:
+  - `pageTitle` — custom `<h1>` heading (falls back to collection name)
+  - `collectionDescr` — italic text below record count
+  - `columnTitles` — comma-delimited override for column headers
+  - `columnOrder` — comma-delimited 1-based absolute field indices
+  - `displaySystemCol` — if false, hides `id`, `created`, `updated`
+  - `columnSorting` — if true, clickable sort (↕→▲→▼)
+  - `searchBox` — if true, search input filters across all columns
+  - `pagination` — if true, « ‹ [input] › » controls
+  - `filter` — filter expression for records
+  - `columns` — optional `[{field, title}]` column list override
+- `_form` — JSON with form settings:
+  - `formTitle` — custom heading (falls back to collection name)
+  - `formDescr` — description paragraph below heading
+  - `displaySystemCol` — if true, shows `id`, `created`, `updated` as read-only
+  - `columnOrder` — comma-delimited 1-based field indices (when no `formLayout`)
+  - `formLayout` — slash-delimited rows, parentheses for column groups: `"row:(1,2) (3,4) / row:(5,6)"` (0-based internally, 1-based in config)
+  - `formLabels` — comma-delimited `field=Label` pairs (e.g. `"name=Jméno,email=E-mail"`)
+  - `layout` / `labels` / `collections` — optional structured form JSON
 - `_mssql` — JSON config `{dsn, table, mode, mapping:[{pbField,dbField}]}` enabling the MSSQL Sync modal (DSN falls back to the global DSN from `/pbx-setup`)
+
+The `/pbx-config` editor at `/pbx-config/view/{name}` edits the `_tabulator`, `_form` and `_mssql` JSON fields of a `_views` record.
 
 ## MSSQL sync
 
@@ -84,17 +98,6 @@ A record with `_name={configName}` configures `/tabular/{configName}`:
 - Global default DSN persisted in `pb_data/mssql.json`, editable from `/pbx-setup` via `POST /api/mssql-dsn`.
 - `mode` semantics (insert/update/replace) mirror the Excel importer; unique single-column indexes are used to match records on import.
 - Export requires user confirmation before creating a missing table: `ExportToMSSQL` returns `ErrTableMissing`, the handler replies with HTTP 409 + `{tableMissing:true}`, the UI prompts the user, and only after confirm does the request re-send with `createTable=1` (which calls `pbmssql.CreateTable`, seeding columns from PB field types).
-
-## `_form` collection
-
-A record with `collName={collectionName}` and `_name={configName}` configures `/form/{configName}`:
-
-- `formTitle` — custom heading (falls back to collection name)
-- `formDescr` — description paragraph below heading
-- `displaySystemCol` — if true, shows `id`, `created`, `updated` as read-only
-- `columnOrder` — comma-delimited 1-based field indices (applied when no `formLayout`)
-- `formLayout` — slash-delimited rows, parentheses for column groups: `"row:(1,2) (3,4) / row:(5,6)"` (0-based internally, 1-based in config)
-- `formLabels` — comma-delimited `field=Label` pairs (e.g. `"name=Jméno,email=E-mail"`)
 
 ## `_app` collection
 
@@ -106,7 +109,7 @@ Configures the `/app` dashboard. Fields:
 
 ## Collections (from `_app`, `_tabulator`, `_form` records in DB)
 
-`zamestnanci`, `produkty`, `karta_majetku`, `inventury`, `inv_radky`, `cinnosti`, `mapa_umisteni`, `umisteni`, `organizacni_struktura`, `kat_produktu`, `definice_stitku`, `poznamky`. System: `users` (auth), `roles`, `_tabulator`, `_form`, `_app`, `_metadata`.
+`zamestnanci`, `produkty`, `karta_majetku`, `inventury`, `inv_radky`, `cinnosti`, `mapa_umisteni`, `umisteni`, `organizacni_struktura`, `kat_produktu`, `definice_stitku`, `poznamky`. System: `users` (auth), `roles`, `_views`, `_app`, `_metadata`.
 
 ## Schema changes
 

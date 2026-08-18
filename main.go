@@ -108,22 +108,11 @@ func main() {
 			se.Router.GET("/pbx-config", func(e *core.RequestEvent) error {
 				return handlePbxConfig(e)
 			})
-			se.Router.GET("/pbx-config/list/new", func(e *core.RequestEvent) error {
-				e.Request.SetPathValue("configType", "list")
+			se.Router.GET("/pbx-config/view/new", func(e *core.RequestEvent) error {
 				e.Request.SetPathValue("name", "new")
 				return handlePbxConfigEditor(e)
 			})
-			se.Router.GET("/pbx-config/list/{name}", func(e *core.RequestEvent) error {
-				e.Request.SetPathValue("configType", "list")
-				return handlePbxConfigEditor(e)
-			})
-			se.Router.GET("/pbx-config/form/new", func(e *core.RequestEvent) error {
-				e.Request.SetPathValue("configType", "form")
-				e.Request.SetPathValue("name", "new")
-				return handlePbxConfigEditor(e)
-			})
-			se.Router.GET("/pbx-config/form/{name}", func(e *core.RequestEvent) error {
-				e.Request.SetPathValue("configType", "form")
+			se.Router.GET("/pbx-config/view/{name}", func(e *core.RequestEvent) error {
 				return handlePbxConfigEditor(e)
 			})
 			se.Router.POST("/pbx-config/save", func(e *core.RequestEvent) error {
@@ -519,31 +508,32 @@ func findConfigByAttr(e *core.RequestEvent, setupColl, attr, value string) *core
 // resolveListConfig resolves a list configuration by its _name and returns the target
 // collection name plus the configuration record.
 func resolveListConfig(e *core.RequestEvent, configName string) (string, *core.Record, error) {
-	rec := findConfigByAttr(e, "_tabulator", "_name", configName)
+	rec := findConfigByAttr(e, "_views", "_name", configName)
 	if rec == nil {
 		return "", nil, fmt.Errorf("list configuration %q not found", configName)
 	}
-	return rec.GetString("collName"), rec, nil
+	return rec.GetString("_collName"), rec, nil
 }
 
 // resolveFormConfig resolves a form configuration by its _name.
 func resolveFormConfig(e *core.RequestEvent, configName string) (string, *core.Record, error) {
-	rec := findConfigByAttr(e, "_form", "_name", configName)
+	rec := findConfigByAttr(e, "_views", "_name", configName)
 	if rec == nil {
 		return "", nil, fmt.Errorf("form configuration %q not found", configName)
 	}
-	return rec.GetString("collName"), rec, nil
+	return rec.GetString("_collName"), rec, nil
 }
 
 // defaultListConfig returns the default (first) list configuration record for a collection.
 func defaultListConfig(e *core.RequestEvent, collName string) *core.Record {
-	recs, err := e.App.FindRecordsByFilter("_tabulator", "collName = {:c}", "", 1, 0, nil, map[string]any{"c": collName})
+	recs, err := e.App.FindRecordsByFilter("_views", "_collName = {:c}", "", 1, 0, nil, map[string]any{"c": collName})
 	if err != nil || len(recs) == 0 {
 		return nil
 	}
 	return recs[0]
 }
 
+// parseListConfig is retained for legacy reading of a raw list config JSON blob.
 func parseListConfig(rec *core.Record) views.ListConfig {
 	var lc views.ListConfig
 	if rec == nil {
@@ -555,6 +545,30 @@ func parseListConfig(rec *core.Record) views.ListConfig {
 	return lc
 }
 
+// parseViewTabulator parses the _views record _tabulator JSON field.
+func parseViewTabulator(rec *core.Record) views.ViewTabulatorConfig {
+	var vc views.ViewTabulatorConfig
+	if rec == nil {
+		return vc
+	}
+	if raw := configRaw(rec, "_tabulator"); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &vc)
+	}
+	return vc
+}
+
+// parseViewForm parses the _views record _form JSON field.
+func parseViewForm(rec *core.Record) views.ViewFormConfig {
+	var fc views.ViewFormConfig
+	if rec == nil {
+		return fc
+	}
+	if raw := configRaw(rec, "_form"); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &fc)
+	}
+	return fc
+}
+
 func parseMssqlConfig(rec *core.Record) views.MssqlConfig {
 	var mc views.MssqlConfig
 	if rec == nil {
@@ -564,6 +578,19 @@ func parseMssqlConfig(rec *core.Record) views.MssqlConfig {
 		_ = json.Unmarshal([]byte(raw), &mc)
 	}
 	return mc
+}
+
+// formConfigFromView converts the unified _views._form config to the legacy
+// FormConfigJSON shape used by the view-editing model.
+func formConfigFromView(fc views.ViewFormConfig) views.FormConfigJSON {
+	return views.FormConfigJSON{
+		Title:            fc.FormTitle,
+		Description:      fc.FormDescr,
+		DisplaySystemCol: fc.DisplaySystemCol,
+		Layout:           fc.Layout,
+		Labels:           fc.Labels,
+		Collections:      fc.Collections,
+	}
 }
 
 func parseFormConfigJSON(rec *core.Record) views.FormConfigJSON {
@@ -604,38 +631,18 @@ func buildTabulatorData(e *core.RequestEvent, collName string, configRec *core.R
 		return nil, err
 	}
 
-	lc := parseListConfig(configRec)
+	vc := parseViewTabulator(configRec)
 
-	cfg := views.TabulatorConfig{}
-	if configRec != nil {
-		cfg.PageTitle = configRec.GetString("pageTitle")
-		cfg.CollectionDescr = configRec.GetString("collectionDescr")
-		cfg.ColumnTitles = configRec.GetString("columnTitles")
-		cfg.ColumnOrder = configRec.GetString("columnOrder")
-		cfg.ColumnSorting = configRec.GetBool("columnSorting")
-		cfg.SearchBox = configRec.GetBool("searchBox")
-		cfg.Pagination = configRec.GetBool("pagination")
-		cfg.DisplaySystemCol = configRec.GetBool("displaySystemCol")
-		cfg.Filter = configRec.GetString("filter")
-	}
-	// JSON config overrides scalar values where set
-	if lc.Title != "" {
-		cfg.PageTitle = lc.Title
-	}
-	if lc.Description != "" {
-		cfg.CollectionDescr = lc.Description
-	}
-	if lc.SearchBox {
-		cfg.SearchBox = true
-	}
-	if lc.Pagination {
-		cfg.Pagination = true
-	}
-	if lc.DisplaySystemCol {
-		cfg.DisplaySystemCol = true
-	}
-	if lc.Filter != "" {
-		cfg.Filter = lc.Filter
+	cfg := views.TabulatorConfig{
+		PageTitle:        vc.PageTitle,
+		CollectionDescr:  vc.CollectionDescr,
+		ColumnTitles:     vc.ColumnTitles,
+		ColumnOrder:      vc.ColumnOrder,
+		ColumnSorting:    vc.ColumnSorting,
+		SearchBox:        vc.SearchBox,
+		Pagination:       vc.Pagination,
+		DisplaySystemCol: vc.DisplaySystemCol,
+		Filter:           vc.Filter,
 	}
 
 	fields := collection.Fields
@@ -644,12 +651,12 @@ func buildTabulatorData(e *core.RequestEvent, collName string, configRec *core.R
 
 	var fieldIndices []int
 	var headers []string
-	if len(lc.Columns) > 0 {
+	if len(vc.Columns) > 0 {
 		nameToIdx := map[string]int{}
 		for i, f := range fields {
 			nameToIdx[f.GetName()] = i
 		}
-		for _, col := range lc.Columns {
+		for _, col := range vc.Columns {
 			if idx, ok := nameToIdx[col.Field]; ok {
 				fieldIndices = append(fieldIndices, idx)
 				headers = append(headers, col.Title)
@@ -710,7 +717,7 @@ func buildTabulatorData(e *core.RequestEvent, collName string, configRec *core.R
 		}
 	}
 
-	if len(lc.Columns) == 0 && cfg.ColumnTitles != "" {
+	if len(vc.Columns) == 0 && cfg.ColumnTitles != "" {
 		parts := strings.Split(cfg.ColumnTitles, ",")
 		for i, p := range parts {
 			if i < len(visibleHeaders) {
@@ -851,7 +858,7 @@ func handleTabulator(e *core.RequestEvent) error {
 // --- PBX Setup ---
 
 func handlePbxSetup(e *core.RequestEvent) error {
-	collections := []string{"_app", "_tabulator", "_form"}
+	collections := []string{"_app", "_views"}
 	sections := make([]views.TabulatorPageData, 0, len(collections))
 
 	for _, name := range collections {
@@ -1161,27 +1168,22 @@ func isSystemField(name string) bool {
 
 // handleViewForm renders a form for editing a view collection record.
 func handleViewForm(e *core.RequestEvent, configName, recordID string, configRec *core.Record) error {
-	viewColl, err := e.App.FindCachedCollectionByNameOrId(configRec.GetString("collName"))
+	viewColl, err := e.App.FindCachedCollectionByNameOrId(configRec.GetString("_collName"))
 	if err != nil {
 		return e.NotFoundError("View collection not found", err)
 	}
 
-	fc := parseFormConfigJSON(configRec)
+	fc := parseViewForm(configRec)
 	title := viewColl.Name
-	if fc.Title != "" {
-		title = fc.Title
-	} else if t := configRec.GetString("formTitle"); t != "" {
-		title = t
+	if fc.FormTitle != "" {
+		title = fc.FormTitle
 	}
-	description := fc.Description
-	if description == "" {
-		description = configRec.GetString("formDescr")
-	}
-	displaySystemCol := fc.DisplaySystemCol || configRec.GetBool("displaySystemCol")
+	description := fc.FormDescr
+	displaySystemCol := fc.DisplaySystemCol
 
-	labelsOverride := buildFormLabels(configRec.GetString("formLabels"), fc.Labels)
+	labelsOverride := buildFormLabels(fc.FormLabels, nil)
 
-	model, err := buildViewEditModel(e.App, viewColl, fc, labelsOverride)
+	model, err := buildViewEditModel(e.App, viewColl, formConfigFromView(fc), labelsOverride)
 	if err != nil {
 		return e.InternalServerError("Failed to build view model", err)
 	}
@@ -1306,15 +1308,15 @@ func handleViewForm(e *core.RequestEvent, configName, recordID string, configRec
 
 // handleViewFormPost saves a view form submission across multiple base collections.
 func handleViewFormPost(e *core.RequestEvent, configName, recordID string, configRec *core.Record) error {
-	viewColl, err := e.App.FindCachedCollectionByNameOrId(configRec.GetString("collName"))
+	viewColl, err := e.App.FindCachedCollectionByNameOrId(configRec.GetString("_collName"))
 	if err != nil {
 		return e.NotFoundError("View collection not found", err)
 	}
 
-	fc := parseFormConfigJSON(configRec)
-	labelsOverride := buildFormLabels(configRec.GetString("formLabels"), fc.Labels)
+	fc := parseViewForm(configRec)
+	labelsOverride := buildFormLabels(fc.FormLabels, nil)
 
-	model, err := buildViewEditModel(e.App, viewColl, fc, labelsOverride)
+	model, err := buildViewEditModel(e.App, viewColl, formConfigFromView(fc), labelsOverride)
 	if err != nil {
 		return e.InternalServerError("Failed to build view model", err)
 	}
@@ -1410,7 +1412,7 @@ func handleViewFormPost(e *core.RequestEvent, configName, recordID string, confi
 
 // handleViewDelete deletes the main base record for a view collection.
 func handleViewDelete(e *core.RequestEvent, recordID string, configRec *core.Record) error {
-	viewColl, err := e.App.FindCachedCollectionByNameOrId(configRec.GetString("collName"))
+	viewColl, err := e.App.FindCachedCollectionByNameOrId(configRec.GetString("_collName"))
 	if err != nil {
 		return e.NotFoundError("View collection not found", err)
 	}
@@ -1461,50 +1463,24 @@ func handleForm(e *core.RequestEvent) error {
 		}
 	}
 
+	fv := parseViewForm(configRec)
+
 	title := collName
-	if configRec != nil {
-		if t := configRec.GetString("formTitle"); t != "" {
-			title = t
-		}
+	if fv.FormTitle != "" {
+		title = fv.FormTitle
 	}
 
-	description := ""
-	if configRec != nil {
-		description = configRec.GetString("formDescr")
-	}
+	description := fv.FormDescr
 
-	displaySystemCol := false
-	if configRec != nil {
-		displaySystemCol = configRec.GetBool("displaySystemCol")
-	}
+	displaySystemCol := fv.DisplaySystemCol
 
-	formLayout := ""
-	if configRec != nil {
-		formLayout = configRec.GetString("formLayout")
-	}
+	formLayout := fv.FormLayout
 
-	columnOrder := ""
-	if configRec != nil {
-		columnOrder = configRec.GetString("columnOrder")
-	}
+	columnOrder := fv.ColumnOrder
 
-	formLabels := ""
-	if configRec != nil {
-		formLabels = configRec.GetString("formLabels")
-	}
+	formLabels := fv.FormLabels
 
-	fc := parseFormConfigJSON(configRec)
-	if fc.Title != "" {
-		title = fc.Title
-	}
-	if fc.Description != "" {
-		description = fc.Description
-	}
-	if fc.DisplaySystemCol {
-		displaySystemCol = true
-	}
-
-	labelsOverride := buildFormLabels(formLabels, fc.Labels)
+	labelsOverride := buildFormLabels(formLabels, fv.Labels)
 
 	orderMap := map[int]int{}
 	if columnOrder != "" {
@@ -1518,8 +1494,8 @@ func handleForm(e *core.RequestEvent) error {
 	}
 
 	layout := [][][]int{}
-	if len(fc.Layout) > 0 {
-		layout = fc.Layout
+	if len(fv.Layout) > 0 {
+		layout = fv.Layout
 	} else if formLayout != "" {
 		rowStrs := strings.Split(formLayout, "/")
 		for _, rowStr := range rowStrs {
@@ -1954,25 +1930,20 @@ func handlePbxConfig(e *core.RequestEvent) error {
 		Theme: getThemeMode(e.App),
 	}
 
-	if recs, err := e.App.FindAllRecords("_tabulator"); err == nil {
+	if recs, err := e.App.FindAllRecords("_views"); err == nil {
 		for _, rec := range recs {
+			vc := parseViewTabulator(rec)
+			fv := parseViewForm(rec)
+			title := vc.PageTitle
+			if title == "" {
+				title = fv.FormTitle
+			}
 			pageData.ListConfigs = append(pageData.ListConfigs, views.ConfigEntry{
-				Type:      "list",
+				Type:      "view",
 				Name:      rec.GetString("_name"),
-				CollName:  rec.GetString("collName"),
-				Title:     rec.GetString("pageTitle"),
-				HasConfig: configRaw(rec, "config") != "",
-			})
-		}
-	}
-	if recs, err := e.App.FindAllRecords("_form"); err == nil {
-		for _, rec := range recs {
-			pageData.FormConfigs = append(pageData.FormConfigs, views.ConfigEntry{
-				Type:      "form",
-				Name:      rec.GetString("_name"),
-				CollName:  rec.GetString("collName"),
-				Title:     rec.GetString("formTitle"),
-				HasConfig: configRaw(rec, "config") != "",
+				CollName:  rec.GetString("_collName"),
+				Title:     title,
+				HasConfig: true,
 			})
 		}
 	}
@@ -1986,39 +1957,25 @@ func handlePbxConfigEditor(e *core.RequestEvent) error {
 		return err
 	}
 
-	cfgType := e.Request.PathValue("configType")
 	name := e.Request.PathValue("name")
 	isNew := name == "new"
 
-	if cfgType != "list" && cfgType != "form" {
-		return e.NotFoundError("Unknown config type", nil)
-	}
-
 	pageData := views.ConfigEditorPageData{
 		Theme:       getThemeMode(e.App),
-		Type:        cfgType,
-		TypeLabel:   "List",
 		Collections: listCollections(e),
 		IsNew:       isNew,
 	}
-	if cfgType == "form" {
-		pageData.TypeLabel = "Form"
-	}
 
 	if !isNew {
-		rec := findConfigByAttr(e, "_tabulator", "_name", name)
-		if cfgType == "form" {
-			rec = findConfigByAttr(e, "_form", "_name", name)
-		}
+		rec := findConfigByAttr(e, "_views", "_name", name)
 		if rec == nil {
 			return e.NotFoundError("Configuration not found", nil)
 		}
 		pageData.Name = rec.GetString("_name")
-		pageData.CollName = rec.GetString("collName")
-		pageData.ConfigJSON = configRaw(rec, "config")
-		if cfgType == "list" {
-			pageData.MssqlJSON = rec.GetString("_mssql")
-		}
+		pageData.CollName = rec.GetString("_collName")
+		pageData.TabulatorJSON = configRaw(rec, "_tabulator")
+		pageData.FormJSON = configRaw(rec, "_form")
+		pageData.MssqlJSON = rec.GetString("_mssql")
 	}
 
 	e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -2030,55 +1987,41 @@ func handlePbxConfigSave(e *core.RequestEvent) error {
 		return err
 	}
 
-	cfgType := e.Request.FormValue("type")
 	name := e.Request.FormValue("name")
 	collName := e.Request.FormValue("collName")
-	configJSON := e.Request.FormValue("config")
+	tabulatorJSON := e.Request.FormValue("tabulator")
+	formJSON := e.Request.FormValue("form")
+	mssqlJSON := e.Request.FormValue("mssql")
 
-	if cfgType != "list" && cfgType != "form" {
-		return e.NotFoundError("Unknown config type", nil)
-	}
 	name = strings.TrimSpace(name)
 	collName = strings.TrimSpace(collName)
 	if name == "" || collName == "" {
 		e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		return templates.ExecuteTemplate(e.Response, "config.html", views.ConfigEditorPageData{
-			Type:        cfgType,
-			TypeLabel:   "List",
-			Name:        name,
-			CollName:    collName,
-			ConfigJSON:  configJSON,
-			Collections: listCollections(e),
-			IsNew:       true,
-			MssqlJSON:   e.Request.FormValue("mssql"),
+			Name:          name,
+			CollName:      collName,
+			TabulatorJSON: tabulatorJSON,
+			FormJSON:      formJSON,
+			MssqlJSON:     mssqlJSON,
+			Collections:   listCollections(e),
+			IsNew:         true,
 		})
 	}
 
-	setupColl := "_tabulator"
-	if cfgType == "form" {
-		setupColl = "_form"
-	}
-
-	rec := findConfigByAttr(e, setupColl, "_name", name)
+	rec := findConfigByAttr(e, "_views", "_name", name)
 	if rec == nil {
-		setupCollection, err := e.App.FindCachedCollectionByNameOrId(setupColl)
+		setupCollection, err := e.App.FindCachedCollectionByNameOrId("_views")
 		if err != nil {
-			return e.InternalServerError("Setup collection not found", err)
+			return e.InternalServerError("Views collection not found", err)
 		}
 		rec = core.NewRecord(setupCollection)
 	}
 
 	rec.Set("_name", name)
-	rec.Set("collName", collName)
-	rec.Set("config", configJSON)
-	if cfgType == "list" {
-		rec.Set("_mssql", e.Request.FormValue("mssql"))
-	}
-	if cfgType == "list" {
-		rec.Set("pageTitle", parseListConfig(rec).Title)
-	} else {
-		rec.Set("formTitle", parseFormConfigJSON(rec).Title)
-	}
+	rec.Set("_collName", collName)
+	rec.Set("_tabulator", tabulatorJSON)
+	rec.Set("_form", formJSON)
+	rec.Set("_mssql", mssqlJSON)
 
 	if err := e.App.Save(rec); err != nil {
 		return e.InternalServerError("Failed to save configuration", err)
@@ -2092,15 +2035,9 @@ func handlePbxConfigDelete(e *core.RequestEvent) error {
 		return err
 	}
 
-	cfgType := e.Request.FormValue("type")
 	name := e.Request.FormValue("name")
 
-	setupColl := "_tabulator"
-	if cfgType == "form" {
-		setupColl = "_form"
-	}
-
-	rec := findConfigByAttr(e, setupColl, "_name", name)
+	rec := findConfigByAttr(e, "_views", "_name", name)
 	if rec != nil {
 		if err := e.App.Delete(rec); err != nil {
 			return e.InternalServerError("Failed to delete configuration", err)

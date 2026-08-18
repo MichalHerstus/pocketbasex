@@ -50,12 +50,13 @@
 
     <div class="section">
         <div class="toolbar">
-            <h2 style="margin:0">List configurations</h2>
-            <a href="/pbx-config/list/new" class="btn btn-green">+ New list config</a>
+            <h2 style="margin:0">View configurations</h2>
+            <a href="/pbx-config/view/new" class="btn btn-green">+ New view config</a>
         </div>
-        <div class="table-wrap">
+        <p class="subtitle" style="margin:0;">One record per view, holding both the tabulator (list) and form configuration JSON.</p>
+        <div class="table-wrap" style="margin-top:12px;">
             <table>
-                <tr><th>Name</th><th>Collection</th><th>Title</th><th>JSON config</th><th></th></tr>
+                <tr><th>Name</th><th>Collection</th><th>Title</th><th>Configured</th><th></th></tr>
                 {{range .ListConfigs}}
                 <tr>
                     <td>{{.Name}}</td>
@@ -63,48 +64,17 @@
                     <td>{{.Title}}</td>
                     <td>{{if .HasConfig}}<span class="badge badge-on">yes</span>{{else}}<span class="badge badge-off">no</span>{{end}}</td>
                     <td style="white-space:nowrap">
-                        <a href="/tabular/{{.Name}}" class="btn btn-blue" style="padding:4px 10px;font-size:.85rem;">View</a>
-                        <a href="/pbx-config/list/{{.Name}}" class="btn btn-gray" style="padding:4px 10px;font-size:.85rem;">Edit</a>
+                        <a href="/tabular/{{.Name}}" class="btn btn-blue" style="padding:4px 10px;font-size:.85rem;">List</a>
+                        <a href="/form/{{.Name}}" class="btn btn-blue" style="padding:4px 10px;font-size:.85rem;">Form</a>
+                        <a href="/pbx-config/view/{{.Name}}" class="btn btn-gray" style="padding:4px 10px;font-size:.85rem;">Edit</a>
                         <form method="POST" action="/pbx-config/delete" style="display:inline">
-                            <input type="hidden" name="type" value="list">
                             <input type="hidden" name="name" value="{{.Name}}">
-                            <button type="submit" class="btn btn-red" onclick="return confirm('Delete list config {{.Name}}?')">Delete</button>
+                            <button type="submit" class="btn btn-red" onclick="return confirm('Delete view config {{.Name}}?')">Delete</button>
                         </form>
                     </td>
                 </tr>
                 {{else}}
-                <tr><td colspan="5" class="empty">No list configurations yet.</td></tr>
-                {{end}}
-            </table>
-        </div>
-    </div>
-
-    <div class="section">
-        <div class="toolbar">
-            <h2 style="margin:0">Form configurations</h2>
-            <a href="/pbx-config/form/new" class="btn btn-green">+ New form config</a>
-        </div>
-        <div class="table-wrap">
-            <table>
-                <tr><th>Name</th><th>Collection</th><th>Title</th><th>JSON config</th><th></th></tr>
-                {{range .FormConfigs}}
-                <tr>
-                    <td>{{.Name}}</td>
-                    <td>{{.CollName}}</td>
-                    <td>{{.Title}}</td>
-                    <td>{{if .HasConfig}}<span class="badge badge-on">yes</span>{{else}}<span class="badge badge-off">no</span>{{end}}</td>
-                    <td style="white-space:nowrap">
-                        <a href="/form/{{.Name}}" class="btn btn-blue" style="padding:4px 10px;font-size:.85rem;">View</a>
-                        <a href="/pbx-config/form/{{.Name}}" class="btn btn-gray" style="padding:4px 10px;font-size:.85rem;">Edit</a>
-                        <form method="POST" action="/pbx-config/delete" style="display:inline">
-                            <input type="hidden" name="type" value="form">
-                            <input type="hidden" name="name" value="{{.Name}}">
-                            <button type="submit" class="btn btn-red" onclick="return confirm('Delete form config {{.Name}}?')">Delete</button>
-                        </form>
-                    </td>
-                </tr>
-                {{else}}
-                <tr><td colspan="5" class="empty">No form configurations yet.</td></tr>
+                <tr><td colspan="5" class="empty">No view configurations yet.</td></tr>
                 {{end}}
             </table>
         </div>
