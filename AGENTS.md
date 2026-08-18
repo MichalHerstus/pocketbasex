@@ -74,9 +74,10 @@ A record with `_name={configName}` configures `/tabular/{configName}`:
 
 ## MSSQL sync
 
-- Package `pbmssql/pb-mssql.go` provides `ExportToMSSQL`, `ImportFromMSSQL`, `IntrospectTable` with a DSN-keyed connection pool (driver `sqlserver`).
+- Package `pbmssql/pb-mssql.go` provides `ExportToMSSQL`, `ImportFromMSSQL`, `IntrospectTable`, `TableExists`, `CreateTable` with a DSN-keyed connection pool (driver `sqlserver`).
 - Global default DSN persisted in `pb_data/mssql.json`, editable from `/pbx-setup` via `POST /api/mssql-dsn`.
 - `mode` semantics (insert/update/replace) mirror the Excel importer; unique single-column indexes are used to match records on import.
+- Export requires user confirmation before creating a missing table: `ExportToMSSQL` returns `ErrTableMissing`, the handler replies with HTTP 409 + `{tableMissing:true}`, the UI prompts the user, and only after confirm does the request re-send with `createTable=1` (which calls `pbmssql.CreateTable`, seeding columns from PB field types).
 
 ## `_form` collection
 

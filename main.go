@@ -3,6 +3,7 @@ package main
 import (
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"log"
@@ -1787,7 +1788,28 @@ func handleMssqlExport(e *core.RequestEvent) error {
 	}
 
 	if err := pbmssql.ExportToMSSQL(e.App, collName, dsn, table, mode, mapping); err != nil {
-		return e.InternalServerError("MSSQL export failed", err)
+		var missing *pbmssql.ErrTableMissing
+		if errors.As(err, &missing) {
+			// The target table does not exist yet. Ask the user for
+			// confirmation before creating it; abort unless confirmed.
+			if e.Request.FormValue("createTable") == "1" {
+				if cerr := pbmssql.CreateTable(e.App, collName, dsn, table, mapping); cerr != nil {
+					return e.InternalServerError("MSSQL table creation failed", cerr)
+				}
+				if err := pbmssql.ExportToMSSQL(e.App, collName, dsn, table, mode, mapping); err != nil {
+					return e.InternalServerError("MSSQL export failed", err)
+				}
+			} else {
+				return e.JSON(http.StatusConflict, map[string]any{
+					"ok":          false,
+					"tableMissing": true,
+					"table":       missing.Table,
+					"message":     "Table " + missing.Table + " does not exist on the MSSQL server.",
+				})
+			}
+		} else {
+			return e.InternalServerError("MSSQL export failed", err)
+		}
 	}
 
 	return e.JSON(http.StatusOK, map[string]any{"ok": true, "message": "Export successful"})

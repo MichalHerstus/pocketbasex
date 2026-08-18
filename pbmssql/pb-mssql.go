@@ -114,6 +114,130 @@ var (
 	}
 )
 
+// ErrTableMissing is returned by ExportToMSSQL when the target table does not
+// exist yet and auto-creation was not requested, so the caller can ask for
+// user confirmation before creating it.
+type ErrTableMissing struct {
+	Table string
+}
+
+func (e *ErrTableMissing) Error() string {
+	return fmt.Sprintf("pbmssql: table %q does not exist", e.Table)
+}
+
+// TableExists reports whether the given (optionally schema-qualified) table
+// exists in the database.
+func TableExists(dsn, table string) (bool, error) {
+	db, err := getPool(dsn)
+	if err != nil {
+		return false, err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	var count int
+	if schema, name, ok := splitTableName(table); ok {
+		err = db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA = @p1 AND TABLE_NAME = @p2`,
+			schema, name).Scan(&count)
+	} else {
+		err = db.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_NAME = @p1`,
+			table).Scan(&count)
+	}
+	if err != nil {
+		return false, fmt.Errorf("pbmssql: table existence check failed: %w", err)
+	}
+	return count > 0, nil
+}
+
+// splitTableName splits "schema.table" into its parts. Returns ok=false for a
+// bare table name. Brackets are stripped.
+func splitTableName(table string) (schema, name string, ok bool) {
+	table = strings.TrimSpace(table)
+	if strings.Contains(table, ".") {
+		parts := strings.SplitN(table, ".", 2)
+		return strings.Trim(parts[0], "[] "), strings.Trim(parts[1], "[] "), true
+	}
+	return "", strings.Trim(table, "[]"), false
+}
+
+// sqlServerType maps a PocketBase field type to an MSSQL column type.
+func sqlServerType(fieldType string) string {
+	switch fieldType {
+	case "number":
+		return "FLOAT"
+	case "bool":
+		return "BIT"
+	case "date", "autodate":
+		return "DATETIME2"
+	case "email", "url", "select":
+		return "NVARCHAR(255)"
+	case "text", "editor", "relation", "geo", "json":
+		return "NVARCHAR(MAX)"
+	default:
+		return "NVARCHAR(MAX)"
+	}
+}
+
+// CreateTable creates the target MSSQL table (if missing) with one column per
+// mapping entry, inferred from the PocketBase collection field types.
+func CreateTable(app core.App, collName, dsn, table string, mapping []struct {
+	PBField string `json:"pbField"`
+	DBField string `json:"dbField"`
+}) error {
+	db, err := getPool(dsn)
+	if err != nil {
+		return err
+	}
+
+	exists, err := TableExists(dsn, table)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return nil
+	}
+
+	collection, err := app.FindCachedCollectionByNameOrId(collName)
+	if err != nil {
+		return fmt.Errorf("pbmssql: collection %q not found: %w", collName, err)
+	}
+
+	fieldTypes := map[string]string{}
+	for _, f := range collection.Fields {
+		fieldTypes[f.GetName()] = f.Type()
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	cols := make([]string, 0, len(mapping))
+	for _, m := range mapping {
+		ft, ok := fieldTypes[m.PBField]
+		if !ok || systemFieldNames[m.PBField] || skipFieldTypes[ft] {
+			continue
+		}
+		cols = append(cols, fmt.Sprintf("[%s] %s NULL", m.DBField, sqlServerType(ft)))
+	}
+	if len(cols) == 0 {
+		return fmt.Errorf("pbmssql: mapping has no usable columns for table %s", table)
+	}
+
+	var ddl string
+	if schema, name, qualified := splitTableName(table); qualified {
+		ddl = fmt.Sprintf("CREATE TABLE [%s].[%s] (%s)", schema, name, strings.Join(cols, ", "))
+	} else {
+		ddl = fmt.Sprintf("CREATE TABLE [%s] (%s)", table, strings.Join(cols, ", "))
+	}
+
+	if _, err := db.ExecContext(ctx, ddl); err != nil {
+		return fmt.Errorf("pbmssql: failed to create table %s: %w", table, err)
+	}
+	return nil
+}
+
 func ExportToMSSQL(app core.App, collName string, dsn, table, mode string, mapping []struct {
 	PBField string `json:"pbField"`
 	DBField string `json:"dbField"`
@@ -131,6 +255,16 @@ func ExportToMSSQL(app core.App, collName string, dsn, table, mode string, mappi
 	records, err := app.FindAllRecords(collName)
 	if err != nil {
 		return fmt.Errorf("pbmssql: failed to fetch records from %q: %w", collName, err)
+	}
+
+	// the target table must exist before exporting; if it is missing the caller
+	// must ask the user for confirmation (and create it) first
+	exists, err := TableExists(dsn, table)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return &ErrTableMissing{Table: table}
 	}
 
 	var exportFields []core.Field

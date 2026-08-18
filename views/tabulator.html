@@ -814,18 +814,30 @@
             mssqlExportBtn.addEventListener("click", function() {
                 var p = getMssqlParams();
                 if (!p.dsn || !p.table) { alert("Please fill in DSN and table."); return; }
-                var fd = new FormData();
-                fd.append("dsn", p.dsn);
-                fd.append("table", p.table);
-                fd.append("mode", p.mode);
-                fetch("/mssql-export/{{.CollectionName}}", { method: "POST", body: fd })
-                    .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
-                    .then(function(res) {
-                        if (res.ok) alert("MSSQL export successful: " + res.data.message);
-                        else alert("Export failed: " + (res.data.message || "unknown error"));
-                    })
-                    .catch(function() { alert("Export failed."); });
+                doMssqlExport(p, false);
             });
+        }
+
+        function doMssqlExport(p, createTable) {
+            var fd = new FormData();
+            fd.append("dsn", p.dsn);
+            fd.append("table", p.table);
+            fd.append("mode", p.mode);
+            if (createTable) fd.append("createTable", "1");
+            fetch("/mssql-export/{{.CollectionName}}", { method: "POST", body: fd })
+                .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
+                .then(function(res) {
+                    if (res.ok) {
+                        alert("MSSQL export successful: " + res.data.message);
+                    } else if (res.data && res.data.tableMissing) {
+                        if (confirm("Table '" + res.data.table + "' does not exist on the MSSQL server.\n\nCreate it and export?")) {
+                            doMssqlExport(p, true);
+                        }
+                    } else {
+                        alert("Export failed: " + (res.data.message || "unknown error"));
+                    }
+                })
+                .catch(function() { alert("Export failed."); });
         }
 
         var mssqlImportBtn = document.getElementById("mssqlImportBtn");
