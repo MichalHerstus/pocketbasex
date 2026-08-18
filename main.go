@@ -132,6 +132,19 @@ func main() {
 			se.Router.POST("/pbx-config/delete", func(e *core.RequestEvent) error {
 				return handlePbxConfigDelete(e)
 			})
+			// collection creation wizard from Excel / MSSQL
+			se.Router.GET("/pbx-config/import-excel", func(e *core.RequestEvent) error {
+				return handleImportWizard(e, "excel")
+			})
+			se.Router.POST("/pbx-config/import-excel", func(e *core.RequestEvent) error {
+				return handleImportWizard(e, "excel")
+			})
+			se.Router.GET("/pbx-config/import-mssql", func(e *core.RequestEvent) error {
+				return handleImportWizard(e, "mssql")
+			})
+			se.Router.POST("/pbx-config/import-mssql", func(e *core.RequestEvent) error {
+				return handleImportWizard(e, "mssql")
+			})
 			// collection tableform view by configuration name
 			se.Router.GET("/tabular/{configName}", func(e *core.RequestEvent) error {
 				return handleTabulator(e)
@@ -2095,4 +2108,306 @@ func handlePbxConfigDelete(e *core.RequestEvent) error {
 	}
 
 	return e.Redirect(http.StatusSeeOther, "/pbx-config")
+}
+
+// --- Import wizard (create collection from Excel / MSSQL) ---
+
+func renderImportWizard(e *core.RequestEvent, data views.ImportWizardPageData) error {
+	e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	return templates.ExecuteTemplate(e.Response, "import-wizard.html", data)
+}
+
+func handleImportWizard(e *core.RequestEvent, source string) error {
+	if err := requireSuperAdmin(e); err != nil {
+		return err
+	}
+
+	action := e.Request.FormValue("action")
+	step := 1
+	page := views.ImportWizardPageData{
+		Theme:  getThemeMode(e.App),
+		Source: source,
+	}
+
+	switch action {
+	case "preview":
+		if source == "excel" {
+			fileName := strings.TrimSpace(e.Request.FormValue("fileName"))
+			sheet := strings.TrimSpace(e.Request.FormValue("sheet"))
+			page.FileName = fileName
+			page.Sheet = sheet
+			page.Name = strings.TrimSpace(e.Request.FormValue("name"))
+			page.Import = e.Request.FormValue("import") == "1"
+
+			if page.Name == "" {
+				page.Message = "Collection name is required."
+				return renderImportWizard(e, page)
+			}
+			cols, err := pbexcel.IntrospectSheet(fileName, sheet)
+			if err != nil {
+				page.Message = "Failed to read Excel: " + err.Error()
+				return renderImportWizard(e, page)
+			}
+			page.Columns = wizardColumnsToDetected(cols)
+			if len(page.Columns) == 0 {
+				page.Message = "No usable columns detected in sheet " + sheet
+				return renderImportWizard(e, page)
+			}
+			step = 2
+		} else {
+			dsn := strings.TrimSpace(e.Request.FormValue("dsn"))
+			table := strings.TrimSpace(e.Request.FormValue("table"))
+			page.DSN = dsn
+			page.Table = table
+			page.Name = strings.TrimSpace(e.Request.FormValue("name"))
+			page.Import = e.Request.FormValue("import") == "1"
+
+			if page.Name == "" {
+				page.Message = "Collection name is required."
+				return renderImportWizard(e, page)
+			}
+			cols, err := pbmssql.IntrospectTable(dsn, table)
+			if err != nil {
+				page.Message = "Failed to introspect MSSQL table: " + err.Error()
+				return renderImportWizard(e, page)
+			}
+			if len(cols) == 0 {
+				page.Message = "No columns found in table " + table
+				return renderImportWizard(e, page)
+			}
+			for _, c := range cols {
+				page.Columns = append(page.Columns, views.WizardColumn{
+					Header:  c.Name,
+					Field:   c.Name,
+					Type:    mssqlTypeToPB(c.DataType),
+					Include: true,
+				})
+			}
+			step = 2
+		}
+
+	case "create":
+		if source == "excel" {
+			page.FileName = strings.TrimSpace(e.Request.FormValue("fileName"))
+			page.Sheet = strings.TrimSpace(e.Request.FormValue("sheet"))
+		} else {
+			page.DSN = strings.TrimSpace(e.Request.FormValue("dsn"))
+			page.Table = strings.TrimSpace(e.Request.FormValue("table"))
+		}
+		page.Name = strings.TrimSpace(e.Request.FormValue("name"))
+		page.Import = e.Request.FormValue("import") == "1"
+
+		page.Columns = parseWizardColumns(e)
+		if page.Name == "" {
+			page.Message = "Collection name is required."
+			return renderImportWizard(e, page)
+		}
+
+		// normalize field/collection names so creation and import stay consistent
+		page.Name = sanitizeFieldName(page.Name)
+		used := map[string]bool{}
+		for _, reserved := range []string{"id", "created", "updated", "collectionid", "collectionname", "expand"} {
+			used[reserved] = true
+		}
+		anyField := false
+		for i := range page.Columns {
+			if !page.Columns[i].Include {
+				continue
+			}
+			page.Columns[i].Field = sanitizeFieldName(page.Columns[i].Field)
+			if page.Columns[i].Field == "" || used[page.Columns[i].Field] {
+				page.Columns[i].Include = false
+				continue
+			}
+			used[page.Columns[i].Field] = true
+			anyField = true
+		}
+		if !anyField {
+			page.Message = "No usable columns selected."
+			return renderImportWizard(e, page)
+		}
+
+		created, err := createCollectionFromWizard(e, page)
+		if err != nil {
+			page.Message = "Failed to create collection: " + err.Error()
+			return renderImportWizard(e, page)
+		}
+
+		if page.Import {
+			if source == "excel" {
+				headerMap := map[string]string{}
+				for _, c := range page.Columns {
+					if c.Include {
+						headerMap[c.Header] = c.Field
+					}
+				}
+				if ierr := pbexcel.ImportFromExcel(e.App, page.FileName, page.Sheet, page.Name, "insert", headerMap); ierr != nil {
+					page.Message = "Collection created, but data import failed: " + ierr.Error()
+					page.Created = created
+					return renderImportWizard(e, page)
+				}
+			} else {
+				var mapping []struct {
+					PBField string `json:"pbField"`
+					DBField string `json:"dbField"`
+				}
+				for _, c := range page.Columns {
+					if c.Include {
+						mapping = append(mapping, struct {
+							PBField string `json:"pbField"`
+							DBField string `json:"dbField"`
+						}{PBField: c.Field, DBField: c.Header})
+					}
+				}
+				if ierr := pbmssql.ImportFromMSSQL(e.App, page.Name, page.DSN, page.Table, "insert", mapping); ierr != nil {
+					page.Message = "Collection created, but data import failed: " + ierr.Error()
+					page.Created = created
+					return renderImportWizard(e, page)
+				}
+			}
+		}
+
+		page.Created = created
+		step = 3
+	}
+
+	page.Step = step
+	return renderImportWizard(e, page)
+}
+
+func wizardColumnsToDetected(cols []pbexcel.DetectedColumn) []views.WizardColumn {
+	result := make([]views.WizardColumn, 0, len(cols))
+	for _, c := range cols {
+		result = append(result, views.WizardColumn{
+			Header:  c.Name,
+			Field:   c.Name,
+			Type:    c.Type,
+			Include: true,
+			Values:  strings.Join(c.Values, ", "),
+		})
+	}
+	return result
+}
+
+func parseWizardColumns(e *core.RequestEvent) []views.WizardColumn {
+	countStr := e.Request.FormValue("colCount")
+	count, err := strconv.Atoi(countStr)
+	if err != nil || count > 200 {
+		return nil
+	}
+
+	var cols []views.WizardColumn
+	for i := 0; i < count; i++ {
+		header := strings.TrimSpace(e.Request.FormValue(fmt.Sprintf("col_%d_header", i)))
+		field := strings.TrimSpace(e.Request.FormValue(fmt.Sprintf("col_%d_field", i)))
+		typ := strings.TrimSpace(e.Request.FormValue(fmt.Sprintf("col_%d_type", i)))
+		include := e.Request.FormValue(fmt.Sprintf("col_%d_include", i)) == "1"
+		values := strings.TrimSpace(e.Request.FormValue(fmt.Sprintf("col_%d_values", i)))
+		if header == "" && field == "" {
+			continue
+		}
+		if field == "" {
+			field = header
+		}
+		if typ == "" {
+			typ = "text"
+		}
+		cols = append(cols, views.WizardColumn{
+			Header:  header,
+			Field:   field,
+			Type:    typ,
+			Include: include,
+			Values:  values,
+		})
+	}
+	return cols
+}
+
+// sanitizeFieldName converts a header into a valid PocketBase field name.
+func sanitizeFieldName(name string) string {
+	name = strings.TrimSpace(strings.ToLower(name))
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	s := b.String()
+	if s == "" || (s[0] >= '0' && s[0] <= '9') {
+		s = "f_" + s
+	}
+	return s
+}
+
+// mssqlTypeToPB maps an MSSQL column data type to a PocketBase field type.
+func mssqlTypeToPB(dt string) string {
+	t := strings.ToLower(dt)
+	switch {
+	case strings.Contains(t, "int"), strings.Contains(t, "decimal"), strings.Contains(t, "numeric"),
+		strings.Contains(t, "float"), strings.Contains(t, "real"), strings.Contains(t, "money"):
+		return "number"
+	case t == "bit":
+		return "bool"
+	case strings.Contains(t, "date"), strings.Contains(t, "time"):
+		return "date"
+	default:
+		return "text"
+	}
+}
+
+// createCollectionFromWizard builds and saves a new base collection from the
+// wizard columns and returns its name.
+func createCollectionFromWizard(e *core.RequestEvent, page views.ImportWizardPageData) (string, error) {
+	name := sanitizeFieldName(page.Name)
+
+	if existing, _ := e.App.FindCachedCollectionByNameOrId(name); existing != nil {
+		return "", fmt.Errorf("collection %q already exists", name)
+	}
+
+	// build fields from included columns
+	var newFields []core.Field
+	used := map[string]bool{}
+	for _, reserved := range []string{"id", "created", "updated", "collectionid", "collectionname", "expand"} {
+		used[reserved] = true
+	}
+	for _, c := range page.Columns {
+		if !c.Include {
+			continue
+		}
+		fieldName := sanitizeFieldName(c.Field)
+		if fieldName == "" || used[fieldName] {
+			continue
+		}
+		used[fieldName] = true
+
+		typ := core.FieldTypeText
+		switch c.Type {
+		case "number":
+			typ = core.FieldTypeNumber
+		case "bool":
+			typ = core.FieldTypeBool
+		case "date", "autodate":
+			typ = core.FieldTypeDate
+		}
+
+		f := core.Fields[typ]()
+		f.SetName(fieldName)
+		newFields = append(newFields, f)
+	}
+
+	if len(newFields) == 0 {
+		return "", fmt.Errorf("no usable columns selected")
+	}
+
+	// base collection with system fields already present
+	coll := core.NewBaseCollection(name)
+	coll.Fields.Add(newFields...)
+
+	if err := e.App.Save(coll); err != nil {
+		return "", err
+	}
+	return name, nil
 }

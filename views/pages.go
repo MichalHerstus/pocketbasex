@@ -183,3 +183,29 @@ type ConfigEditorPageData struct {
 	IsNew       bool
 	MssqlJSON   string
 }
+
+// WizardColumn is one editable column in the import wizard preview step.
+type WizardColumn struct {
+	Header   string
+	Field    string
+	Type     string
+	Include  bool
+	Values   string
+}
+
+// ImportWizardPageData backs the /pbx-config/import-* wizard.
+type ImportWizardPageData struct {
+	Theme    string
+	Source   string // "excel" | "mssql"
+	Step     int    // 1 = source, 2 = preview, 3 = done
+	Name     string
+	FileName string
+	Sheet    string
+	DSN      string
+	Table    string
+	Import   bool
+	Columns  []WizardColumn
+	Message  string
+	Created  string // created collection name (step 3)
+	CreatedID string
+}

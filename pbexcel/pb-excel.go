@@ -39,6 +39,135 @@ func defaultSheetName(sheetName string) string {
 	return sheetName
 }
 
+const sampleRowLimit = 50
+
+// DetectedColumn describes a detected column from an Excel sheet: its header
+// name and the PocketBase field type inferred from the sample values.
+type DetectedColumn struct {
+	Name   string
+	Type   string
+	Values []string
+}
+
+// IntrospectSheet reads an Excel sheet and returns the detected columns with
+// inferred PocketBase field types (text/number/bool/date) based on the header
+// row and a limited number of sample data rows.
+func IntrospectSheet(fileName, sheetName string) ([]DetectedColumn, error) {
+	path := resolveExcelPath(fileName)
+
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil, fmt.Errorf("pbexcel: file %q not found", path)
+	}
+
+	sheetName = defaultSheetName(sheetName)
+
+	f, err := excelize.OpenFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("pbexcel: failed to open file %s: %w", path, err)
+	}
+	defer f.Close()
+
+	if idx, _ := f.GetSheetIndex(sheetName); idx < 0 {
+		return nil, fmt.Errorf("pbexcel: sheet %q not found in file %s", sheetName, path)
+	}
+
+	rows, err := f.GetRows(sheetName)
+	if err != nil {
+		return nil, fmt.Errorf("pbexcel: failed to read rows from sheet %q: %w", sheetName, err)
+	}
+	if len(rows) < 1 {
+		return nil, fmt.Errorf("pbexcel: sheet %q has no header row", sheetName)
+	}
+
+	headers := rows[0]
+	dataRows := rows[1:]
+	if len(dataRows) > sampleRowLimit {
+		dataRows = dataRows[:sampleRowLimit]
+	}
+
+	result := make([]DetectedColumn, 0, len(headers))
+	seen := map[string]bool{}
+	for ci, h := range headers {
+		h = strings.TrimSpace(h)
+		// skip empty or duplicate header names
+		if h == "" || seen[h] {
+			continue
+		}
+		seen[h] = true
+
+		col := DetectedColumn{Name: h}
+		for _, row := range dataRows {
+			if ci < len(row) {
+				v := strings.TrimSpace(row[ci])
+				if v != "" {
+					col.Values = append(col.Values, v)
+				}
+			}
+		}
+		col.Type = inferColumnType(col.Values)
+		result = append(result, col)
+	}
+
+	return result, nil
+}
+
+// inferColumnType guesses the PocketBase field type from sample string values.
+func inferColumnType(values []string) string {
+	if len(values) == 0 {
+		return "text"
+	}
+
+	allNums := true
+	allBools := true
+	allDates := true
+
+	for _, v := range values {
+		if _, err := strconv.ParseFloat(v, 64); err != nil {
+			allNums = false
+		}
+		switch strings.ToLower(v) {
+		case "true", "false", "1", "0", "yes", "no", "y", "n", "on", "off":
+		default:
+			allBools = false
+		}
+		if !isDateValue(v) {
+			allDates = false
+		}
+	}
+
+	switch {
+	case allNums:
+		return "number"
+	case allBools:
+		return "bool"
+	case allDates:
+		return "date"
+	default:
+		return "text"
+	}
+}
+
+// isDateValue reports whether v parses as a date in a supported layout.
+func isDateValue(v string) bool {
+	for _, layout := range []string{
+		"2006-01-02 15:04:05",
+		"2006-01-02T15:04:05Z",
+		"2006-01-02T15:04:05",
+		"2006-01-02",
+		"02.01.2006",
+		"1/2/2006",
+		"2006/01/02",
+		"02.01.2006 15:04",
+		"1/2/2006 15:04",
+		time.RFC3339,
+	} {
+		if _, err := time.Parse(layout, v); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
 func colLetter(n int) string {
 	s := ""
 	for n >= 0 {
@@ -127,7 +256,11 @@ func ExportToExcel(app core.App, excelFileName, sheetName, collectionName string
 	return nil
 }
 
-func ImportFromExcel(app core.App, excelFileName, sheetName, collectionName, mode string) error {
+// ImportFromExcel imports records from an Excel sheet into a PocketBase
+// collection. When headerFieldMap is non-nil it maps each sheet header to the
+// target PocketBase field name (headers not present in the map are skipped);
+// otherwise the header is used as the field name directly.
+func ImportFromExcel(app core.App, excelFileName, sheetName, collectionName, mode string, headerFieldMap ...map[string]string) error {
 	path := resolveExcelPath(excelFileName)
 
 	if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -142,7 +275,7 @@ func ImportFromExcel(app core.App, excelFileName, sheetName, collectionName, mod
 	}
 	defer f.Close()
 
-	if idx, _ := f.GetSheetIndex(sheetName); idx == 0 {
+	if idx, _ := f.GetSheetIndex(sheetName); idx < 0 {
 		return fmt.Errorf("pbexcel: sheet %q not found in file %s", sheetName, path)
 	}
 
@@ -172,11 +305,23 @@ func ImportFromExcel(app core.App, excelFileName, sheetName, collectionName, mod
 
 	var colFields []core.Field
 	var colNames []string
+	var mapping map[string]string
+	if len(headerFieldMap) > 0 {
+		mapping = headerFieldMap[0]
+	}
 	for _, h := range headers {
 		h = strings.TrimSpace(h)
-		if f, ok := fieldMap[h]; ok {
+		fieldName := h
+		if mapping != nil {
+			if mapped, ok := mapping[h]; ok {
+				fieldName = mapped
+			} else {
+				continue
+			}
+		}
+		if f, ok := fieldMap[fieldName]; ok {
 			colFields = append(colFields, f)
-			colNames = append(colNames, h)
+			colNames = append(colNames, fieldName)
 		}
 	}
 

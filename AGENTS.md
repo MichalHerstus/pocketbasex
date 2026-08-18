@@ -28,6 +28,12 @@ No CI, no tests.
 | `POST /login` | authenticate | Email/password auth via `users` collection, sets `pb_auth` cookie |
 | `GET /app` | dashboard | Menu of links grouped by `_app` collection records |
 | `GET /pbx-setup` | setup | Shows `_app`, `_tabulator`, `_form` tables + Theme setup |
+| `GET /pbx-config` | config editor | List `_tabulator` + `_form` configs |
+| `GET /pbx-config/{list|form}/new|{name}` | config editor | Edit list/form config JSON + `_mssql` |
+| `POST /pbx-config/save` | config save | Persist config record |
+| `POST /pbx-config/delete` | config delete | Delete config record |
+| `GET/POST /pbx-config/import-excel` | import wizard | 3-step wizard: introspect Excel → preview schema → create collection (+ optional data import) |
+| `GET/POST /pbx-config/import-mssql` | import wizard | 3-step wizard: introspect MSSQL table → preview schema → create collection (+ optional data import) |
 | `GET /tabular/{configName}` | table view | All records as client-side JSON; 20/page, sort, search |
 | `GET /form/{configName}` | form view | New record form, layout configured via `_form` collection |
 | `GET /form/{configName}/{id}` | form view | Edit existing record |
@@ -114,7 +120,18 @@ Add/modify collection fields via **JS SDK** in `pb_migrations/`. See `.opencode/
 - `pb_hooks/` — does not exist; do not reference it
 - `pb_public/` — does not exist; do not reference it
 - `views/assets/` — icons (PNG) and `theme.css`; served via embedded FS
-- `pbexcel/` — Excel import/export logic (`pb-excel.go`)
+- `pbexcel/` — Excel import/export logic (`pb-excel.go`); also `IntrospectSheet` (header/type detection) for the collection wizard
 - `pbmssql/` — MSSQL import/export/introspection logic (`pb-mssql.go`)
-- `views/pages.go` — Go structs for template data (`TabulatorPageData`, `FormPageData`, `AppPageData`, etc.)
+- `views/import-wizard.html` — shared 3-step wizard: Source → Preview/Edit → Create (used by both Excel and MSSQL collection import)
+- `views/pages.go` — Go structs for template data (`TabulatorPageData`, `FormPageData`, `AppPageData`, `ImportWizardPageData`, etc.)
 - No `README.md` exists
+
+## Collection creation wizard
+
+`/pbx-config/import-excel` and `/pbx-config/import-mssql` (super-admin) create a new base collection from a source:
+
+1. **Source** — collection name + Excel file/sheet or MSSQL DSN/table.
+2. **Preview/Edit** — introspected columns (`pbexcel.IntrospectSheet` / `pbmssql.IntrospectTable`) with inferred PB types (text/number/bool/date); names/types editable, columns can be skipped.
+3. **Create** — `core.NewBaseCollection` + fields from detected schema → `app.Save`; optionally imports the source data immediately (with `ImportFromExcel` mapping or `pbmssql.ImportFromMSSQL`).
+
+Field/collection names are normalized to lowercase `[a-z0-9_]` (reserved system names `id`/`created`/`updated`/`collectionid`/`collectionname`/`expand` are skipped).
