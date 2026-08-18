@@ -47,6 +47,15 @@ func init() {
 			},
 			"safeJS":   func(s string) template.JS { return template.JS(s) },
 			"safeHTML": func(s string) template.HTML { return template.HTML(s) },
+			"dict": func(vals ...any) map[string]any {
+				m := map[string]any{}
+				for i := 0; i+1 < len(vals); i += 2 {
+					if k, ok := vals[i].(string); ok {
+						m[k] = vals[i+1]
+					}
+				}
+				return m
+			},
 		}).
 		ParseFS(viewsFS, "views/*.html"))
 }
