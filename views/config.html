@@ -27,7 +27,7 @@
     <div class="toolbar">
         <h1 style="margin:0">{{if .IsNew}}New{{else}}Edit{{end}} view config</h1>
         <button type="button" onclick="goBack('/pbx-config')" class="btn btn-gray" style="font-size:.9rem;cursor:pointer;margin-left:auto;">Close</button>
-        <button type="button" id="themeBtn" onclick="toggleTheme()" class="btn btn-gray" style="font-size:.9rem;cursor:pointer;">🌙 Dark</button>
+        <button type="button" id="themeBtn" onclick="toggleTheme()" class="btn btn-gray" style="font-size:1.1rem;cursor:pointer;">🌙</button>
         <a href="/pbx-config" class="btn btn-gray" style="font-size:.9rem;">Back to Config</a>
     </div>
     <p class="subtitle">Configuration name is used in URLs: /tabular/&#123;name&#125; or /form/&#123;name&#125;</p>
@@ -79,7 +79,7 @@
         function applyTheme(mode) {
             document.body.setAttribute('data-theme', mode);
             var btn = document.getElementById('themeBtn');
-            if (btn) btn.textContent = mode === 'dark' ? '☀️ Light' : '🌙 Dark';
+            if (btn) btn.textContent = mode === 'dark' ? '☀️' : '🌙';
         }
         function toggleTheme() {
             var next = currentTheme() === 'dark' ? 'light' : 'dark';

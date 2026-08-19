@@ -55,7 +55,7 @@
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">
         <h1 style="margin:0">PBX Setup</h1>
         <button type="button" onclick="goBack('/app')" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;margin-left:auto;">Close</button>
-        <button type="button" id="themeBtn" onclick="toggleTheme()" style="padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">🌙 Dark</button>
+        <button type="button" id="themeBtn" onclick="toggleTheme()" style="padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1.1rem;cursor:pointer;">🌙</button>
         <a href="/app" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">Applications</a>
         <a href="/pbx-config" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">Config editor</a>
         <a href="/_/" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">Administration</a>
@@ -82,6 +82,45 @@
         </div>
     </div>
 
+    <div class="section">
+        <h2>AI agent</h2>
+        <div class="subtitle">LLM provider settings used by the built-in AI agent (/ai)</div>
+        <div style="display:flex;flex-direction:column;gap:10px;max-width:700px;">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <label style="font-size:.9rem;font-weight:600;width:130px;">Provider</label>
+                <select id="aiProvider" onchange="aiProviderChanged()" style="flex:1;min-width:200px;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;outline:none;">
+                    <option value="openrouter" {{if eq .Agent.Provider "openrouter"}}selected{{end}}>OpenRouter</option>
+                    <option value="lmstudio" {{if eq .Agent.Provider "lmstudio"}}selected{{end}}>LM Studio (local)</option>
+                </select>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <label style="font-size:.9rem;font-weight:600;width:130px;">Base URL</label>
+                <input type="text" id="aiBaseURL" value="{{.Agent.BaseURL}}" placeholder="https://openrouter.ai/api/v1" style="flex:1;min-width:300px;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;outline:none;font-family:monospace;">
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <label style="font-size:.9rem;font-weight:600;width:130px;">API key</label>
+                <input type="password" id="aiApiKey" value="{{.Agent.APIKey}}" placeholder="sk-…" style="flex:1;min-width:300px;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;outline:none;font-family:monospace;">
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <label style="font-size:.9rem;font-weight:600;width:130px;">Model</label>
+                <input type="text" id="aiModel" value="{{.Agent.Model}}" placeholder="openai/gpt-4o-mini" style="flex:1;min-width:300px;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;outline:none;font-family:monospace;">
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <label style="font-size:.9rem;font-weight:600;width:130px;">Timeout (s)</label>
+                <input type="number" id="aiTimeout" value="{{if .Agent.TimeoutSeconds}}{{.Agent.TimeoutSeconds}}{{else}}90{{end}}" min="5" max="600" style="width:120px;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;outline:none;">
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <label style="display:inline-flex;align-items:center;gap:6px;font-size:.9rem;cursor:pointer;">
+                    <input type="checkbox" id="aiEnabled" {{if .Agent.Enabled}}checked{{end}}> Enabled
+                </label>
+                <span id="aiConfigStatus" style="font-size:.9rem;color:#666;"></span>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <button type="button" onclick="saveAiConfig()" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">Save config</button>
+            </div>
+        </div>
+    </div>
+
     {{range $sid, $s := .Sections}}
     <div class="section">
         <h2>{{if $s.Config.PageTitle}}{{$s.Config.PageTitle}}{{else}}{{$s.CollectionName}}{{end}}</h2>
@@ -89,7 +128,7 @@
         {{if $s.Config.CollectionDescr}}<div class="descr">{{$s.Config.CollectionDescr}}</div>{{end}}
 
         <div class="toolbar">
-            <a href="/form/{{$s.CollectionName}}" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">+ Add new</a>
+            <a href="{{if $s.SetupLinks}}/pbx-setup/record/{{$s.CollectionName}}/new{{else}}/form/{{$s.CollectionName}}{{end}}" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">+ Add new</a>
         </div>
 
         <div class="table-wrap">
@@ -122,6 +161,64 @@
     </div>
     {{end}}
 
+    <div class="section">
+        <h2>Collection API rules</h2>
+        <div class="subtitle">Access rules for the collection API (applied to the PocketBase REST API and enforced on these pages). Blank = public, "Superusers only" = restricted to administrators.</div>
+        <form method="POST" action="/pbx-setup/rules">
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Collection</th>
+                            <th>List</th>
+                            <th>View</th>
+                            <th>Create</th>
+                            <th>Update</th>
+                            <th>Delete</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{range .Rules}}
+                        <tr>
+                            <td style="font-weight:600;">{{.Collection}}</td>
+                            {{$c := .Collection}}
+                            {{range .Items}}
+                            <td style="vertical-align:top;">
+                                {{$type := .Type}}
+                                {{$rule := .Rule}}
+                                <select name="rules_{{$c}}_{{$type}}_mode" onchange="ruleModeChanged(this)">
+                                    <option value="public" {{if eq $rule.Mode "public"}}selected{{end}}>Public</option>
+                                    <option value="signedin" {{if eq $rule.Mode "signedin"}}selected{{end}}>Signed in</option>
+                                    <option value="selected" {{if eq $rule.Mode "selected"}}selected{{end}}>Selected users</option>
+                                    <option value="super" {{if eq $rule.Mode "super"}}selected{{end}}>Superusers only</option>
+                                    <option value="custom" {{if eq $rule.Mode "custom"}}selected{{end}}>Custom</option>
+                                </select>
+                                <div class="rule-users" style="margin-top:6px;{{if ne $rule.Mode "selected"}}display:none;{{end}}">
+                                    {{range $u := $.Users}}
+                                    {{$uid := $u.ID}}
+                                    <label style="display:flex;align-items:center;gap:6px;font-size:.85rem;font-weight:400;white-space:normal;">
+                                        <input type="checkbox" name="rules_{{$c}}_{{$type}}_user" value="{{$uid}}"
+                                            {{$has := false}}{{range $rule.Users}}{{if eq . $uid}}{{$has = true}}{{end}}{{end}}
+                                            {{if $has}}checked{{end}}> {{$u.Label}}
+                                    </label>
+                                    {{end}}
+                                </div>
+                                <input type="text" class="rule-custom" name="rules_{{$c}}_{{$type}}_custom" value="{{$rule.Custom}}" placeholder="filter expression"
+                                    style="margin-top:6px;width:100%;{{if ne $rule.Mode "custom"}}display:none;{{end}}">
+                            </td>
+                            {{end}}
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+            </div>
+            <div style="margin-top:12px;">
+                <button type="submit" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">Save rules</button>
+                <span id="rulesStatus" style="font-size:.9rem;color:#666;margin-left:10px;"></span>
+            </div>
+        </form>
+    </div>
+
     <!-- Relation modal -->
     <div class="modal-overlay" id="relModal">
         <div class="modal-content">
@@ -135,7 +232,8 @@
 
     <script>
         const sections = [
-            {{range $sid, $s := .Sections}}
+
+    {{range $sid, $s := .Sections}}
             {
                 fields: {{$s.FieldsJSON | safeJS}},
                 fieldTypes: {{$s.FieldTypesJSON | safeJS}},
@@ -144,6 +242,7 @@
                 collName: "{{$s.CollectionName}}",
                 columnSorting: {{$s.Config.ColumnSorting}},
                 pagination: {{$s.Config.Pagination}},
+                setupLinks: {{$s.SetupLinks}},
             },
             {{end}}
         ];
@@ -249,15 +348,16 @@
                 tbody.innerHTML = '<tr><td class="empty" colspan="' + (sec.fields.length + 1) + '">No records found</td></tr>';
             } else {
                 var collName = sec.collName;
+                var baseUrl = sec.setupLinks ? "/pbx-setup/record/" + collName + "/" : "/form/" + collName + "/";
                 tbody.innerHTML = pageRecords.map(function(r) {
                     return "<tr>" +
                         sec.fields.map(function(f, i) { return "<td>" + renderCell(r[f], sec.fieldTypes[i]) + "</td>"; }).join("") +
                         '<td style="white-space:nowrap">' +
-                        '<a href="/form/' + collName + '/' + r.id + '?view=1" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid var(--btn-neutral);border-radius:4px;margin-right:4px;line-height:0">' +
+                        '<a href="' + baseUrl + r.id + '?view=1" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid var(--btn-neutral);border-radius:4px;margin-right:4px;line-height:0">' +
                         '<img src="/assets/Binocular--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="View"></a>' +
-                        '<a href="/form/' + collName + '/' + r.id + '" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid var(--btn-primary);border-radius:4px;margin-right:4px;line-height:0">' +
+                        '<a href="' + baseUrl + r.id + '" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid var(--btn-primary);border-radius:4px;margin-right:4px;line-height:0">' +
                         '<img src="/assets/Arrange-List-Descending-1--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="Edit"></a>' +
-                        '<button onclick="deleteRecord(' + sid + ',\'' + collName + '\',\'' + r.id + '\')" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid var(--btn-danger);border-radius:4px;cursor:pointer;line-height:0">' +
+                        '<button onclick="deleteRecord(' + sid + ',\'' + collName + '\',' + sec.setupLinks + ',\'' + r.id + '\')" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid var(--btn-danger);border-radius:4px;cursor:pointer;line-height:0">' +
                         '<img src="/assets/Bin-1--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="Delete"></button>' +
                         "</td></tr>";
                 }).join("");
@@ -334,9 +434,10 @@
         });
 
         // delete record
-        async function deleteRecord(sid, collName, id) {
+        async function deleteRecord(sid, collName, setupLinks, id) {
             if (!confirm("Really delete selected record?")) return;
-            var res = await fetch("/form/" + collName + "/" + id + "/delete", { method: "POST" });
+            var url = setupLinks ? "/pbx-setup/record/" + collName + "/" + id + "/delete" : "/form/" + collName + "/" + id + "/delete";
+            var res = await fetch(url, { method: "POST" });
             if (!res.ok) { alert("Failed to delete record."); return; }
             var idx = sections[sid].allRecords.findIndex(function(r) { return r.id === id; });
             if (idx !== -1) sections[sid].allRecords.splice(idx, 1);
@@ -421,7 +522,7 @@
         function applyTheme(mode) {
             document.body.setAttribute('data-theme', mode);
             var btn = document.getElementById('themeBtn');
-            if (btn) btn.textContent = mode === 'dark' ? '☀️ Light' : '🌙 Dark';
+            if (btn) btn.textContent = mode === 'dark' ? '☀️' : '🌙';
         }
         function toggleTheme() {
             var next = currentTheme() === 'dark' ? 'light' : 'dark';
@@ -465,6 +566,56 @@
                     s.style.color = '#dc3545';
                 });
         }
+        function aiProviderChanged() {
+            var p = document.getElementById('aiProvider').value;
+            var url = document.getElementById('aiBaseURL');
+            if (p === 'openrouter' && !url.value.trim()) {
+                url.value = 'https://openrouter.ai/api/v1';
+            } else if (p === 'lmstudio' && !url.value.trim()) {
+                url.value = 'http://localhost:1234/v1';
+            }
+        }
+        function saveAiConfig() {
+            var body = {
+                provider: document.getElementById('aiProvider').value,
+                baseURL: document.getElementById('aiBaseURL').value.trim(),
+                apiKey: document.getElementById('aiApiKey').value.trim(),
+                model: document.getElementById('aiModel').value.trim(),
+                timeoutSeconds: parseInt(document.getElementById('aiTimeout').value, 10) || 90,
+                enabled: document.getElementById('aiEnabled').checked
+            };
+            fetch('/api/ai-config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            })
+                .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
+                .then(function(res) {
+                    var s = document.getElementById('aiConfigStatus');
+                    if (res.ok) {
+                        s.textContent = 'Saved.';
+                        s.style.color = '#28a745';
+                    } else {
+                        s.textContent = 'Save failed: ' + (res.data.message || 'unknown error');
+                        s.style.color = '#dc3545';
+                    }
+                })
+                .catch(function() {
+                    var s = document.getElementById('aiConfigStatus');
+                    s.textContent = 'Save failed.';
+                    s.style.color = '#dc3545';
+                });
+        }
+        function ruleModeChanged(sel) {
+            var base = sel.name.replace(/_mode$/, "");
+            var td = sel.closest("td");
+            var mode = sel.value;
+            var users = td.querySelector(".rule-users");
+            var custom = td.querySelector(".rule-custom");
+            if (users) users.style.display = mode === "selected" ? "" : "none";
+            if (custom) custom.style.display = mode === "custom" ? "" : "none";
+        }
+
         applyTheme(currentTheme());
     </script>
 </body>

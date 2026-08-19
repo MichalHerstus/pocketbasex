@@ -28,8 +28,8 @@
 <body data-theme="{{.Theme}}">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">
         <h1 style="margin:0">PBX - Pocketbase Extended</h1>
-        <button type="button" id="themeBtn" onclick="toggleTheme()" style="padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">🌙 Dark</button>
-        <button type="button" onclick="goBack('/login')" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;text-decoration:none;font-size:.9rem;cursor:pointer;margin-left:auto;">Close</button>
+        <button type="button" id="themeBtn" onclick="toggleTheme()" style="padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1.1rem;cursor:pointer;">🌙</button>
+        <a href="/logout" style="padding:8px 16px;background:var(--btn-danger);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;margin-left:auto;">Logout</a>
     </div>
     <p class="subtitle">configurable application to view and manage PB data collections</p>
 
@@ -41,7 +41,9 @@
     {{else}}
     <div class="user-bar">
         <span>Signed in as <span class="name">{{.Name}}</span></span>
-        <a href="/logout" style="color:var(--btn-danger);">Logout</a>
+        <span style="display:flex;gap:12px;align-items:center;">
+            <a href="/ai">AI agent</a>
+        </span>
     </div>
     {{end}}
 
@@ -59,14 +61,6 @@
     <p class="copyright"><i>(c)POINT.X 2026, MH</i></p>
 
     <script>
-        function goBack(fallback) {
-            if (window.history.length > 1) {
-                window.history.back();
-            } else {
-                window.location.href = fallback;
-            }
-        }
-
         function currentTheme() {
             var t = localStorage.getItem('pbx-theme');
             if (t === 'dark' || t === 'light') return t;
@@ -75,7 +69,7 @@
         function applyTheme(mode) {
             document.body.setAttribute('data-theme', mode);
             var btn = document.getElementById('themeBtn');
-            if (btn) btn.textContent = mode === 'dark' ? '☀️ Light' : '🌙 Dark';
+            if (btn) btn.textContent = mode === 'dark' ? '☀️' : '🌙';
         }
         function toggleTheme() {
             var next = currentTheme() === 'dark' ? 'light' : 'dark';

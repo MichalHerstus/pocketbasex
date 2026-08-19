@@ -18,7 +18,7 @@ Web app to provide UI to view and edit pocketbase collections data. PocketBase c
 | Build & vet | `go build ./... && go vet ./...` |
 | Run server | `./pbx serve` (listens on :8090) |
 
-No CI, no tests.
+No CI, no test runner. `pbai/agent_test.go` has unit tests (run with `go test ./pbai/`).
 
 ## Routes (all in `main.go`)
 
@@ -28,6 +28,12 @@ No CI, no tests.
 | `POST /login` | authenticate | Email/password auth via `users` collection, sets `pb_auth` cookie |
 | `GET /app` | dashboard | Menu of links grouped by `_app` collection records |
 | `GET /pbx-setup` | setup | Shows `_app`, `_views` tables + Theme setup |
+| `GET /pbx-setup/record/{coll}/new` | setup record editor | New record form for `_app`/`_views`/`_agent` (superadmin) |
+| `GET /pbx-setup/record/{coll}/{id}` | setup record editor | Edit record for `_app`/`_views`/`_agent` (superadmin) |
+| `POST /pbx-setup/record/{coll}` | setup record create | Create system record (multipart; file fields via `filesystem.NewFileFromMultipart`) |
+| `POST /pbx-setup/record/{coll}/{id}` | setup record update | Update system record (`{field}_remove=on` clears a file) |
+| `POST /pbx-setup/record/{coll}/{id}/delete` | setup record delete | Delete system record, returns JSON |
+| `POST /pbx-setup/rules` | setup rules save | Persist collection API rules for data collections (superadmin) |
 | `GET /pbx-config` | config editor | List `_views` configs |
 | `GET /pbx-config/view/new|{name}` | config editor | Edit `_views` `_tabulator`/`_form`/`_mssql` JSON |
 | `POST /pbx-config/save` | config save | Persist `_views` record |
@@ -48,9 +54,30 @@ No CI, no tests.
 | `POST /mssql-export/{collectionName}` | MSSQL export | Push PocketBase records to a MSSQL table (JSON response) |
 | `POST /mssql-import/{collectionName}` | MSSQL import | Pull rows from a MSSQL table into PocketBase (JSON response) |
 | `GET /mssql-introspect` | MSSQL introspect | List MSSQL table columns from `INFORMATION_SCHEMA` |
+| `GET /api/filters/{configName}` | saved filters | List named advanced filters for a `/tabular` view (own filters, or all for superusers) |
+| `POST /api/filters/{configName}` | save filter | Upsert a named filter (`{name, conditions, chains}`) owned by the caller |
+| `DELETE /api/filters/{id}` | delete filter | Delete a saved filter (own, or any for superusers) |
+| `GET /api/ai-config` | agent config (super-admin) | Read `_agent` config (JSON) |
+| `POST /api/ai-config` | agent config (super-admin) | Save `_agent` config (JSON) |
+| `GET /api/ai/status` | agent status | `{configured, provider, model, enabled}` |
+| `GET /ai` | AI agent chat | Chat UI (`agent.html`), linked from `/app` |
+| `POST /ai/chat` | AI agent chat | Run agent loop; returns `{transcript, finalText, pendingAction?}` |
+| `POST /ai/confirm` | AI agent confirm | Approve/reject a pending write action (`{actionID, approved}`) |
 | `GET /assets/{path...}` | static | Serves `views/assets/` files |
 
-**Auth**: Cookie-based `pb_auth` (JWT via PocketBase). Login uses `FindAuthRecordByEmail("users", ...)` — name field is the email.
+**Auth**: Cookie-based `pb_auth` (JWT via PocketBase). Login uses `FindAuthRecordByEmail("users", ...)` — name field is the email. NB: PocketBase's `loadAuthToken` middleware only reads the `Authorization` header, NOT the `pb_auth` cookie, so `e.RequestInfo().Auth` is nil on custom routes. The AI handlers resolve the cookie manually via `agentRequestInfo()` (main.go).
+
+## Collection API rules enforcement
+
+- Rules are stored as nullable TEXT on each collection (`listRule`/`viewRule`/`createRule`/`updateRule`/`deleteRule`): `nil` = superusers only, `""` = public, else a PB filter expression.
+- The `/pbx-setup` **Collection API rules** editor (superadmin, `POST /pbx-setup/rules`) offers 5 modes per rule per data collection (excludes `users`, `roles`, `_`-prefixed, and view collections): Public (`""`), Signed-in (`@request.auth.id != ''`), Selected users (`@request.auth.id = "id1" || ...`), Superusers only (`nil`), Custom (raw expression).
+- Enforcement in app routes uses `authRequestInfo(e)` (main.go, aliased `agentRequestInfo`) to inject the cookie auth into the `RequestInfo`, then `e.App.CanAccessRecord` / a duplicated `checkCreateRule` dummy-record evaluator:
+  - `/tabular/{configName}` + `/api/tabulator-data/{coll}`: records filtered by `listRule` (empty list for non-superusers when `nil`).
+  - `/form/{configName}` edit: `viewRule` per record; new: denied when `createRule == nil` for non-superusers.
+  - `/form/{configName}[/{id}]` POST: `updateRule` per record on update; `checkCreateRule` on create.
+  - `/form/{configName}/{id}/delete`: `deleteRule` per record.
+  - View collections (`IsView()`) are skipped.
+- Superusers always bypass; the setup-side record editors (`/pbx-setup/record/...`) are superadmin-only via `requireSuperAdmin`.
 
 ## Template functions
 
@@ -109,7 +136,18 @@ Configures the `/app` dashboard. Fields:
 
 ## Collections (from `_app`, `_tabulator`, `_form` records in DB)
 
-`zamestnanci`, `produkty`, `karta_majetku`, `inventury`, `inv_radky`, `cinnosti`, `mapa_umisteni`, `umisteni`, `organizacni_struktura`, `kat_produktu`, `definice_stitku`, `poznamky`. System: `users` (auth), `roles`, `_views`, `_app`, `_metadata`.
+`zamestnanci`, `produkty`, `karta_majetku`, `inventury`, `inv_radky`, `cinnosti`, `mapa_umisteni`, `umisteni`, `organizacni_struktura`, `kat_produktu`, `definice_stitku`, `poznamky`. System: `users` (auth), `roles`, `_views`, `_app`, `_metadata`, `_agent`, `_filters`.
+
+## AI agent (`pbai` package)
+
+Built-in chat agent at `/ai` (linked from `/app`). Package `pbai/` (`llm.go`, `agent.go`, `tools.go`, `ingest.go`).
+
+- **LLM**: single OpenAI-compatible client via `github.com/sashabaranov/go-openai` (covers both OpenRouter and LM Studio). Config lives in the `_agent` collection.
+- **`_agent` collection**: system collection with `_name` (text, required), `_description` (text), `_config` (json). One record named `default` holds `{"provider":"lmstudio"|"openrouter","baseURL","apiKey","model","timeoutSeconds","enabled"}`. Edited from the `/pbx-setup` "AI agent" section (super-admin). The API key is stored in the record's `_config` JSON — never in env vars or git.
+- **Tools** (`tools.go`): `list_collections`, `get_collection_schema`, `query_records`, `insert_records` (write), `create_collection` (write), `set_view_config` (write). Write tools return a `PendingAction` instead of executing; the loop stops and the UI shows an approve/reject modal, then calls `POST /ai/confirm`.
+- **Permissions**: create_collection/set_view_config are super-admin only; record ops enforce each collection's PB rules (`listRule`/`viewRule`/`createRule`/`updateRule`/`deleteRule`) via `app.CanAccessRecord` with the caller's `RequestInfo`. `nil` rule = super-user only; `""` = everyone. Permission is re-checked at confirm time.
+- **Files** (`ingest.go`): text/md/csv read inline, PDF via `github.com/ledongthuc/pdf` (max 20 pages, 300 KB extracted text), images sent as base64 multimodal (8 MB cap). Uploaded files are marked as untrusted data.
+- **Auth note**: handlers use `agentRequestInfo(e)` (main.go) to inject the `pb_auth` cookie auth into the RequestInfo; without it `isSuper()` is always false.
 
 ## Schema changes
 
@@ -125,6 +163,7 @@ Add/modify collection fields via **JS SDK** in `pb_migrations/`. See `.opencode/
 - `views/assets/` — icons (PNG) and `theme.css`; served via embedded FS
 - `pbexcel/` — Excel import/export logic (`pb-excel.go`); also `IntrospectSheet` (header/type detection) for the collection wizard
 - `pbmssql/` — MSSQL import/export/introspection logic (`pb-mssql.go`)
+- `pbai/` — AI agent (`llm.go`, `agent.go`, `tools.go`, `ingest.go`)
 - `views/import-wizard.html` — shared 3-step wizard: Source → Preview/Edit → Create (used by both Excel and MSSQL collection import)
 - `views/pages.go` — Go structs for template data (`TabulatorPageData`, `FormPageData`, `AppPageData`, `ImportWizardPageData`, etc.)
 - No `README.md` exists

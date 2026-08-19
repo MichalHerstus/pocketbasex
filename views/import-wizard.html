@@ -39,7 +39,7 @@
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">
         <h1 style="margin:0">Import wizard</h1>
         <button type="button" onclick="goBack('/pbx-config')" class="btn btn-gray" style="font-size:.9rem;cursor:pointer;margin-left:auto;">Close</button>
-        <button type="button" id="themeBtn" onclick="toggleTheme()" class="btn btn-gray" style="font-size:.9rem;cursor:pointer;">🌙 Dark</button>
+        <button type="button" id="themeBtn" onclick="toggleTheme()" class="btn btn-gray" style="font-size:1.1rem;cursor:pointer;">🌙</button>
         <a href="/pbx-config" class="btn btn-gray" style="font-size:.9rem;">Back to Config</a>
     </div>
     <p class="subtitle">Create a new collection from {{if eq .Source "excel"}}an Excel file{{else}}an MSSQL table{{end}}</p>
@@ -172,7 +172,7 @@
         function applyTheme(mode) {
             document.body.setAttribute('data-theme', mode);
             var btn = document.getElementById('themeBtn');
-            if (btn) btn.textContent = mode === 'dark' ? '\u2600\ufe0f Light' : '\U0001F319 Dark';
+            if (btn) btn.textContent = mode === 'dark' ? '\u2600\ufe0f' : '\U0001F319';
         }
         function toggleTheme() {
             var next = currentTheme() === 'dark' ? 'light' : 'dark';

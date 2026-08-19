@@ -23,6 +23,7 @@
         .form-col input[readonly], .form-col select[disabled] { background: #f9f9f9; cursor: not-allowed; }
         .form-col textarea { width: 100%; padding: 8px 12px; border: 1px solid #ccc; border-radius: 6px; font-size: .9rem; outline: none; font-family: sans-serif; resize: vertical; }
         .form-col textarea:focus { border-color: #007bff; }
+        .form-col .json-textarea { font-family: monospace; white-space: pre; min-height: 120px; }
         .form-col .field-value { padding: 8px 12px; font-size: .95rem; line-height: 1.5; border: 1px solid #ccc; border-radius: 6px; background: #fff; }
         .form-col .field-value a { color: #007bff; text-decoration: none; }
         .form-col .field-value a:hover { text-decoration: underline; }
@@ -35,21 +36,9 @@
         .form-actions button[type="submit"]:hover { background: var(--btn-primary-hover); }
         .form-actions button[type="button"] { background: var(--btn-neutral); color: #fff; }
         .form-actions button[type="button"]:hover { background: var(--btn-neutral-hover); }
-        .form-col .rel-btn { display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; border: 1px solid #007bff; border-radius: 6px; background: #e8f0fe; color: #007bff; cursor: pointer; font-size: .9rem; }
-        .form-col .rel-btn:hover { background: #d0e3fd; }
         .form-col .json-display { background: #f8f9fa; border: 1px solid #eee; border-radius: 6px; padding: 12px; font-family: monospace; font-size: .85rem; line-height: 1.5; overflow-x: auto; white-space: pre-wrap; }
         .form-col .file-link { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; background: #f0f0f0; border-radius: 6px; text-decoration: none; color: #333; font-size: .9rem; }
         .form-col .file-link:hover { background: #e0e0e0; }
-        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,.4); z-index: 1000; align-items: center; justify-content: center; }
-        .modal-content { background: #fff; border-radius: 12px; padding: 24px; max-width: 90vw; max-height: 85vh; overflow: auto; box-shadow: 0 4px 24px rgba(0,0,0,.2); }
-        .modal-content h2 { margin: 0 0 16px 0; font-size: 1.3rem; }
-        .modal-close { float: right; background: none; border: none; font-size: 1.5rem; cursor: pointer; color: #999; }
-        .modal-close:hover { color: #333; }
-        .modal-content table { width: 100%; border-collapse: collapse; font-size: .85rem; }
-        .modal-content th { padding: 8px 10px; border-bottom: 2px solid #dee2e6; text-align: left; font-weight: 600; color: #555; }
-        .modal-content td { padding: 8px 10px; border-bottom: 1px solid #eee; }
-        .modal-content tr:hover td { background: #f5f8ff; }
-        .modal-content tr { cursor: pointer; }
         .field-icon { display: inline-flex; align-items: center; }
         .section-title { margin: 24px 0 12px 0; font-size: 1.1rem; font-weight: 600; color: #444; border-bottom: 2px solid #e0e0e0; padding-bottom: 6px; }
     </style>
@@ -58,7 +47,7 @@
 <body data-theme="{{.Theme}}">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">
         <h1 style="margin:0">{{.Title}}{{if .ViewOnly}} — view{{else if .ID}} — edit{{end}}</h1>
-        <button type="button" id="themeBtn" onclick="toggleTheme()" style="padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">🌙 Dark</button>
+        <button type="button" id="themeBtn" onclick="toggleTheme()" style="padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1.1rem;cursor:pointer;">🌙</button>
         <button type="button" onclick="goBack('/app')" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;margin-left:auto;">Close</button>
     </div>
 
@@ -155,16 +144,18 @@
                     {{end}}
 
                 {{else if eq $field.Type "relation"}}
-                    <div class="field-value">
-                        {{if $field.Data.collectionName}}
-                        <button type="button" class="rel-btn" onclick="openRelationModal('{{$field.Data.collectionName}}', '{{$field.Name}}', this)">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
-                            {{$field.Data.count}} záznamů
-                        </button>
-                        {{else}}
-                        <span>{{$field.Data.count}} záznamů</span>
-                        {{end}}
-                    </div>
+                    {{if $.ViewOnly}}
+                        <div class="field-value">
+                            {{if $field.Data.display}}{{$field.Data.display}}{{else if $field.Data.count}}{{$field.Value}}{{else}}&mdash;{{end}}{{if $field.Data.count}} ({{$field.Data.count}}){{end}}
+                        </div>
+                    {{else}}
+                        <select name="{{$field.Name}}">
+                            <option value="">{{if not $field.Data.count}}— none —{{end}}</option>
+                            {{range $opt := $field.Data.options}}
+                            <option value="{{$opt.id}}"{{if $opt.sel}} selected{{end}}>{{$opt.label}}</option>
+                            {{end}}
+                        </select>
+                    {{end}}
 
                 {{else if eq $field.Type "date"}}
                     <div class="field-value">{{if $field.Value}}{{$field.Value}}{{else}}&mdash;{{end}}</div>
@@ -173,11 +164,15 @@
                     <div class="field-value">{{if $field.Value}}{{$field.Value}}{{else}}&mdash;{{end}}</div>
 
                 {{else if eq $field.Type "json"}}
-                    <div class="field-value">
-                        {{if $field.Value}}
-                        <pre class="json-display">{{$field.Value}}</pre>
-                        {{else}}&mdash;{{end}}
-                    </div>
+                    {{if $.ViewOnly}}
+                        <div class="field-value">
+                            {{if $field.Value}}
+                            <pre class="json-display">{{$field.Value}}</pre>
+                            {{else}}&mdash;{{end}}
+                        </div>
+                    {{else}}
+                        <textarea name="{{$field.Name}}" rows="5" class="json-textarea" placeholder="{ }" spellcheck="false">{{$field.Value}}</textarea>
+                    {{end}}
 
                 {{else if eq $field.Type "geo"}}
                     <div class="field-value">
@@ -218,69 +213,7 @@
         {{end}}
     </form>
 
-    <div id="relation-modal" class="modal-overlay" onclick="if(event.target===this)closeRelationModal()">
-        <div class="modal-content">
-            <button class="modal-close" onclick="closeRelationModal()">&times;</button>
-            <h2 id="relation-modal-title"></h2>
-            <div id="relation-modal-body"><p>Načítám...</p></div>
-        </div>
-    </div>
-
     <script>
-    function openRelationModal(collectionName, fieldName, btn) {
-        var modal = document.getElementById('relation-modal');
-        var title = document.getElementById('relation-modal-title');
-        var body = document.getElementById('relation-modal-body');
-        title.textContent = collectionName;
-        body.innerHTML = '<p>Načítám...</p>';
-        modal.style.display = 'flex';
-
-        fetch('/api/tabulator-data/' + encodeURIComponent(collectionName))
-            .then(function(r) { return r.json(); })
-            .then(function(data) {
-                if (!data.fields || !data.records) {
-                    body.innerHTML = '<p>Žádná data</p>';
-                    return;
-                }
-                var skip = { id: true };
-                var html = '<table><thead><tr>';
-                for (var fi = 0; fi < data.fields.length; fi++) {
-                    var f = data.fields[fi];
-                    if (skip[f]) continue;
-                    html += '<th>' + escapeHtml(f) + '</th>';
-                }
-                html += '</tr></thead><tbody>';
-                for (var ri = 0; ri < data.records.length; ri++) {
-                    var rec = data.records[ri];
-                    html += '<tr onclick="closeRelationModal()">';
-                    for (var fi = 0; fi < data.fields.length; fi++) {
-                        var f = data.fields[fi];
-                        if (skip[f]) continue;
-                        html += '<td>' + escapeHtml(rec[f] || '') + '</td>';
-                    }
-                    html += '</tr>';
-                }
-                html += '</tbody></table>';
-                body.innerHTML = html;
-            })
-            .catch(function(err) {
-                body.innerHTML = '<p>Chyba při načítání dat</p>';
-            });
-    }
-
-    function closeRelationModal() {
-        document.getElementById('relation-modal').style.display = 'none';
-    }
-
-    function escapeHtml(s) {
-        if (s == null) return '';
-        return String(s)
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;');
-    }
-
     document.addEventListener('DOMContentLoaded', function() {
         document.querySelectorAll('.json-display').forEach(function(el) {
             el.innerHTML = el.textContent.replace(/"([^"]+)":/g, '<strong>"$1"</strong>:');
@@ -303,7 +236,7 @@
     function applyTheme(mode) {
         document.body.setAttribute('data-theme', mode);
         var btn = document.getElementById('themeBtn');
-        if (btn) btn.textContent = mode === 'dark' ? '☀️ Light' : '🌙 Dark';
+        if (btn) btn.textContent = mode === 'dark' ? '☀️' : '🌙';
     }
     function toggleTheme() {
         var next = currentTheme() === 'dark' ? 'light' : 'dark';

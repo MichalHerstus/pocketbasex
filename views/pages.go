@@ -42,6 +42,31 @@ type MssqlMapping struct {
 	DBField string `json:"dbField"`
 }
 
+// FilterCondition is a single field/operator/value clause of a saved filter.
+// Value may be literally "?" to denote a user-supplied parameter placeholder.
+type FilterCondition struct {
+	Field string `json:"field"`
+	Op    string `json:"op"`
+	Value string `json:"value"`
+}
+
+// FilterDef is the JSON filter definition stored in a _filters record. Chains
+// holds one AND/OR connector per gap between consecutive conditions
+// (len(chains) == len(conditions)-1), evaluated left-to-right.
+type FilterDef struct {
+	Name       string            `json:"name"`
+	Conditions []FilterCondition `json:"conditions"`
+	Chains     []string          `json:"chains"`
+}
+
+// SavedFilter is a _filters record as returned by the list API.
+type SavedFilter struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	User string `json:"user"`
+	Def  FilterDef `json:"def"`
+}
+
 // MssqlConfig is the JSON _mssql field of a view config record.
 type MssqlConfig struct {
 	DSN     string         `json:"dsn"`
@@ -98,6 +123,7 @@ type TabulatorPageData struct {
 	TotalPages     int
 	Config         TabulatorConfig
 	Mssql          *MssqlConfig
+	SetupLinks     bool // render actions to /pbx-setup/record/... editors
 }
 
 type FormFieldItem struct {
@@ -182,9 +208,68 @@ type AppPageData struct {
 }
 
 type PbxSetupPageData struct {
+	Theme        string
+	MssqlDSN     string
+	Agent        AgentConfig
+	Sections     []TabulatorPageData
+	Rules        []SetupCollectionRules
+	Users        []SetupUser
+}
+
+// SetupUser is a user record shown in the rules editor's user checkbox list.
+type SetupUser struct {
+	ID    string
+	Label string
+}
+
+// RuleMode is the friendly mode of a collection API rule (5 values).
+type RuleMode string
+
+const (
+	RuleModePublic    RuleMode = "public"    // "" (everyone)
+	RuleModeSignedIn  RuleMode = "signedin"  // @request.auth.id != ''
+	RuleModeSelected  RuleMode = "selected"  // OR-chain of selected user ids
+	RuleModeSuper     RuleMode = "super"     // nil (superusers only)
+	RuleModeCustom    RuleMode = "custom"    // raw filter expression
+)
+
+// SetupRule holds the UI state for one of the 5 API rules of a collection.
+type SetupRule struct {
+	Mode   RuleMode
+	Users  []string // selected user ids (for RuleModeSelected)
+	Custom string   // raw filter (for RuleModeCustom)
+}
+
+// SetupRuleItem pairs a rule type with its editor state.
+type SetupRuleItem struct {
+	Type string
+	Rule SetupRule
+}
+
+// SetupCollectionRules is the rules-editor row for one data collection.
+type SetupCollectionRules struct {
+	Collection string
+	Items      []SetupRuleItem // list, view, create, update, delete
+}
+
+// AgentConfig is the JSON _config field of an _agent record. It holds the LLM
+// provider settings used by the built-in AI agent.
+type AgentConfig struct {
+	Provider       string `json:"provider"`       // "openrouter" | "lmstudio"
+	BaseURL        string `json:"baseURL"`        // OpenAI-compatible API base URL
+	APIKey         string `json:"apiKey"`         // API key (optional for LM Studio)
+	Model          string `json:"model"`          // model identifier
+	TimeoutSeconds int    `json:"timeoutSeconds"` // per-request timeout
+	Enabled        bool   `json:"enabled"`        // whether the agent is active
+}
+
+// AgentPageData backs the /ai agent chat page.
+type AgentPageData struct {
 	Theme    string
-	MssqlDSN string
-	Sections []TabulatorPageData
+	Name     string
+	Config   AgentConfig
+	IsSuper  bool
+	Status   string
 }
 
 // ConfigEntry is a row in the /pbx-config overview listing a list or form configuration.
@@ -213,6 +298,54 @@ type ConfigEditorPageData struct {
 	MssqlJSON      string
 	Collections    []string
 	IsNew          bool
+}
+
+// FieldOpt is a single option of a structured JSON field (checkbox option or
+// dynamic row) in the schema-driven setup record editor.
+type FieldOpt struct {
+	Index   int    // 1-based index (absolute field index for fieldMulti/fieldLabels)
+	Name    string // field name (or DB column for mapping rows)
+	Label   string // display label / title
+	Checked bool
+	Value   string // value when present (e.g. per-field label for fieldLabels)
+}
+
+// JsonFormField is a single structured input in a schema-driven JSON editor.
+// Type is one of: text, number, bool, select, fieldMulti, fieldLabels, mapping, columns.
+type JsonFormField struct {
+	Key          string
+	Label        string
+	Type         string
+	Value        string
+	Checked      bool
+	Options      []string
+	FieldOptions []FieldOpt
+}
+
+// JsonFormSection groups the structured inputs for one JSON record field
+// (e.g. _tabulator, _form, _mssql, _config). TargetColl is the collection the
+// field-index options refer to (the record's _collName for _views records);
+// TargetCollFields holds that collection's non-system field names.
+type JsonFormSection struct {
+	Key              string
+	Title            string
+	TargetColl       string
+	TargetCollFields []string
+	Fields           []JsonFormField
+	Raw              string // raw JSON fallback textarea content
+}
+
+// SetupRecordPageData backs the /pbx-setup/record/{coll}/... editors.
+type SetupRecordPageData struct {
+	Theme        string
+	CollName     string
+	RecordID     string
+	IsNew        bool
+	Title        string
+	Collections  []string
+	Fields       []FormFieldItem
+	JsonSections []JsonFormSection
+	Error        string
 }
 
 // WizardColumn is one editable column in the import wizard preview step.

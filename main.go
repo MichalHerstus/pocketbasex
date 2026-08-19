@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"log"
 	"math"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"net/url"
@@ -18,11 +19,17 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/plugins/jsvm"
+	"github.com/pocketbase/pocketbase/tools/filesystem"
 	"github.com/pocketbase/pocketbase/tools/hook"
+	"github.com/pocketbase/pocketbase/tools/inflector"
+	"github.com/pocketbase/pocketbase/tools/security"
+	"github.com/pocketbase/pocketbase/tools/search"
 
+	"pbx/pbai"
 	"pbx/pbexcel"
 	"pbx/pbmssql"
 	"pbx/views"
@@ -104,6 +111,26 @@ func main() {
 			se.Router.GET("/pbx-setup", func(e *core.RequestEvent) error {
 				return handlePbxSetup(e)
 			})
+			// pbx setup: system record editors (_app, _views, _agent) — super admin
+			se.Router.GET("/pbx-setup/record/{coll}/new", func(e *core.RequestEvent) error {
+				return handleSetupRecord(e)
+			})
+			se.Router.GET("/pbx-setup/record/{coll}/{id}", func(e *core.RequestEvent) error {
+				return handleSetupRecord(e)
+			})
+			se.Router.POST("/pbx-setup/record/{coll}", func(e *core.RequestEvent) error {
+				return handleSetupRecordPost(e)
+			})
+			se.Router.POST("/pbx-setup/record/{coll}/{id}", func(e *core.RequestEvent) error {
+				return handleSetupRecordPost(e)
+			})
+			se.Router.POST("/pbx-setup/record/{coll}/{id}/delete", func(e *core.RequestEvent) error {
+				return handleSetupRecordDelete(e)
+			})
+			// pbx setup: collection API rules — super admin
+			se.Router.POST("/pbx-setup/rules", func(e *core.RequestEvent) error {
+				return handleSetupRulesPost(e)
+			})
 			// pbx config editor (super admin)
 			se.Router.GET("/pbx-config", func(e *core.RequestEvent) error {
 				return handlePbxConfig(e)
@@ -161,6 +188,16 @@ func main() {
 			// JSON data for relation modal
 			se.Router.GET("/api/tabulator-data/{collectionName}", func(e *core.RequestEvent) error {
 				return handleTabulatorDataJSON(e)
+			})
+			// named (saved) advanced filters for a /tabular view
+			se.Router.GET("/api/filters/{configName}", func(e *core.RequestEvent) error {
+				return handleFiltersList(e)
+			})
+			se.Router.POST("/api/filters/{configName}", func(e *core.RequestEvent) error {
+				return handleFilterSave(e)
+			})
+			se.Router.DELETE("/api/filters/{id}", func(e *core.RequestEvent) error {
+				return handleFilterDelete(e)
 			})
 			// export collection to Excel
 			se.Router.GET("/export/{collectionName}", func(e *core.RequestEvent) error {
@@ -223,6 +260,54 @@ func main() {
 					return e.InternalServerError("Failed to save MSSQL DSN", err)
 				}
 				return e.JSON(http.StatusOK, map[string]any{"ok": true, "dsn": dsn})
+			})
+			// read the active AI agent configuration (super admin)
+			se.Router.GET("/api/ai-config", func(e *core.RequestEvent) error {
+				if err := requireSuperAdmin(e); err != nil {
+					return err
+				}
+				return e.JSON(http.StatusOK, getAgentConfig(e))
+			})
+			// save the active AI agent configuration (super admin)
+			se.Router.POST("/api/ai-config", func(e *core.RequestEvent) error {
+				if err := requireSuperAdmin(e); err != nil {
+					return err
+				}
+				var cfg views.AgentConfig
+				if err := json.NewDecoder(e.Request.Body).Decode(&cfg); err != nil {
+					return e.BadRequestError("Invalid agent config JSON", err)
+				}
+				if err := setAgentConfig(e, cfg); err != nil {
+					return e.InternalServerError("Failed to save agent config", err)
+				}
+				return e.JSON(http.StatusOK, map[string]any{"ok": true})
+			})
+			// AI agent status used by the /ai page and setup section
+			se.Router.GET("/api/ai/status", func(e *core.RequestEvent) error {
+				cfg := getAgentConfig(e)
+				status := "not_configured"
+				if cfg.Enabled && cfg.BaseURL != "" && cfg.Model != "" {
+					status = "configured"
+				}
+				return e.JSON(http.StatusOK, map[string]any{
+					"configured": status == "configured",
+					"enabled":    cfg.Enabled,
+					"provider":   cfg.Provider,
+					"model":      cfg.Model,
+					"status":     status,
+				})
+			})
+			// AI agent chat page
+			se.Router.GET("/ai", func(e *core.RequestEvent) error {
+				return handleAgent(e)
+			})
+			// AI agent chat request
+			se.Router.POST("/ai/chat", func(e *core.RequestEvent) error {
+				return handleAgentChat(e)
+			})
+			// AI agent write-op confirmation
+			se.Router.POST("/ai/confirm", func(e *core.RequestEvent) error {
+				return handleAgentConfirm(e)
 			})
 
 			err := se.Next()
@@ -580,6 +665,44 @@ func parseMssqlConfig(rec *core.Record) views.MssqlConfig {
 	return mc
 }
 
+// --- AI agent config ---
+
+const agentConfigName = "default"
+
+// getAgentConfig loads the active _agent configuration (record named "default").
+func getAgentConfig(e *core.RequestEvent) views.AgentConfig {
+	var cfg views.AgentConfig
+	rec := findConfigByAttr(e, "_agent", "_name", agentConfigName)
+	if rec == nil {
+		return cfg
+	}
+	if raw := rec.GetString("_config"); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &cfg)
+	}
+	return cfg
+}
+
+// setAgentConfig upserts the active _agent configuration (record named "default").
+func setAgentConfig(e *core.RequestEvent, cfg views.AgentConfig) error {
+	agentColl, err := e.App.FindCachedCollectionByNameOrId("_agent")
+	if err != nil {
+		return fmt.Errorf("agent collection not found: %w", err)
+	}
+
+	rec := findConfigByAttr(e, "_agent", "_name", agentConfigName)
+	if rec == nil {
+		rec = core.NewRecord(agentColl)
+		rec.Set("_name", agentConfigName)
+	}
+
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	rec.Set("_config", string(data))
+	return e.App.Save(rec)
+}
+
 // formConfigFromView converts the unified _views._form config to the legacy
 // FormConfigJSON shape used by the view-editing model.
 func formConfigFromView(fc views.ViewFormConfig) views.FormConfigJSON {
@@ -629,6 +752,10 @@ func buildTabulatorData(e *core.RequestEvent, collName string, configRec *core.R
 	records, err := e.App.FindAllRecords(collName)
 	if err != nil {
 		return nil, err
+	}
+
+	if !collection.IsView() {
+		records = filterListedRecords(e, collection, records)
 	}
 
 	vc := parseViewTabulator(configRec)
@@ -858,6 +985,10 @@ func handleTabulator(e *core.RequestEvent) error {
 // --- PBX Setup ---
 
 func handlePbxSetup(e *core.RequestEvent) error {
+	if err := requireSuperAdmin(e); err != nil {
+		return err
+	}
+
 	collections := []string{"_app", "_views"}
 	sections := make([]views.TabulatorPageData, 0, len(collections))
 
@@ -866,17 +997,662 @@ func handlePbxSetup(e *core.RequestEvent) error {
 		if err != nil {
 			continue
 		}
+		data.SetupLinks = true
 		sections = append(sections, *data)
 	}
 
 	pageData := views.PbxSetupPageData{
 		Theme:    getThemeMode(e.App),
 		MssqlDSN: getMssqlDSN(e.App),
+		Agent:    getAgentConfig(e),
 		Sections: sections,
+		Rules:    buildSetupRules(e),
+		Users:    buildSetupUsers(e),
 	}
 
 	e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	return templates.ExecuteTemplate(e.Response, "pbxsetup.html", pageData)
+}
+
+// --- Collection API rules ---
+
+// ruleCollectionNames returns the data collections the rules editor applies to
+// (excludes users, roles, _-prefixed system collections and view collections).
+func ruleCollectionNames(e *core.RequestEvent) []*core.Collection {
+	colls, err := e.App.FindAllCollections()
+	if err != nil {
+		return nil
+	}
+	out := make([]*core.Collection, 0, len(colls))
+	for _, c := range colls {
+		if c.IsView() {
+			continue
+		}
+		n := c.Name
+		if strings.HasPrefix(n, "_") || n == "users" || n == "roles" {
+			continue
+		}
+		out = append(out, c)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// buildSetupRules parses the current collection rules into the rules editor UI state.
+func buildSetupRules(e *core.RequestEvent) []views.SetupCollectionRules {
+	colls := ruleCollectionNames(e)
+	rules := make([]views.SetupCollectionRules, 0, len(colls))
+	for _, c := range colls {
+		rules = append(rules, views.SetupCollectionRules{
+			Collection: c.Name,
+			Items: []views.SetupRuleItem{
+				{Type: "list", Rule: parseRuleToSetup(c.ListRule)},
+				{Type: "view", Rule: parseRuleToSetup(c.ViewRule)},
+				{Type: "create", Rule: parseRuleToSetup(c.CreateRule)},
+				{Type: "update", Rule: parseRuleToSetup(c.UpdateRule)},
+				{Type: "delete", Rule: parseRuleToSetup(c.DeleteRule)},
+			},
+		})
+	}
+	return rules
+}
+
+// parseRuleToSetup converts a stored collection rule pointer to the editor UI state.
+func parseRuleToSetup(rule *string) views.SetupRule {
+	if rule == nil {
+		return views.SetupRule{Mode: views.RuleModeSuper}
+	}
+	s := *rule
+	if s == "" {
+		return views.SetupRule{Mode: views.RuleModePublic}
+	}
+	if s == "@request.auth.id != ''" {
+		return views.SetupRule{Mode: views.RuleModeSignedIn}
+	}
+	// OR-chain of @request.auth.id = "id1" || @request.auth.id = "id2"
+	parts := strings.Split(s, "||")
+	allIDs := true
+	ids := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		prefix := `@request.auth.id = "`
+		if !strings.HasPrefix(p, prefix) || !strings.HasSuffix(p, `"`) {
+			allIDs = false
+			break
+		}
+		ids = append(ids, strings.TrimSuffix(strings.TrimPrefix(p, prefix), `"`))
+	}
+	if allIDs && len(ids) > 0 {
+		return views.SetupRule{Mode: views.RuleModeSelected, Users: ids}
+	}
+	return views.SetupRule{Mode: views.RuleModeCustom, Custom: s}
+}
+
+// ruleFromSetup converts the editor UI state back to a stored rule pointer.
+func ruleFromSetup(r views.SetupRule) *string {
+	switch r.Mode {
+	case views.RuleModePublic:
+		s := ""
+		return &s
+	case views.RuleModeSignedIn:
+		s := "@request.auth.id != ''"
+		return &s
+	case views.RuleModeSelected:
+		parts := make([]string, 0, len(r.Users))
+		for _, id := range r.Users {
+			if id == "" {
+				continue
+			}
+			parts = append(parts, `@request.auth.id = "`+id+`"`)
+		}
+		if len(parts) == 0 {
+			s := "id = ''" // deny all
+			return &s
+		}
+		s := strings.Join(parts, " || ")
+		return &s
+	case views.RuleModeCustom:
+		if strings.TrimSpace(r.Custom) == "" {
+			return nil
+		}
+		s := r.Custom
+		return &s
+	default: // super
+		return nil
+	}
+}
+
+// buildSetupUsers returns all users records for the rules editor checkbox list.
+func buildSetupUsers(e *core.RequestEvent) []views.SetupUser {
+	recs, err := e.App.FindAllRecords("users")
+	if err != nil {
+		return nil
+	}
+	out := make([]views.SetupUser, 0, len(recs))
+	for _, rec := range recs {
+		label := rec.GetString("name")
+		if label == "" {
+			label = rec.GetString("email")
+		}
+		if label == "" {
+			label = rec.GetString("id")
+		}
+		out = append(out, views.SetupUser{ID: rec.GetString("id"), Label: label})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Label < out[j].Label })
+	return out
+}
+
+// handleSetupRulesPost persists the collection API rules from the /pbx-setup rules form.
+func handleSetupRulesPost(e *core.RequestEvent) error {
+	if err := requireSuperAdmin(e); err != nil {
+		return err
+	}
+
+	if err := e.Request.ParseForm(); err != nil {
+		return e.BadRequestError("Invalid form data", err)
+	}
+
+	for _, c := range ruleCollectionNames(e) {
+		rule, err := e.App.FindCollectionByNameOrId(c.Name)
+		if err != nil {
+			continue
+		}
+		rule.ListRule = ruleFromSetup(setupRuleFromForm(e, c.Name, "list"))
+		rule.ViewRule = ruleFromSetup(setupRuleFromForm(e, c.Name, "view"))
+		rule.CreateRule = ruleFromSetup(setupRuleFromForm(e, c.Name, "create"))
+		rule.UpdateRule = ruleFromSetup(setupRuleFromForm(e, c.Name, "update"))
+		rule.DeleteRule = ruleFromSetup(setupRuleFromForm(e, c.Name, "delete"))
+		if err := e.App.Save(rule); err != nil {
+			return e.InternalServerError("Failed to save collection rules for "+c.Name, err)
+		}
+	}
+
+	return e.Redirect(http.StatusSeeOther, "/pbx-setup?msg="+url.QueryEscape("Rules saved"))
+}
+
+// setupRuleFromForm reads one rule row from the /pbx-setup rules form.
+func setupRuleFromForm(e *core.RequestEvent, collName, ruleType string) views.SetupRule {
+	base := "rules_" + collName + "_" + ruleType + "_"
+	mode := views.RuleMode(e.Request.FormValue(base + "mode"))
+	r := views.SetupRule{Mode: mode}
+	if mode == views.RuleModeSelected {
+		r.Users = e.Request.Form[base+"user"]
+	}
+	if mode == views.RuleModeCustom {
+		r.Custom = e.Request.FormValue(base + "custom")
+	}
+	return r
+}
+
+// --- Setup record editors (_app, _views, _agent) ---
+
+// handleSetupRecord renders the system record editor (new or edit).
+func handleSetupRecord(e *core.RequestEvent) error {
+	if err := requireSuperAdmin(e); err != nil {
+		return err
+	}
+
+	collName := e.Request.PathValue("coll")
+	recordID := e.Request.PathValue("id")
+	isNew := recordID == "new"
+	if isNew {
+		recordID = ""
+	}
+
+	collection, err := e.App.FindCachedCollectionByNameOrId(collName)
+	if err != nil {
+		return e.NotFoundError("Collection not found", err)
+	}
+
+	var record *core.Record
+	if recordID != "" {
+		record, err = e.App.FindRecordById(collName, recordID)
+		if err != nil {
+			return e.NotFoundError("Record not found", err)
+		}
+	}
+
+	targetColl := ""
+	if record != nil {
+		targetColl = record.GetString("_collName")
+	}
+
+	pageData := views.SetupRecordPageData{
+		Theme:       getThemeMode(e.App),
+		CollName:    collName,
+		RecordID:    recordID,
+		IsNew:       isNew,
+		Title:       collName,
+		Collections: listCollections(e),
+	}
+
+	for _, f := range collection.Fields {
+		fName := f.GetName()
+		if isSystemField(fName) {
+			continue
+		}
+		if f.Type() == "json" {
+			pageData.JsonSections = append(pageData.JsonSections, buildJsonSection(e, collection, record, f, targetColl))
+			continue
+		}
+		item := buildFieldItemFor(e, collection, record, f, fName, nil)
+		if fName == "_collName" {
+			item.Type = "select"
+			item.Data["options"] = listCollections(e)
+		}
+		pageData.Fields = append(pageData.Fields, item)
+	}
+
+	e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	return templates.ExecuteTemplate(e.Response, "setup-record.html", pageData)
+}
+
+// handleSetupRecordPost creates or updates a system record from the editor form.
+func handleSetupRecordPost(e *core.RequestEvent) error {
+	if err := requireSuperAdmin(e); err != nil {
+		return err
+	}
+
+	if err := e.Request.ParseMultipartForm(32 << 20); err != nil && !errors.Is(err, http.ErrNotMultipart) {
+		return e.BadRequestError("Invalid form data", err)
+	}
+	if e.Request.Form == nil {
+		if err := e.Request.ParseForm(); err != nil {
+			return e.BadRequestError("Invalid form data", err)
+		}
+	}
+
+	collName := e.Request.PathValue("coll")
+	recordID := e.Request.PathValue("id")
+
+	collection, err := e.App.FindCachedCollectionByNameOrId(collName)
+	if err != nil {
+		return e.NotFoundError("Collection not found", err)
+	}
+
+	var record *core.Record
+	if recordID != "" {
+		record, err = e.App.FindRecordById(collName, recordID)
+		if err != nil {
+			return e.NotFoundError("Record not found", err)
+		}
+	} else {
+		record = core.NewRecord(collection)
+	}
+
+	for _, f := range collection.Fields {
+		fName := f.GetName()
+		if isSystemField(fName) {
+			continue
+		}
+		switch f.Type() {
+		case "bool":
+			record.Set(fName, e.Request.FormValue(fName) == "on")
+		case "number":
+			val := e.Request.FormValue(fName)
+			if val == "" {
+				record.Set(fName, nil)
+			} else {
+				record.Set(fName, val)
+			}
+		case "json":
+			jsonVal, jerr := jsonValueFromSetupForm(e, collection, f, record)
+			if jerr != nil {
+				return e.BadRequestError("Invalid JSON for field "+fName+": "+jerr.Error(), jerr)
+			}
+			if jsonVal == "" {
+				record.Set(fName, nil)
+			} else {
+				record.Set(fName, jsonVal)
+			}
+		case "file":
+			if err := applySetupFileField(e, record, f); err != nil {
+				return e.BadRequestError("Failed to process file field "+fName+": "+err.Error(), err)
+			}
+		default:
+			record.Set(fName, e.Request.FormValue(fName))
+		}
+	}
+
+	if err := e.App.Save(record); err != nil {
+		return e.InternalServerError("Failed to save record", err)
+	}
+
+	return e.Redirect(http.StatusSeeOther, "/pbx-setup")
+}
+
+// handleSetupRecordDelete deletes a system record.
+func handleSetupRecordDelete(e *core.RequestEvent) error {
+	if err := requireSuperAdmin(e); err != nil {
+		return err
+	}
+
+	collName := e.Request.PathValue("coll")
+	recordID := e.Request.PathValue("id")
+
+	record, err := e.App.FindRecordById(collName, recordID)
+	if err != nil {
+		return e.NotFoundError("Record not found", err)
+	}
+
+	if err := e.App.Delete(record); err != nil {
+		return e.InternalServerError("Failed to delete record", err)
+	}
+
+	return e.JSON(http.StatusOK, map[string]any{"ok": true})
+}
+
+// applySetupFileField handles an uploaded file (or removal) for a record file field.
+func applySetupFileField(e *core.RequestEvent, record *core.Record, f core.Field) error {
+	fName := f.GetName()
+
+	// explicit remove request
+	if e.Request.FormValue(fName+"_remove") == "on" {
+		record.Set(fName, "")
+		return nil
+	}
+
+	mh, err := formFileHeader(e, fName)
+	if err != nil {
+		return nil // no new file provided, keep existing
+	}
+
+	file, err := filesystem.NewFileFromMultipart(mh)
+	if err != nil {
+		return err
+	}
+
+	record.Set(fName, file)
+	return nil
+}
+
+// formFileHeader returns the multipart FileHeader for the given form field.
+func formFileHeader(e *core.RequestEvent, fName string) (*multipart.FileHeader, error) {
+	if e.Request.MultipartForm == nil {
+		return nil, http.ErrMissingFile
+	}
+	files := e.Request.MultipartForm.File[fName]
+	if len(files) == 0 {
+		return nil, http.ErrMissingFile
+	}
+	return files[0], nil
+}
+
+// --- Schema-driven structured JSON editor ---
+
+// buildJsonSection renders the structured editor for one JSON record field.
+func buildJsonSection(e *core.RequestEvent, collection *core.Collection, record *core.Record, f core.Field, targetColl string) views.JsonFormSection {
+	fName := f.GetName()
+	raw := configRaw(record, fName)
+
+	sec := views.JsonFormSection{
+		Key:              fName,
+		Title:            fName,
+		TargetColl:       targetColl,
+		TargetCollFields: setupTargetFields(e, targetColl),
+		Raw:              raw,
+	}
+
+	targetFields := setupTargetFields(e, targetColl)
+
+	switch fName {
+	case "_tabulator":
+		vc := parseViewTabulator(record)
+		sec.Fields = []views.JsonFormField{
+			{Key: "pageTitle", Label: "Page title", Type: "text", Value: vc.PageTitle},
+			{Key: "collectionDescr", Label: "Collection description", Type: "text", Value: vc.CollectionDescr},
+			{Key: "columnTitles", Label: "Column titles (comma-separated)", Type: "text", Value: vc.ColumnTitles},
+			{Key: "columnOrder", Label: "Column order", Type: "fieldMulti", FieldOptions: fieldMultiFromCSV(targetFields, vc.ColumnOrder)},
+			{Key: "filter", Label: "Filter expression", Type: "text", Value: vc.Filter},
+			{Key: "columnSorting", Label: "Column sorting", Type: "bool", Checked: vc.ColumnSorting},
+			{Key: "searchBox", Label: "Search box", Type: "bool", Checked: vc.SearchBox},
+			{Key: "pagination", Label: "Pagination", Type: "bool", Checked: vc.Pagination},
+			{Key: "displaySystemCol", Label: "Display system columns", Type: "bool", Checked: vc.DisplaySystemCol},
+			{Key: "columns", Label: "Columns", Type: "columns", FieldOptions: columnsFromConfig(vc.Columns), Options: targetFields},
+		}
+	case "_form":
+		fv := parseViewForm(record)
+		sec.Fields = []views.JsonFormField{
+			{Key: "formTitle", Label: "Form title", Type: "text", Value: fv.FormTitle},
+			{Key: "formDescr", Label: "Form description", Type: "text", Value: fv.FormDescr},
+			{Key: "formLabels", Label: "Field labels", Type: "fieldLabels", FieldOptions: fieldLabelsFromConfig(targetFields, fv.FormLabels)},
+			{Key: "formLayout", Label: "Form layout", Type: "text", Value: fv.FormLayout},
+			{Key: "columnOrder", Label: "Column order", Type: "fieldMulti", FieldOptions: fieldMultiFromCSV(targetFields, fv.ColumnOrder)},
+			{Key: "displaySystemCol", Label: "Display system columns", Type: "bool", Checked: fv.DisplaySystemCol},
+		}
+	case "_mssql":
+		mc := parseMssqlConfig(record)
+		sec.Fields = []views.JsonFormField{
+			{Key: "dsn", Label: "DSN", Type: "text", Value: mc.DSN},
+			{Key: "table", Label: "Table", Type: "text", Value: mc.Table},
+			{Key: "mode", Label: "Mode", Type: "select", Value: mc.Mode, Options: []string{"insert", "update", "replace"}},
+			{Key: "mapping", Label: "Field mapping", Type: "mapping", FieldOptions: mappingFromConfig(mc.Mapping), Options: targetFields},
+		}
+	case "_config":
+		var cfg views.AgentConfig
+		if raw != "" {
+			_ = json.Unmarshal([]byte(raw), &cfg)
+		}
+		timeout := strconv.Itoa(cfg.TimeoutSeconds)
+		sec.Fields = []views.JsonFormField{
+			{Key: "provider", Label: "Provider", Type: "select", Value: cfg.Provider, Options: []string{"openrouter", "lmstudio"}},
+			{Key: "baseURL", Label: "Base URL", Type: "text", Value: cfg.BaseURL},
+			{Key: "apiKey", Label: "API key", Type: "text", Value: cfg.APIKey},
+			{Key: "model", Label: "Model", Type: "text", Value: cfg.Model},
+			{Key: "timeoutSeconds", Label: "Timeout (s)", Type: "number", Value: timeout},
+			{Key: "enabled", Label: "Enabled", Type: "bool", Checked: cfg.Enabled},
+		}
+	}
+
+	return sec
+}
+
+// setupTargetFields returns the non-system field names of a collection (for
+// fieldMulti / columns / mapping option lists). Returns nil when the collection
+// cannot be resolved (e.g. new record without _collName yet).
+func setupTargetFields(e *core.RequestEvent, collName string) []string {
+	if collName == "" {
+		return nil
+	}
+	coll, err := e.App.FindCachedCollectionByNameOrId(collName)
+	if err != nil {
+		return nil
+	}
+	out := make([]string, 0, len(coll.Fields))
+	for _, f := range coll.Fields {
+		if isSystemField(f.GetName()) {
+			continue
+		}
+		out = append(out, f.GetName())
+	}
+	return out
+}
+
+// fieldMultiFromCSV converts a comma-delimited 1-based index list into checkbox options.
+func fieldMultiFromCSV(fields []string, csv string) []views.FieldOpt {
+	sel := map[int]bool{}
+	for _, p := range strings.Split(csv, ",") {
+		idx, err := strconv.Atoi(strings.TrimSpace(p))
+		if err == nil {
+			sel[idx] = true
+		}
+	}
+	opts := make([]views.FieldOpt, 0, len(fields))
+	for i, name := range fields {
+		opts = append(opts, views.FieldOpt{Index: i + 1, Name: name, Checked: sel[i+1]})
+	}
+	return opts
+}
+
+// fieldLabelsFromConfig converts formLabels (field=Label pairs) into per-field label inputs.
+func fieldLabelsFromConfig(fields []string, formLabels string) []views.FieldOpt {
+	labels := buildFormLabels(formLabels, nil)
+	opts := make([]views.FieldOpt, 0, len(fields))
+	for i, name := range fields {
+		opts = append(opts, views.FieldOpt{Index: i + 1, Name: name, Value: labels[name]})
+	}
+	return opts
+}
+
+// columnsFromConfig converts the columns JSON list into dynamic column rows.
+func columnsFromConfig(cols []views.ListColumn) []views.FieldOpt {
+	opts := make([]views.FieldOpt, 0, len(cols))
+	for i, c := range cols {
+		opts = append(opts, views.FieldOpt{Index: i + 1, Name: c.Field, Label: c.Title})
+	}
+	return opts
+}
+
+// mappingFromConfig converts the _mssql mapping into dynamic mapping rows.
+func mappingFromConfig(mapping []views.MssqlMapping) []views.FieldOpt {
+	opts := make([]views.FieldOpt, 0, len(mapping))
+	for i, m := range mapping {
+		opts = append(opts, views.FieldOpt{Index: i + 1, Name: m.PBField, Label: m.DBField})
+	}
+	return opts
+}
+
+// jsonValueFromSetupForm reconstructs the JSON string for a record JSON field
+// from the structured form inputs, preserving keys not covered by the schema.
+func jsonValueFromSetupForm(e *core.RequestEvent, collection *core.Collection, f core.Field, record *core.Record) (string, error) {
+	fName := f.GetName()
+	prefix := "json_" + fName + "_"
+
+	targetColl := e.Request.FormValue("_collName")
+
+	existing := map[string]any{}
+	if raw := configRaw(record, fName); raw != "" {
+		_ = json.Unmarshal([]byte(raw), &existing)
+	}
+
+	sec := buildJsonSection(e, collection, record, f, targetColl)
+
+	if len(sec.Fields) == 0 {
+		raw := e.Request.FormValue(prefix + "raw")
+		if strings.TrimSpace(raw) == "" {
+			return "", nil
+		}
+		var probe any
+		if err := json.Unmarshal([]byte(raw), &probe); err != nil {
+			return "", err
+		}
+		return raw, nil
+	}
+
+for _, ff := range sec.Fields {
+			key := prefix + ff.Key
+			switch ff.Type {
+			case "text", "select":
+				v := e.Request.FormValue(key)
+				if v == "" {
+					delete(existing, ff.Key)
+				} else {
+					existing[ff.Key] = v
+				}
+		case "number":
+			v := e.Request.FormValue(key)
+			if v == "" {
+				delete(existing, ff.Key)
+			} else if n, err := strconv.Atoi(v); err == nil {
+				existing[ff.Key] = n
+			} else {
+				return "", fmt.Errorf("%s: invalid number %q", ff.Key, v)
+			}
+		case "bool":
+			existing[ff.Key] = e.Request.FormValue(key) == "on"
+		case "fieldMulti":
+			indices := e.Request.Form[key]
+			csv := ""
+			if len(indices) > 0 {
+				ints := make([]int, 0, len(indices))
+				for _, ix := range indices {
+					if n, err := strconv.Atoi(ix); err == nil {
+						ints = append(ints, n)
+					}
+				}
+				sort.Ints(ints)
+				parts := make([]string, 0, len(ints))
+				for _, n := range ints {
+					parts = append(parts, strconv.Itoa(n))
+				}
+				csv = strings.Join(parts, ",")
+			}
+			if csv == "" {
+				delete(existing, ff.Key)
+			} else {
+				existing[ff.Key] = csv
+			}
+		case "fieldLabels":
+			labels := map[string]string{}
+			for _, opt := range ff.FieldOptions {
+				v := e.Request.FormValue(key + "_" + strconv.Itoa(opt.Index))
+				if v != "" {
+					labels[opt.Name] = v
+				}
+			}
+			if len(labels) == 0 {
+				delete(existing, ff.Key)
+			} else {
+				pairs := make([]string, 0, len(labels))
+				// stable order by field name
+				names := make([]string, 0, len(labels))
+				for name := range labels {
+					names = append(names, name)
+				}
+				sort.Strings(names)
+				for _, name := range names {
+					pairs = append(pairs, name+"="+labels[name])
+				}
+				existing[ff.Key] = strings.Join(pairs, ",")
+			}
+		case "columns":
+			cols := make([]views.ListColumn, 0)
+			names := e.Request.Form[key+"_field"]
+			titles := e.Request.Form[key+"_title"]
+			for i, name := range names {
+				title := ""
+				if i < len(titles) {
+					title = titles[i]
+				}
+				if name != "" {
+					cols = append(cols, views.ListColumn{Field: name, Title: title})
+				}
+			}
+			if len(cols) == 0 {
+				delete(existing, ff.Key)
+			} else {
+				existing[ff.Key] = cols
+			}
+		case "mapping":
+			mapping := make([]views.MssqlMapping, 0)
+			pbs := e.Request.Form[key+"_pb"]
+			dbs := e.Request.Form[key+"_db"]
+			for i, pb := range pbs {
+				db := ""
+				if i < len(dbs) {
+					db = dbs[i]
+				}
+				if pb != "" && db != "" {
+					mapping = append(mapping, views.MssqlMapping{PBField: pb, DBField: db})
+				}
+			}
+			if len(mapping) == 0 {
+				delete(existing, ff.Key)
+			} else {
+				existing[ff.Key] = mapping
+			}
+		}
+	}
+
+	if len(existing) == 0 {
+		return "", nil
+	}
+	data, err := json.Marshal(existing)
+	if err != nil {
+		return "", err
+	}
+	return string(data), nil
 }
 
 // --- Tabulator JSON data (for relation modal) ---
@@ -892,6 +1668,10 @@ func handleTabulatorDataJSON(e *core.RequestEvent) error {
 	records, err := e.App.FindAllRecords(collName)
 	if err != nil {
 		return e.InternalServerError("Failed to fetch records", err)
+	}
+
+	if !collection.IsView() {
+		records = filterListedRecords(e, collection, records)
 	}
 
 	fields := collection.Fields
@@ -916,6 +1696,201 @@ func handleTabulatorDataJSON(e *core.RequestEvent) error {
 	})
 }
 
+// --- Named (saved) advanced filters ---
+
+// filterUserLabel resolves a _filters owner id to a human readable label
+// (email, else name, else the raw id).
+func filterUserLabel(e *core.RequestEvent, userID string) string {
+	if userID == "" {
+		return userID
+	}
+	rec, err := e.App.FindRecordById("users", userID)
+	if err != nil {
+		return userID
+	}
+	for _, k := range []string{"email", "name"} {
+		if v := strings.TrimSpace(rec.GetString(k)); v != "" {
+			return v
+		}
+	}
+	return userID
+}
+
+// requestedAuthUserID returns the cookie-authenticated user id, or "" when the
+// caller is not signed in.
+func requestedAuthUserID(e *core.RequestEvent) string {
+	info, err := authRequestInfo(e)
+	if err != nil || info.Auth == nil {
+		return ""
+	}
+	return info.Auth.GetString("id")
+}
+
+// isSuperUserFromID reports whether the current request carries a superuser
+// auth (used for filter permission checks).
+func isSuperUserFromID(e *core.RequestEvent, _ string) bool {
+	info, err := authRequestInfo(e)
+	if err != nil {
+		return false
+	}
+	return info.HasSuperuserAuth()
+}
+
+func handleFiltersList(e *core.RequestEvent) error {
+	configName := e.Request.PathValue("configName")
+
+	if _, _, err := resolveFormConfig(e, configName); err != nil {
+		return e.NotFoundError("Configuration not found", err)
+	}
+
+	userID := requestedAuthUserID(e)
+	if userID == "" {
+		return e.JSON(http.StatusOK, map[string]any{"filters": []views.SavedFilter{}})
+	}
+
+	filter := "_config = {:c}"
+	params := dbx.Params{"c": configName}
+	if !isSuperUserFromID(e, userID) {
+		filter += " && _user = {:u}"
+		params["u"] = userID
+	}
+
+	records, err := e.App.FindRecordsByFilter("_filters", filter, "-created", 200, 0, nil, params)
+	if err != nil {
+		return e.InternalServerError("Failed to list filters", err)
+	}
+
+	out := make([]views.SavedFilter, 0, len(records))
+	for _, rec := range records {
+		var def views.FilterDef
+		def.Name = rec.GetString("_name")
+		if raw := rec.GetString("_def"); raw != "" {
+			_ = json.Unmarshal([]byte(raw), &def)
+		}
+		out = append(out, views.SavedFilter{
+			ID:   rec.GetString("id"),
+			Name: def.Name,
+			User: filterUserLabel(e, rec.GetString("_user")),
+			Def:  def,
+		})
+	}
+
+	return e.JSON(http.StatusOK, map[string]any{"filters": out})
+}
+
+func validateFilterDef(def views.FilterDef) error {
+	if strings.TrimSpace(def.Name) == "" {
+		return fmt.Errorf("filter name is required")
+	}
+	if len(def.Conditions) == 0 {
+		return fmt.Errorf("filter must have at least one condition")
+	}
+	for _, c := range def.Conditions {
+		if strings.TrimSpace(c.Field) == "" {
+			return fmt.Errorf("filter condition field is required")
+		}
+		if strings.TrimSpace(c.Op) == "" {
+			return fmt.Errorf("filter condition operator is required")
+		}
+	}
+	if len(def.Chains) > 0 && len(def.Chains) != len(def.Conditions)-1 {
+		return fmt.Errorf("filter connectors do not match the number of conditions")
+	}
+	return nil
+}
+
+func handleFilterSave(e *core.RequestEvent) error {
+	configName := e.Request.PathValue("configName")
+
+	collName, _, err := resolveFormConfig(e, configName)
+	if err != nil {
+		return e.NotFoundError("Configuration not found", err)
+	}
+
+	userID := requestedAuthUserID(e)
+	if userID == "" {
+		return e.UnauthorizedError("Sign in required", nil)
+	}
+
+	var def views.FilterDef
+	if err := json.NewDecoder(e.Request.Body).Decode(&def); err != nil {
+		return e.BadRequestError("Invalid filter JSON", err)
+	}
+	if err := validateFilterDef(def); err != nil {
+		return e.BadRequestError("Invalid filter: "+err.Error(), err)
+	}
+
+	// upsert by (config, name); non-owners may not overwrite
+	exists, ferr := e.App.FindRecordsByFilter("_filters", "_config = {:c} && _name = {:n}", "", 1, 0, nil, dbx.Params{"c": configName, "n": def.Name})
+	if ferr != nil {
+		return e.InternalServerError("Failed to look up filter", ferr)
+	}
+
+	defJSON, jerr := json.Marshal(def)
+	if jerr != nil {
+		return e.InternalServerError("Failed to encode filter", jerr)
+	}
+
+	var rec *core.Record
+	if len(exists) > 0 {
+		rec = exists[0]
+		owner := rec.GetString("_user")
+		if owner != userID && !isSuperUserFromID(e, userID) {
+			return e.ForbiddenError("You cannot modify another user's filter", nil)
+		}
+		if owner == "" {
+			rec.Set("_user", userID)
+		}
+	} else {
+		coll, cerr := e.App.FindCachedCollectionByNameOrId("_filters")
+		if cerr != nil {
+			return e.InternalServerError("Filters collection not found", cerr)
+		}
+		rec = core.NewRecord(coll)
+		rec.Set("_name", def.Name)
+		rec.Set("_coll", collName)
+		rec.Set("_config", configName)
+		rec.Set("_user", userID)
+	}
+	if rec.GetString("_name") == "" {
+		rec.Set("_name", def.Name)
+	}
+	if rec.GetString("_coll") == "" {
+		rec.Set("_coll", collName)
+	}
+	if rec.GetString("_config") == "" {
+		rec.Set("_config", configName)
+	}
+	rec.Set("_def", string(defJSON))
+
+	if serr := e.App.Save(rec); serr != nil {
+		return e.InternalServerError("Failed to save filter", serr)
+	}
+	return e.JSON(http.StatusOK, map[string]any{"ok": true, "id": rec.GetString("id")})
+}
+
+func handleFilterDelete(e *core.RequestEvent) error {
+	id := e.Request.PathValue("id")
+
+	userID := requestedAuthUserID(e)
+	if userID == "" {
+		return e.UnauthorizedError("Sign in required", nil)
+	}
+
+	rec, err := e.App.FindRecordById("_filters", id)
+	if err != nil {
+		return e.NotFoundError("Filter not found", nil)
+	}
+	if rec.GetString("_user") != userID && !isSuperUserFromID(e, userID) {
+		return e.NotFoundError("Filter not found", nil)
+	}
+
+	if derr := e.App.Delete(rec); derr != nil {
+		return e.InternalServerError("Failed to delete filter", derr)
+	}
+	return e.JSON(http.StatusOK, map[string]any{"ok": true})
+}
+
 // --- Form helpers ---
 
 // buildFormLabels parses formLabels string and JSON labels into a unified map.
@@ -935,8 +1910,129 @@ func buildFormLabels(formLabels string, fcLabels map[string]string) map[string]s
 	return labels
 }
 
+// relationDisplayFields returns the fields of relColl whose values are shown
+// as a relation label/option. System fields (id/created/updated) as well as
+// nested-relation and file fields are excluded.
+func relationDisplayFields(relColl *core.Collection) []core.Field {
+	var out []core.Field
+	for _, f := range relColl.Fields {
+		fName := f.GetName()
+		if f.GetSystem() {
+			continue
+		}
+		if fName == "id" || fName == "created" || fName == "updated" {
+			continue
+		}
+		t := f.Type()
+		if t == "relation" || t == "file" {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
+}
+
+// relationRecordLabel joins the non-empty display-field values of a related
+// record with " | ".
+func relationRecordLabel(rec *core.Record, fields []core.Field) string {
+	vals := make([]string, 0, len(fields))
+	for _, f := range fields {
+		v := strings.TrimSpace(rec.GetString(f.GetName()))
+		if v != "" {
+			vals = append(vals, v)
+		}
+	}
+	return strings.Join(vals, " | ")
+}
+
+// relatedRecordsDisplay builds a "|"-delimited summary of the related records
+// referenced by the given ids in relColl. The returned count is the number of
+// related records visible to the caller (listRule enforced).
+func relatedRecordsDisplay(e *core.RequestEvent, relColl *core.Collection, ids []string) (string, int) {
+	records := make([]*core.Record, 0, len(ids))
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		rec, err := e.App.FindRecordById(relColl.Id, id)
+		if err != nil {
+			continue
+		}
+		records = append(records, rec)
+	}
+	records = filterListedRecords(e, relColl, records)
+
+	fields := relationDisplayFields(relColl)
+	if len(records) == 0 {
+		return "", len(records)
+	}
+
+	parts := make([]string, 0, len(records))
+	for _, rec := range records {
+		if label := relationRecordLabel(rec, fields); label != "" {
+			parts = append(parts, label)
+		}
+	}
+	return strings.Join(parts, " | "), len(records)
+}
+
+// buildRelationOptions returns the selectable records of the related
+// collection as id/label options (sorted by label). The "sel" flag marks the
+// ids selected in the current record.
+func buildRelationOptions(e *core.RequestEvent, relColl *core.Collection, selected []string) []map[string]any {
+	records, err := e.App.FindAllRecords(relColl.Name)
+	if err != nil {
+		return nil
+	}
+	records = filterListedRecords(e, relColl, records)
+
+	sel := make(map[string]bool, len(selected))
+	for _, id := range selected {
+		sel[id] = true
+	}
+
+	fields := relationDisplayFields(relColl)
+	opts := make([]map[string]any, 0, len(records))
+	for _, rec := range records {
+		id := rec.GetString("id")
+		label := relationRecordLabel(rec, fields)
+		if label == "" {
+			label = id
+		}
+		opts = append(opts, map[string]any{"id": id, "label": label, "sel": sel[id]})
+	}
+	sort.SliceStable(opts, func(i, j int) bool {
+		return opts[i]["label"].(string) < opts[j]["label"].(string)
+	})
+	return opts
+}
+
+// formatJSONValue decodes a JSON field value and returns a pretty-printed
+// representation. It also unwraps JSON-string-wrapped JSON (double-encoded
+// payloads); if even the inner content is malformed it returns the unwrapped
+// text so newlines render instead of raw escape sequences.
+func formatJSONValue(raw string) string {
+	var v any
+	if err := json.Unmarshal([]byte(raw), &v); err != nil {
+		return raw
+	}
+	if s, ok := v.(string); ok {
+		trim := strings.TrimSpace(s)
+		if strings.HasPrefix(trim, "{") || strings.HasPrefix(trim, "[") {
+			if json.Unmarshal([]byte(trim), &v) != nil {
+				return s
+			}
+		}
+	}
+	pretty, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return raw
+	}
+	return string(pretty)
+}
+
 // buildFieldItemFor creates a FormFieldItem for a field on a given record.
-func buildFieldItemFor(app core.App, collection *core.Collection, record *core.Record, f core.Field, fName string, labelsOverride map[string]string) views.FormFieldItem {
+func buildFieldItemFor(e *core.RequestEvent, collection *core.Collection, record *core.Record, f core.Field, fName string, labelsOverride map[string]string) views.FormFieldItem {
 	label := fName
 	if l, ok := labelsOverride[fName]; ok {
 		label = l
@@ -946,6 +2042,30 @@ func buildFieldItemFor(app core.App, collection *core.Collection, record *core.R
 		Label: label,
 		Type:  f.Type(),
 		Data:  map[string]any{},
+	}
+	if f.Type() == "relation" {
+		item.Data["collectionName"] = ""
+		var ids []string
+		if record != nil {
+			if raw := record.GetString(fName); raw != "" {
+				ids = strings.Split(raw, ",")
+			}
+		}
+		item.Data["ids"] = ids
+		item.Data["count"] = len(ids)
+		if rf, ok := f.(*core.RelationField); ok {
+			if relColl, rerr := e.App.FindCachedCollectionByNameOrId(rf.CollectionId); rerr == nil {
+				item.Data["collectionName"] = relColl.Name
+				if record != nil {
+					display, n := relatedRecordsDisplay(e, relColl, ids)
+					item.Data["display"] = display
+					item.Data["count"] = n
+					item.Value = display
+				}
+				item.Data["options"] = buildRelationOptions(e, relColl, ids)
+			}
+		}
+		return item
 	}
 	if record == nil {
 		return item
@@ -995,30 +2115,10 @@ func buildFieldItemFor(app core.App, collection *core.Collection, record *core.R
 		if sf, ok := f.(*core.SelectField); ok {
 			item.Data["options"] = sf.Values
 		}
-	case "relation":
-		raw := record.GetString(fName)
-		var ids []string
-		if raw != "" {
-			ids = strings.Split(raw, ",")
-		}
-		item.Data["ids"] = ids
-		item.Data["count"] = len(ids)
-		item.Value = strconv.Itoa(len(ids))
-		if rf, ok := f.(*core.RelationField); ok {
-			if relColl, rerr := app.FindCachedCollectionByNameOrId(rf.CollectionId); rerr == nil {
-				item.Data["collectionName"] = relColl.Name
-			}
-		}
 	case "json":
 		jv := record.GetString(fName)
 		if jv != "" && jv != "{}" && jv != "[]" && jv != "null" {
-			var parsed any
-			if err := json.Unmarshal([]byte(jv), &parsed); err == nil {
-				pretty, _ := json.MarshalIndent(parsed, "", "  ")
-				item.Value = string(pretty)
-			} else {
-				item.Value = jv
-			}
+			item.Value = formatJSONValue(jv)
 		}
 	case "geo":
 		geoVal := record.GetString(fName)
@@ -1276,7 +2376,7 @@ func handleViewForm(e *core.RequestEvent, configName, recordID string, configRec
 			if labelsOverride[eName] == "" {
 				nsLabels[nsName] = eName
 			}
-			item := buildFieldItemFor(e.App, coll, baseRecord, field, nsName, nsLabels)
+			item := buildFieldItemFor(e, coll, baseRecord, field, nsName, nsLabels)
 			item.Name = nsName
 			rows = append(rows, views.FormRow{
 				Columns: []views.FormColumn{{Fields: []views.FormFieldItem{item}}},
@@ -1461,6 +2561,12 @@ func handleForm(e *core.RequestEvent) error {
 		if err != nil {
 			return e.NotFoundError("Record not found", err)
 		}
+		// enforce the collection view rule per record
+		if !canAccessRecord(e, record, collection.ViewRule) {
+			return e.NotFoundError("Record not found", nil)
+		}
+	} else if !canViewCollection(e, collection) {
+		return e.NotFoundError("Collection not found", nil)
 	}
 
 	fv := parseViewForm(configRec)
@@ -1589,7 +2695,7 @@ func handleForm(e *core.RequestEvent) error {
 					if systemCols[fName] && !displaySystemCol {
 						continue
 					}
-					fieldItems = append(fieldItems, buildFieldItemFor(e.App, collection, record, f, fName, labelsOverride))
+					fieldItems = append(fieldItems, buildFieldItemFor(e, collection, record, f, fName, labelsOverride))
 				}
 				if len(fieldItems) > 0 {
 					columns = append(columns, views.FormColumn{Fields: fieldItems})
@@ -1627,7 +2733,7 @@ func handleForm(e *core.RequestEvent) error {
 			if systemCols[fName] && !displaySystemCol {
 				continue
 			}
-			rowFields = append(rowFields, buildFieldItemFor(e.App, collection, record, s.f, fName, labelsOverride))
+			rowFields = append(rowFields, buildFieldItemFor(e, collection, record, s.f, fName, labelsOverride))
 		}
 		if len(rowFields) > 0 {
 			rows = append(rows, views.FormRow{
@@ -1684,6 +2790,37 @@ func handleFormPost(e *core.RequestEvent) error {
 	}
 
 	systemCols := map[string]bool{"id": true, "created": true, "updated": true}
+
+	// enforce collection rules for create/update
+	if recordID != "" {
+		if !canAccessRecord(e, record, collection.UpdateRule) {
+			return e.ForbiddenError("You are not allowed to update this record", nil)
+		}
+	} else {
+		data := map[string]any{}
+		for _, f := range collection.Fields {
+			fName := f.GetName()
+			if systemCols[fName] {
+				continue
+			}
+			switch f.Type() {
+			case "bool":
+				data[fName] = e.Request.FormValue(fName) == "on"
+			case "number":
+				val := e.Request.FormValue(fName)
+				if val == "" {
+					data[fName] = nil
+				} else {
+					data[fName] = val
+				}
+			default:
+				data[fName] = e.Request.FormValue(fName)
+			}
+		}
+		if err := checkCreateRule(e, collection, data); err != nil {
+			return e.ForbiddenError("You are not allowed to create records: "+err.Error(), err)
+		}
+	}
 
 	for _, f := range collection.Fields {
 		fName := f.GetName()
@@ -1853,6 +2990,92 @@ func handleMssqlIntrospect(e *core.RequestEvent) error {
 	return e.JSON(http.StatusOK, map[string]any{"columns": columns})
 }
 
+// --- AI agent ---
+
+// handleAgent renders the /ai chat page for a signed-in user.
+func handleAgent(e *core.RequestEvent) error {
+	cookie, err := e.Request.Cookie("pb_auth")
+	if err != nil {
+		return e.Redirect(http.StatusSeeOther, "/login")
+	}
+	record, err := e.App.FindAuthRecordByToken(cookie.Value, core.TokenTypeAuth)
+	if err != nil || record == nil {
+		return e.Redirect(http.StatusSeeOther, "/login")
+	}
+
+	cfg := getAgentConfig(e)
+	status := "Agent is not configured (set it up in /pbx-setup → AI agent)."
+	if cfg.Enabled && cfg.BaseURL != "" && cfg.Model != "" {
+		status = "Ready — " + cfg.Provider + " / " + cfg.Model
+	}
+
+	data := views.AgentPageData{
+		Theme:   getThemeMode(e.App),
+		Name:    record.GetString("name"),
+		Config:  cfg,
+		IsSuper: record.Collection().Name == "_superusers",
+		Status:  status,
+	}
+	e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	return templates.ExecuteTemplate(e.Response, "agent.html", data)
+}
+
+// handleAgentChat processes a chat message and runs the agent loop.
+func handleAgentChat(e *core.RequestEvent) error {
+	var req struct {
+		Messages []pbai.ChatMessage `json:"messages"`
+		File     *pbai.FileInput    `json:"file,omitempty"`
+	}
+	if err := json.NewDecoder(e.Request.Body).Decode(&req); err != nil {
+		return e.BadRequestError("Invalid request body", err)
+	}
+
+	cfg := getAgentConfig(e)
+	if !cfg.Enabled || cfg.BaseURL == "" || cfg.Model == "" {
+		return e.BadRequestError("The AI agent is not configured. Ask a superuser to set it up in /pbx-setup → AI agent.", nil)
+	}
+
+	info, err := agentRequestInfo(e)
+	if err != nil {
+		return e.InternalServerError("Failed to resolve request context", err)
+	}
+
+	agent := pbai.NewAgent(e.App, info, cfg)
+	result, err := agent.Run(e.Request.Context(), req.Messages, req.File)
+	if err != nil {
+		return e.InternalServerError("Agent failed: "+err.Error(), err)
+	}
+
+	return e.JSON(http.StatusOK, result)
+}
+
+// handleAgentConfirm executes or rejects a pending agent write action.
+func handleAgentConfirm(e *core.RequestEvent) error {
+	var req struct {
+		ActionID string `json:"actionID"`
+		Approved bool   `json:"approved"`
+	}
+	if err := json.NewDecoder(e.Request.Body).Decode(&req); err != nil {
+		return e.BadRequestError("Invalid request body", err)
+	}
+	if req.ActionID == "" {
+		return e.BadRequestError("Missing actionID", nil)
+	}
+
+	cfg := getAgentConfig(e)
+	info, err := agentRequestInfo(e)
+	if err != nil {
+		return e.InternalServerError("Failed to resolve request context", err)
+	}
+
+	agent := pbai.NewAgent(e.App, info, cfg)
+	result, err := agent.Confirm(e.Request.Context(), req.ActionID, req.Approved)
+	if err != nil {
+		return e.InternalServerError("Confirm failed: "+err.Error(), err)
+	}
+	return e.JSON(http.StatusOK, result)
+}
+
 // --- Delete record ---
 
 func handleDeleteRecord(e *core.RequestEvent) error {
@@ -1878,6 +3101,10 @@ func handleDeleteRecord(e *core.RequestEvent) error {
 		return e.NotFoundError("Record not found", err)
 	}
 
+	if !canAccessRecord(e, record, collection.DeleteRule) {
+		return e.ForbiddenError("You are not allowed to delete this record", nil)
+	}
+
 	if err := e.App.Delete(record); err != nil {
 		return e.InternalServerError("Failed to delete record", err)
 	}
@@ -1900,6 +3127,147 @@ func requireSuperAdmin(e *core.RequestEvent) error {
 	if record.Collection().Name != "_superusers" {
 		return e.Redirect(http.StatusSeeOther, "/app")
 	}
+	return nil
+}
+
+// authRequestInfo builds the RequestInfo for rule enforcement, injecting the
+// caller's auth record resolved from the pb_auth cookie (PocketBase's default
+// auth middleware only reads the Authorization header, not this app's cookie).
+func authRequestInfo(e *core.RequestEvent) (*core.RequestInfo, error) {
+	info, err := e.RequestInfo()
+	if err != nil {
+		return nil, err
+	}
+	if cookie, cerr := e.Request.Cookie("pb_auth"); cerr == nil {
+		if record, rerr := e.App.FindAuthRecordByToken(cookie.Value, core.TokenTypeAuth); rerr == nil && record != nil {
+			info.Auth = record
+		}
+	}
+	return info, nil
+}
+
+// agentRequestInfo is kept as an alias for the AI agent handlers.
+func agentRequestInfo(e *core.RequestEvent) (*core.RequestInfo, error) {
+	return authRequestInfo(e)
+}
+
+// filterListedRecords applies the collection listRule per record for a
+// non-superuser caller. A nil listRule means superusers only, so non-superusers
+// get an empty list. Superusers bypass the check.
+func filterListedRecords(e *core.RequestEvent, coll *core.Collection, records []*core.Record) []*core.Record {
+	info, err := authRequestInfo(e)
+	if err != nil {
+		return nil
+	}
+	if info.HasSuperuserAuth() {
+		return records
+	}
+	if coll.ListRule == nil {
+		return nil
+	}
+	out := make([]*core.Record, 0, len(records))
+	for _, rec := range records {
+		ok, aerr := e.App.CanAccessRecord(rec, info, coll.ListRule)
+		if aerr == nil && ok {
+			out = append(out, rec)
+		}
+	}
+	return out
+}
+
+// canAccessRecord reports whether the caller may access a record under the
+// given rule pointer. Superusers always pass; nil rules deny everyone else.
+func canAccessRecord(e *core.RequestEvent, rec *core.Record, rule *string) bool {
+	info, err := authRequestInfo(e)
+	if err != nil {
+		return false
+	}
+	if info.HasSuperuserAuth() {
+		return true
+	}
+	if rule == nil {
+		return false
+	}
+	ok, aerr := e.App.CanAccessRecord(rec, info, rule)
+	return aerr == nil && ok
+}
+
+// canViewCollection reports whether the caller may access the collection's
+// "new record" form (create access). Superusers always pass; a nil createRule
+// means superusers only.
+func canViewCollection(e *core.RequestEvent, coll *core.Collection) bool {
+	info, err := authRequestInfo(e)
+	if err != nil {
+		return false
+	}
+	if info.HasSuperuserAuth() {
+		return true
+	}
+	return coll.CreateRule != nil
+}
+
+// checkCreateRule enforces the collection createRule for a non-superuser.
+// It mirrors pbai.checkCreateRule (kept decoupled from the pbai package).
+func checkCreateRule(e *core.RequestEvent, coll *core.Collection, data map[string]any) error {
+	info, err := authRequestInfo(e)
+	if err != nil {
+		return err
+	}
+	if info.HasSuperuserAuth() {
+		return nil
+	}
+	if coll.CreateRule == nil {
+		return fmt.Errorf("only superusers can create records in %q", coll.Name)
+	}
+	rule := *coll.CreateRule
+	if rule == "" {
+		return nil
+	}
+
+	record := core.NewRecord(coll)
+	for k, v := range data {
+		record.Set(k, v)
+	}
+	if record.Id == "" {
+		record.Id = "__pb_create__" + security.PseudorandomString(6)
+	}
+	record.SetVerified(false)
+
+	dummyExport, err := record.DBExport(e.App)
+	if err != nil {
+		return fmt.Errorf("failed to evaluate create rule: %w", err)
+	}
+	dummyParams := make(dbx.Params, len(dummyExport))
+	selects := make([]string, 0, len(dummyExport))
+	for k, v := range dummyExport {
+		k = inflector.Columnify(k)
+		param := "__pb_create__" + k
+		dummyParams[param] = v
+		selects = append(selects, "{:"+param+"} AS [["+k+"]]")
+	}
+
+	dummyCollection := *coll
+	dummyCollection.Id += "__pb_create__" + security.PseudorandomString(6)
+	dummyCollection.Name += inflector.Columnify("__pb_create__" + security.PseudorandomString(6))
+
+	withFrom := fmt.Sprintf("WITH {{%s}} as (SELECT %s)", dummyCollection.Name, strings.Join(selects, ","))
+
+	ruleQuery := e.App.ConcurrentDB().Select("(1)").PreFragment(withFrom).From(dummyCollection.Name).AndBind(dummyParams)
+	resolver := core.NewRecordFieldResolver(e.App, &dummyCollection, info, true)
+	expr, err := search.FilterData(rule).BuildExpr(resolver)
+	if err != nil {
+		return fmt.Errorf("invalid create rule: %w", err)
+	}
+	ruleQuery.AndWhere(expr)
+	if err := resolver.UpdateQuery(ruleQuery); err != nil {
+		return fmt.Errorf("failed to evaluate create rule: %w", err)
+	}
+
+	var exists int
+	if err := ruleQuery.Limit(1).Row(&exists); err != nil || exists == 0 {
+		return fmt.Errorf("the create rule for %q forbids this record", coll.Name)
+	}
+
 	return nil
 }
 

@@ -1,0 +1,744 @@
+package pbai
+
+import (
+	"encoding/json"
+	"fmt"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/pocketbase/dbx"
+	"github.com/pocketbase/pocketbase/core"
+	"github.com/pocketbase/pocketbase/tools/inflector"
+	"github.com/pocketbase/pocketbase/tools/security"
+	"github.com/pocketbase/pocketbase/tools/search"
+	openai "github.com/sashabaranov/go-openai"
+)
+
+// tool is a single agent tool definition.
+type tool struct {
+	name        string
+	description string
+	params      any // JSON Schema object
+	write       bool
+	exec        func(a *Agent, args json.RawMessage) (string, error)
+	pending     func(a *Agent, args json.RawMessage) (*PendingAction, error)
+}
+
+// toolDefs returns the list of tools exposed to the LLM.
+func toolDefs() []openai.Tool {
+	defs := allTools()
+	out := make([]openai.Tool, 0, len(defs))
+	for _, d := range defs {
+		out = append(out, openai.Tool{
+			Type: openai.ToolTypeFunction,
+			Function: &openai.FunctionDefinition{
+				Name:        d.name,
+				Description: d.description,
+				Parameters:  d.params,
+			},
+		})
+	}
+	return out
+}
+
+// allTools returns the tool definitions in registry order.
+func allTools() []tool {
+	return []tool{
+		listCollectionsTool(),
+		getSchemaTool(),
+		queryRecordsTool(),
+		insertRecordsTool(),
+		createCollectionTool(),
+		setViewConfigTool(),
+	}
+}
+
+var toolRegistry = map[string]tool{}
+
+func register(t tool) {
+	toolRegistry[t.name] = t
+}
+
+func findTool(name string) *tool {
+	t, ok := toolRegistry[name]
+	if !ok {
+		return nil
+	}
+	return &t
+}
+
+// --- access helpers (mirror PB API rule semantics) ---
+
+func (a *Agent) canList(coll *core.Collection) bool {
+	return a.isSuper() || coll.ListRule != nil
+}
+
+func (a *Agent) canView(coll *core.Collection) bool {
+	return a.isSuper() || coll.ViewRule != nil
+}
+
+func (a *Agent) canCreate(coll *core.Collection) bool {
+	return a.isSuper() || coll.CreateRule != nil
+}
+
+// canAccessRecord reports whether the caller may read the given record
+// (enforces the collection view rule per record).
+func (a *Agent) canAccessRecord(rec *core.Record) bool {
+	ok, err := a.App.CanAccessRecord(rec, a.Info, rec.Collection().ViewRule)
+	return err == nil && ok
+}
+
+// checkCreateRule enforces the collection createRule for a non-superuser.
+// It reuses the same dummy-record evaluation the PB create API performs.
+func (a *Agent) checkCreateRule(coll *core.Collection, data map[string]any) error {
+	if a.isSuper() {
+		return nil
+	}
+	if coll.CreateRule == nil {
+		return fmt.Errorf("only superusers can create records in %q", coll.Name)
+	}
+	rule := *coll.CreateRule
+	if rule == "" {
+		return nil
+	}
+
+	record := core.NewRecord(coll)
+	for k, v := range data {
+		record.Set(k, v)
+	}
+	if record.Id == "" {
+		record.Id = "__pb_create__" + security.PseudorandomString(6)
+	}
+	record.SetVerified(false)
+
+	dummyExport, err := record.DBExport(a.App)
+	if err != nil {
+		return fmt.Errorf("failed to evaluate create rule: %w", err)
+	}
+	dummyParams := make(dbx.Params, len(dummyExport))
+	selects := make([]string, 0, len(dummyExport))
+	for k, v := range dummyExport {
+		k = inflector.Columnify(k)
+		param := "__pb_create__" + k
+		dummyParams[param] = v
+		selects = append(selects, "{:"+param+"} AS [["+k+"]]")
+	}
+
+	dummyCollection := *coll
+	dummyCollection.Id += "__pb_create__" + security.PseudorandomString(6)
+	dummyCollection.Name += inflector.Columnify("__pb_create__" + security.PseudorandomString(6))
+
+	withFrom := fmt.Sprintf("WITH {{%s}} as (SELECT %s)", dummyCollection.Name, strings.Join(selects, ","))
+
+	ruleQuery := a.App.ConcurrentDB().Select("(1)").PreFragment(withFrom).From(dummyCollection.Name).AndBind(dummyParams)
+	resolver := core.NewRecordFieldResolver(a.App, &dummyCollection, a.Info, true)
+	expr, err := search.FilterData(rule).BuildExpr(resolver)
+	if err != nil {
+		return fmt.Errorf("invalid create rule: %w", err)
+	}
+	ruleQuery.AndWhere(expr)
+	if err := resolver.UpdateQuery(ruleQuery); err != nil {
+		return fmt.Errorf("failed to evaluate create rule: %w", err)
+	}
+
+	var exists int
+	if err := ruleQuery.Limit(1).Row(&exists); err != nil || exists == 0 {
+		return fmt.Errorf("the create rule for %q forbids this record", coll.Name)
+	}
+	return nil
+}
+
+// --- collection listing ---
+
+func listCollectionsTool() tool {
+	return tool{
+		name:        "list_collections",
+		description: "Lists the collections the current user is allowed to list. Returns collection names with their field count. Use this first to discover what data is available.",
+		params: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{},
+		},
+		exec: func(a *Agent, args json.RawMessage) (string, error) {
+			colls, err := a.App.FindAllCollections()
+			if err != nil {
+				return "", err
+			}
+			var names []string
+			for _, c := range colls {
+				if strings.HasPrefix(c.Name, "_") || c.IsView() {
+					continue
+				}
+				if !a.canList(c) {
+					continue
+				}
+				names = append(names, fmt.Sprintf("%s (%d fields)", c.Name, len(c.Fields)))
+			}
+			sort.Strings(names)
+			if len(names) == 0 {
+				return "No listable collections.", nil
+			}
+			return strings.Join(names, "\n"), nil
+		},
+	}
+}
+
+func getSchemaTool() tool {
+	return tool{
+		name:        "get_collection_schema",
+		description: "Returns the field names and types of a collection. Args: {\"collection\": \"name\"}.",
+		params: map[string]any{
+			"type":       "object",
+			"properties": map[string]any{"collection": map[string]any{"type": "string"}},
+			"required":   []string{"collection"},
+		},
+		exec: func(a *Agent, args json.RawMessage) (string, error) {
+			var in struct {
+				Collection string `json:"collection"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return "", err
+			}
+			if in.Collection == "" {
+				return "", fmt.Errorf("collection name is required")
+			}
+			coll, err := a.App.FindCachedCollectionByNameOrId(in.Collection)
+			if err != nil {
+				return "", fmt.Errorf("collection %q not found", in.Collection)
+			}
+			if !a.canView(coll) {
+				return "", fmt.Errorf("you do not have permission to view %q", coll.Name)
+			}
+			var out []string
+			for _, f := range coll.Fields {
+				out = append(out, fmt.Sprintf("%s (%s)%s", f.GetName(), f.Type(), requiredMark(f)))
+			}
+			if len(out) == 0 {
+				return "Collection has no fields.", nil
+			}
+			return strings.Join(out, "\n"), nil
+		},
+	}
+}
+
+func requiredMark(f core.Field) string {
+	if j, err := json.Marshal(f); err == nil {
+		var m map[string]any
+		if json.Unmarshal(j, &m) == nil {
+			if r, ok := m["required"].(bool); ok && r {
+				return " required"
+			}
+		}
+	}
+	return ""
+}
+
+func queryRecordsTool() tool {
+	return tool{
+		name:        "query_records",
+		description: "Queries records from a collection the user is allowed to read. Args: {\"collection\": \"name\", \"filter\": \"optional PB filter expression\", \"limit\": 20}. Returns up to 20 records as JSON. Filter syntax examples: \"title ~ 'foo'\", \"price > 100 && visible = true\".",
+		params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"collection": map[string]any{"type": "string"},
+				"filter":     map[string]any{"type": "string"},
+				"limit":      map[string]any{"type": "integer"},
+			},
+			"required": []string{"collection"},
+		},
+		exec: func(a *Agent, args json.RawMessage) (string, error) {
+			var in struct {
+				Collection string `json:"collection"`
+				Filter     string `json:"filter"`
+				Limit      int    `json:"limit"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return "", err
+			}
+			if in.Collection == "" {
+				return "", fmt.Errorf("collection name is required")
+			}
+			coll, err := a.App.FindCachedCollectionByNameOrId(in.Collection)
+			if err != nil {
+				return "", fmt.Errorf("collection %q not found", in.Collection)
+			}
+			if !a.canList(coll) {
+				return "", fmt.Errorf("you do not have permission to list %q", coll.Name)
+			}
+			limit := in.Limit
+			if limit <= 0 {
+				limit = 10
+			}
+			if limit > 20 {
+				limit = 20
+			}
+
+			var recs []*core.Record
+			if in.Filter == "" {
+				recs, err = a.App.FindRecordsByFilter(coll, "", "", limit, 0)
+			} else {
+				recs, err = a.App.FindRecordsByFilter(coll, in.Filter, "", limit, 0)
+			}
+			if err != nil {
+				return "", fmt.Errorf("query failed: %w", err)
+			}
+
+			var visible []map[string]any
+			for _, r := range recs {
+				if !a.canAccessRecord(r) {
+					continue
+				}
+				visible = append(visible, r.PublicExport())
+			}
+			if len(visible) == 0 {
+				return "No accessible records found.", nil
+			}
+			data, err := json.Marshal(visible)
+			if err != nil {
+				return "", err
+			}
+			return string(data), nil
+		},
+	}
+}
+
+// --- write tools (pending action) ---
+
+func insertRecordsTool() tool {
+	return tool{
+		name: "insert_records",
+		description: "Inserts one or more new records into a collection. Requires explicit user confirmation. Args: {\"collection\": \"name\", \"records\": [{\"field\": \"value\"}]}. Only include fields that exist in the collection schema.",
+		params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"collection": map[string]any{"type": "string"},
+				"records": map[string]any{
+					"type":  "array",
+					"items": map[string]any{"type": "object"},
+				},
+			},
+			"required": []string{"collection", "records"},
+		},
+		write: true,
+		pending: func(a *Agent, args json.RawMessage) (*PendingAction, error) {
+			var in struct {
+				Collection string           `json:"collection"`
+				Records    []map[string]any `json:"records"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, err
+			}
+			if in.Collection == "" {
+				return nil, fmt.Errorf("collection name is required")
+			}
+			if len(in.Records) == 0 {
+				return nil, fmt.Errorf("no records provided")
+			}
+			coll, err := a.App.FindCachedCollectionByNameOrId(in.Collection)
+			if err != nil {
+				return nil, fmt.Errorf("collection %q not found", in.Collection)
+			}
+			if !a.canCreate(coll) {
+				return nil, fmt.Errorf("you do not have permission to create records in %q", coll.Name)
+			}
+
+			// preview: coerce values and show the first record
+			preview := make([]map[string]any, 0, len(in.Records))
+			for _, r := range in.Records {
+				coerced, err := coerceRecordValues(coll, r)
+				if err != nil {
+					return nil, err
+				}
+				preview = append(preview, coerced)
+			}
+
+			detail, err := json.MarshalIndent(preview, "", "  ")
+			if err != nil {
+				return nil, err
+			}
+
+			return &PendingAction{
+				Type:       "insert_records",
+				Summary:    fmt.Sprintf("Insert %d record(s) into %s", len(preview), coll.Name),
+				Detail:     string(detail),
+				Collection: coll.Name,
+				toolName:   "insert_records",
+				params:     mustMarshal(in),
+			}, nil
+		},
+		exec: func(a *Agent, args json.RawMessage) (string, error) {
+			var in struct {
+				Collection string           `json:"collection"`
+				Records    []map[string]any `json:"records"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return "", err
+			}
+			coll, err := a.App.FindCachedCollectionByNameOrId(in.Collection)
+			if err != nil {
+				return "", fmt.Errorf("collection %q not found", in.Collection)
+			}
+			var created []string
+			for _, raw := range in.Records {
+				data, err := coerceRecordValues(coll, raw)
+				if err != nil {
+					return "", err
+				}
+				if err := a.checkCreateRule(coll, data); err != nil {
+					return "", err
+				}
+				rec := core.NewRecord(coll)
+				for k, v := range data {
+					rec.Set(k, v)
+				}
+				if err := a.App.Save(rec); err != nil {
+					return "", fmt.Errorf("failed to save record in %q: %w", coll.Name, err)
+				}
+				created = append(created, rec.Id)
+			}
+			return fmt.Sprintf("Inserted %d record(s) into %s (ids: %s).", len(created), coll.Name, strings.Join(created, ", ")), nil
+		},
+	}
+}
+
+// coerceRecordValues normalizes incoming JSON values to PB-friendly types.
+func coerceRecordValues(coll *core.Collection, data map[string]any) (map[string]any, error) {
+	out := make(map[string]any, len(data))
+	for k, v := range data {
+		if strings.HasPrefix(k, "_") || k == "id" || k == "created" || k == "updated" {
+			continue
+		}
+		f := coll.Fields.GetByName(k)
+		if f == nil {
+			continue // skip unknown fields
+		}
+		switch f.Type() {
+		case "bool":
+			out[k] = coerceBool(v)
+		case "number":
+			val, err := coerceNumber(v)
+			if err != nil {
+				return nil, fmt.Errorf("field %q: %w", k, err)
+			}
+			out[k] = val
+		case "date":
+			out[k] = coerceDate(v)
+		default:
+			out[k] = v
+		}
+	}
+	return out, nil
+}
+
+func coerceBool(v any) bool {
+	switch t := v.(type) {
+	case bool:
+		return t
+	case string:
+		b, _ := strconv.ParseBool(t)
+		return b
+	case float64:
+		return t != 0
+	case int:
+		return t != 0
+	}
+	return false
+}
+
+func coerceNumber(v any) (any, error) {
+	switch t := v.(type) {
+	case float64:
+		return t, nil
+	case int:
+		return float64(t), nil
+	case json.Number:
+		return t.Float64()
+	case string:
+		if strings.TrimSpace(t) == "" {
+			return nil, nil
+		}
+		f, err := strconv.ParseFloat(t, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid number %q", t)
+		}
+		return f, nil
+	}
+	return nil, fmt.Errorf("unsupported number value %v", v)
+}
+
+func coerceDate(v any) string {
+	switch t := v.(type) {
+	case string:
+		s := strings.TrimSpace(t)
+		if s == "" {
+			return ""
+		}
+		if tm, err := time.Parse("2006-01-02", s); err == nil {
+			return tm.Format("2006-01-02 15:04:05.000Z")
+		}
+		if tm, err := time.Parse(time.RFC3339, s); err == nil {
+			return tm.Format("2006-01-02 15:04:05.000Z")
+		}
+		return s
+	case time.Time:
+		return t.Format("2006-01-02 15:04:05.000Z")
+	}
+	return fmt.Sprint(v)
+}
+
+// createCollectionTool creates a new base collection with the given fields.
+func createCollectionTool() tool {
+	return tool{
+		name: "create_collection",
+		description: "Creates a new base collection. Superuser only. Args: {\"name\": \"collection_name\", \"fields\": [{\"name\": \"field_name\", \"type\": \"text|number|bool|date|json\"}]}.",
+		params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name":   map[string]any{"type": "string"},
+				"fields": map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
+			},
+			"required": []string{"name", "fields"},
+		},
+		write: true,
+		pending: func(a *Agent, args json.RawMessage) (*PendingAction, error) {
+			var in struct {
+				Name   string `json:"name"`
+				Fields []struct {
+					Name string `json:"name"`
+					Type string `json:"type"`
+				} `json:"fields"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, err
+			}
+			if !a.isSuper() {
+				return nil, fmt.Errorf("only superusers can create collections")
+			}
+			if in.Name == "" {
+				return nil, fmt.Errorf("collection name is required")
+			}
+			if len(in.Fields) == 0 {
+				return nil, fmt.Errorf("at least one field is required")
+			}
+			detail, _ := json.MarshalIndent(in, "", "  ")
+			return &PendingAction{
+				Type:     "create_collection",
+				Summary:  fmt.Sprintf("Create collection %q with %d field(s)", in.Name, len(in.Fields)),
+				Detail:   string(detail),
+				toolName: "create_collection",
+				params:   mustMarshal(in),
+			}, nil
+		},
+		exec: func(a *Agent, args json.RawMessage) (string, error) {
+			var in struct {
+				Name   string `json:"name"`
+				Fields []struct {
+					Name string `json:"name"`
+					Type string `json:"type"`
+				} `json:"fields"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return "", err
+			}
+			if !a.isSuper() {
+				return "", fmt.Errorf("only superusers can create collections")
+			}
+			name := sanitizeName(in.Name)
+			if existing, _ := a.App.FindCachedCollectionByNameOrId(name); existing != nil {
+				return "", fmt.Errorf("collection %q already exists", name)
+			}
+
+			used := map[string]bool{}
+			for _, reserved := range []string{"id", "created", "updated", "collectionid", "collectionname", "expand"} {
+				used[reserved] = true
+			}
+			var newFields []core.Field
+			for _, f := range in.Fields {
+				fn := sanitizeName(f.Name)
+				if fn == "" || used[fn] {
+					continue
+				}
+				used[fn] = true
+				typ := core.FieldTypeText
+				switch strings.ToLower(f.Type) {
+				case "number":
+					typ = core.FieldTypeNumber
+				case "bool":
+					typ = core.FieldTypeBool
+				case "date":
+					typ = core.FieldTypeDate
+				case "json":
+					typ = core.FieldTypeJSON
+				}
+				cf := core.Fields[typ]()
+				cf.SetName(fn)
+				newFields = append(newFields, cf)
+			}
+			if len(newFields) == 0 {
+				return "", fmt.Errorf("no usable fields provided")
+			}
+
+			coll := core.NewBaseCollection(name)
+			coll.Fields.Add(newFields...)
+			if err := a.App.Save(coll); err != nil {
+				return "", fmt.Errorf("failed to create collection: %w", err)
+			}
+			return fmt.Sprintf("Collection %q created with %d field(s).", name, len(newFields)), nil
+		},
+	}
+}
+
+// setViewConfigTool upserts a _views config for a collection.
+func setViewConfigTool() tool {
+	return tool{
+		name: "set_view_config",
+		description: "Creates or updates the view configuration (list page + form) for a collection. Superuser only. Args: {\"collection\": \"name\", \"configName\": \"optional name (defaults to collection name)\", \"pageTitle\": \"optional list heading\", \"columnTitles\": \"optional comma-separated column titles\"}.",
+		params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"collection":    map[string]any{"type": "string"},
+				"configName":    map[string]any{"type": "string"},
+				"pageTitle":     map[string]any{"type": "string"},
+				"columnTitles":  map[string]any{"type": "string"},
+				"columnSorting": map[string]any{"type": "boolean"},
+				"searchBox":     map[string]any{"type": "boolean"},
+				"pagination":    map[string]any{"type": "boolean"},
+			},
+			"required": []string{"collection"},
+		},
+		write: true,
+		pending: func(a *Agent, args json.RawMessage) (*PendingAction, error) {
+			var in struct {
+				Collection    string `json:"collection"`
+				ConfigName    string `json:"configName"`
+				PageTitle     string `json:"pageTitle"`
+				ColumnTitles  string `json:"columnTitles"`
+				ColumnSorting *bool  `json:"columnSorting"`
+				SearchBox     *bool  `json:"searchBox"`
+				Pagination    *bool  `json:"pagination"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, err
+			}
+			if !a.isSuper() {
+				return nil, fmt.Errorf("only superusers can update view configurations")
+			}
+			if in.Collection == "" {
+				return nil, fmt.Errorf("collection name is required")
+			}
+			if _, err := a.App.FindCachedCollectionByNameOrId(in.Collection); err != nil {
+				return nil, fmt.Errorf("collection %q not found", in.Collection)
+			}
+			if in.ConfigName == "" {
+				in.ConfigName = sanitizeName(in.Collection)
+			}
+			detail, _ := json.MarshalIndent(in, "", "  ")
+			return &PendingAction{
+				Type:       "set_view_config",
+				Summary:    fmt.Sprintf("Set view configuration %q for collection %q", in.ConfigName, in.Collection),
+				Detail:     string(detail),
+				Collection: in.Collection,
+				toolName:   "set_view_config",
+				params:     mustMarshal(in),
+			}, nil
+		},
+		exec: func(a *Agent, args json.RawMessage) (string, error) {
+			var in struct {
+				Collection    string `json:"collection"`
+				ConfigName    string `json:"configName"`
+				PageTitle     string `json:"pageTitle"`
+				ColumnTitles  string `json:"columnTitles"`
+				ColumnSorting *bool  `json:"columnSorting"`
+				SearchBox     *bool  `json:"searchBox"`
+				Pagination    *bool  `json:"pagination"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return "", err
+			}
+			if !a.isSuper() {
+				return "", fmt.Errorf("only superusers can update view configurations")
+			}
+			if _, err := a.App.FindCachedCollectionByNameOrId(in.Collection); err != nil {
+				return "", fmt.Errorf("collection %q not found", in.Collection)
+			}
+			if in.ConfigName == "" {
+				in.ConfigName = sanitizeName(in.Collection)
+			}
+
+			coll, err := a.App.FindCachedCollectionByNameOrId("_views")
+			if err != nil {
+				return "", fmt.Errorf("views collection not found")
+			}
+			recs, err := a.App.FindRecordsByFilter("_views", "_name = {:name}", "", 1, 0, dbx.Params{"name": in.ConfigName})
+			if err != nil {
+				return "", err
+			}
+			var rec *core.Record
+			if len(recs) > 0 {
+				rec = recs[0]
+			} else {
+				rec = core.NewRecord(coll)
+				rec.Set("_name", in.ConfigName)
+			}
+			rec.Set("_collName", in.Collection)
+
+			tab := map[string]any{
+				"pageTitle": in.PageTitle,
+			}
+			if in.ColumnTitles != "" {
+				tab["columnTitles"] = in.ColumnTitles
+			}
+			if in.ColumnSorting != nil {
+				tab["columnSorting"] = *in.ColumnSorting
+			}
+			if in.SearchBox != nil {
+				tab["searchBox"] = *in.SearchBox
+			}
+			if in.Pagination != nil {
+				tab["pagination"] = *in.Pagination
+			}
+			tabJSON, _ := json.Marshal(tab)
+			rec.Set("_tabulator", string(tabJSON))
+
+			if err := a.App.Save(rec); err != nil {
+				return "", fmt.Errorf("failed to save view config: %w", err)
+			}
+			return fmt.Sprintf("View configuration %q saved for collection %q.", in.ConfigName, in.Collection), nil
+		},
+	}
+}
+
+// sanitizeName normalizes a collection/field name to lowercase [a-z0-9_].
+func sanitizeName(name string) string {
+	name = strings.TrimSpace(strings.ToLower(name))
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	s := b.String()
+	if s == "" || (s[0] >= '0' && s[0] <= '9') {
+		s = "f_" + s
+	}
+	return s
+}
+
+func mustMarshal(v any) json.RawMessage {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return []byte("{}")
+	}
+	return b
+}
+
+// register the tools in the registry
+func init() {
+	for _, d := range allTools() {
+		register(d)
+	}
+}

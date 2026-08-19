@@ -104,7 +104,7 @@
     <link rel="stylesheet" href="/assets/theme.css">
   </head>
   <body data-theme="{{.Theme}}">
-    <button type="button" id="themeBtn" onclick="toggleTheme()" style="position:fixed;top:16px;right:16px;padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;z-index:10;">🌙 Dark</button>
+    <button type="button" id="themeBtn" onclick="toggleTheme()" style="position:fixed;top:16px;right:16px;padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1.1rem;cursor:pointer;z-index:10;">🌙</button>
     <div class="login-card">
       <h1>Sign In</h1>
       <p class="subtitle">Enter your credentials to continue</p>
@@ -134,7 +134,7 @@
       function applyTheme(mode) {
         document.body.setAttribute('data-theme', mode);
         var btn = document.getElementById('themeBtn');
-        if (btn) btn.textContent = mode === 'dark' ? '☀️ Light' : '🌙 Dark';
+        if (btn) btn.textContent = mode === 'dark' ? '☀️' : '🌙';
       }
       function toggleTheme() {
         var next = currentTheme() === 'dark' ? 'light' : 'dark';

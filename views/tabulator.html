@@ -50,16 +50,38 @@
         .modal-body td, .modal-body th { padding: 6px 10px; }
         .filter-field-group { margin-bottom: 12px; }
         .filter-field-group label { display: block; margin-bottom: 4px; font-size: .85rem; font-weight: 600; color: #555; }
-        .filter-field-group input { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 6px; font-size: .9rem; outline: none; box-sizing: border-box; }
-        .filter-field-group input:focus { border-color: #007bff; }
+        .filter-field-group input, .filter-field-group select { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 6px; font-size: .9rem; outline: none; box-sizing: border-box; }
+        .filter-field-group input:focus, .filter-field-group select:focus { border-color: #007bff; }
+        .filter-section { margin-bottom: 16px; }
+        .filter-section-label { display: block; margin-bottom: 6px; font-size: .8rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: #666; }
+        .saved-filter-row { display: flex; gap: 8px; }
+        .saved-filter-row select { flex: 1; min-width: 0; padding: 8px; border: 1px solid #ccc; border-radius: 6px; font-size: .9rem; outline: none; }
+        .btn-sm { padding: 8px 12px; border: none; border-radius: 6px; font-size: .85rem; cursor: pointer; color: #fff; }
+        .btn-primary { background: var(--btn-primary); }
+        .btn-primary:hover { background: var(--btn-primary-hover); }
+        .btn-neutral { background: var(--btn-neutral); }
+        .btn-neutral:hover { background: var(--btn-neutral-hover); }
+        .btn-danger { background: var(--btn-danger); }
+        .btn-danger:hover { background: var(--btn-danger-hover); }
+        .f-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+        .f-row select, .f-row input { padding: 8px; border: 1px solid #ccc; border-radius: 6px; font-size: .9rem; outline: none; min-width: 0; }
+        .f-field { flex: 1.4; }
+        .f-op { flex: .5; }
+        .f-val { flex: 1; }
+        .f-val input, .f-val select { width: 100%; box-sizing: border-box; }
+        .f-remove { flex-shrink: 0; width: 30px; height: 30px; border: 1px solid #ccc; background: #fff; border-radius: 6px; cursor: pointer; color: #999; font-size: 1.1rem; line-height: 1; }
+        .f-remove:hover { background: #ffe3e3; color: #dc3545; border-color: #dc3545; }
+        .f-conn { display: flex; align-items: center; justify-content: center; margin-bottom: 8px; }
+        .f-conn select { padding: 5px 8px; border: 1px solid #ccc; border-radius: 6px; font-size: .8rem; font-weight: 600; color: #333; background: #f5f5f5; outline: none; cursor: pointer; }
+        .filter-note { font-size: .8rem; color: #e67e22; margin-top: 4px; }
     </style>
     <link rel="stylesheet" href="/assets/theme.css">
 </head>
 <body data-theme="{{.Theme}}">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">
         <h1 style="margin:0">{{if .Config.PageTitle}}{{.Config.PageTitle}}{{else}}{{.CollectionName}}{{end}}</h1>
-        <button type="button" id="themeBtn" onclick="toggleTheme()" style="padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">🌙 Dark</button>
-        <button type="button" onclick="goBack('/app')" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;margin-left:auto;">Close</button>
+        <button type="button" id="themeBtn" onclick="toggleTheme()" style="padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1.1rem;cursor:pointer;">🌙</button>
+        <button type="button" onclick="window.location.href='/app'" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;margin-left:auto;">Close</button>
     </div>
     <div class="subtitle">{{.TotalRecords}} record{{if ne .TotalRecords 1}}s{{end}}</div>
     {{if .Config.CollectionDescr}}<div class="descr">{{.Config.CollectionDescr}}</div>{{end}}
@@ -78,11 +100,6 @@
         <button id="exportBtn" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
             <img src="/assets/Upload-Brackets--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="Export"> Export
         </button>
-        {{if .Mssql}}
-        <button id="mssqlBtn" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
-            MSSQL
-        </button>
-        {{end}}
         <a href="/form/{{.ConfigName}}" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">+ Add new</a>
     </div>
 
@@ -174,7 +191,10 @@
                 <input type="text" id="exportFileName" value="{{.CollectionName}}" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;margin-bottom:12px;outline:none;box-sizing:border-box;">
                 <label style="display:block;margin-bottom:6px;font-size:.9rem;font-weight:600;">Sheet name</label>
                 <input type="text" id="exportSheetName" value="Sheet1" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;margin-bottom:20px;outline:none;box-sizing:border-box;">
-                <button id="exportSubmitBtn" style="width:100%;padding:10px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Export</button>
+                <div style="display:flex;gap:8px;">
+                    <button id="exportSubmitBtn" style="flex:1;padding:10px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Export</button>
+                    <button type="button" onclick="closeExportModal()" style="flex:1;padding:10px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Cancel</button>
+                </div>
             </div>
         </div>
     </div>
@@ -182,45 +202,42 @@
     <!-- MSSQL modal -->
     {{if .Mssql}}
     <div class="modal-overlay" id="mssqlModal">
-        <div class="modal-content" style="max-width:600px;">
+        <div class="modal-content" style="max-width:400px;">
             <div class="modal-header">
-                <h3>MSSQL Sync</h3>
+                <h3>MSSQL</h3>
                 <button class="modal-close" onclick="closeMssqlModal()">&times;</button>
             </div>
-            <div class="modal-body" id="mssqlModalBody">
-                <label style="display:block;margin-bottom:6px;font-size:.9rem;font-weight:600;">DSN</label>
-                <input type="text" id="mssqlDsn" value="{{.Mssql.DSN}}" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;margin-bottom:12px;outline:none;box-sizing:border-box;">
-
-                <label style="display:block;margin-bottom:6px;font-size:.9rem;font-weight:600;">Table</label>
-                <input type="text" id="mssqlTable" value="{{.Mssql.Table}}" placeholder="dbo.MyTable" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;margin-bottom:12px;outline:none;box-sizing:border-box;">
-
-                <label style="display:block;margin-bottom:6px;font-size:.9rem;font-weight:600;">Mode</label>
-                <div style="margin-bottom:12px;">
-                    <label style="display:inline-flex;align-items:center;gap:4px;margin-right:16px;font-size:.9rem;cursor:pointer;">
-                        <input type="radio" name="mssqlMode" value="insert" {{if or (eq .Mssql.Mode "insert") (eq .Mssql.Mode "")}}checked{{end}}> Insert
-                    </label>
-                    <label style="display:inline-flex;align-items:center;gap:4px;margin-right:16px;font-size:.9rem;cursor:pointer;">
-                        <input type="radio" name="mssqlMode" value="update" {{if eq .Mssql.Mode "update"}}checked{{end}}> Update
-                    </label>
-                    <label style="display:inline-flex;align-items:center;gap:4px;font-size:.9rem;cursor:pointer;">
-                        <input type="radio" name="mssqlMode" value="replace" {{if eq .Mssql.Mode "replace"}}checked{{end}}> Replace
-                    </label>
-                </div>
-
-                <div style="display:flex;gap:8px;margin-bottom:12px;">
-                    <button id="mssqlExportBtn" style="flex:1;padding:10px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Export to MSSQL</button>
-                    <button id="mssqlImportBtn" style="flex:1;padding:10px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Import from MSSQL</button>
-                </div>
-
-                <div style="flex:1;display:flex;gap:8px;">
-                    <button type="button" onclick="closeMssqlModal()" style="flex:1;padding:8px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">Cancel</button>
+            <div class="modal-body">
+                <div style="display:flex;gap:8px;">
+                    <button id="mssqlImportBtn" style="flex:1;padding:10px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Import</button>
+                    <button id="mssqlExportBtn" style="flex:1;padding:10px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Export</button>
+                    <button type="button" onclick="closeMssqlModal()" style="flex:1;padding:10px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Cancel</button>
                 </div>
             </div>
         </div>
     </div>
     {{end}}
 
-    <!-- Filter modal -->
+    <!-- Datasource choice modal -->
+    <div class="modal-overlay" id="datasourceModal">
+        <div class="modal-content" style="max-width:300px;">
+            <div class="modal-header">
+                <h3 id="datasourceModalTitle">Choose datasource</h3>
+                <button class="modal-close" onclick="closeDatasourceModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div style="display:flex;flex-direction:column;gap:10px;">
+                    <button id="dsExcelBtn" style="padding:12px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Excel</button>
+                    {{if .Mssql}}
+                    <button id="dsMssqlBtn" style="padding:12px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">MSSQL</button>
+                    {{end}}
+                    <button type="button" onclick="closeDatasourceModal()" style="padding:10px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filter parameter prompt (for "?" placeholders) -->
     <div class="modal-overlay" id="filterModal">
         <div class="modal-content" style="max-width:400px;">
             <div class="modal-header">
@@ -228,6 +245,43 @@
                 <button class="modal-close" onclick="closeFilterModal()">&times;</button>
             </div>
             <div class="modal-body" id="filterModalBody"></div>
+        </div>
+    </div>
+
+    <!-- Advanced filter dialog -->
+    <div class="modal-overlay" id="advFilterModal">
+        <div class="modal-content" style="max-width:680px;">
+            <div class="modal-header">
+                <h3>Filter</h3>
+                <button class="modal-close" onclick="closeAdvFilterModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="filter-section">
+                    <label class="filter-section-label">Saved filters</label>
+                    <div class="saved-filter-row">
+                        <select id="savedFilterSelect"></select>
+                        <button id="useSavedBtn" class="btn-sm btn-primary">Use</button>
+                        <button id="loadSavedBtn" class="btn-sm btn-primary">Load</button>
+                        <button id="deleteSavedBtn" class="btn-sm btn-danger">Delete</button>
+                    </div>
+                </div>
+                <div class="filter-section">
+                    <label class="filter-section-label">Conditions</label>
+                    <div id="filterBuilder"></div>
+                    <button id="addCondBtn" class="btn-sm btn-primary">+ Add condition</button>
+                </div>
+                <div class="filter-section">
+                    <label class="filter-section-label">Filter name</label>
+                    <input type="text" id="filterNameInput" placeholder="e.g. Price range (optional)">
+                </div>
+                <div id="filterBuilderNote" class="filter-note" style="display:none;"></div>
+                <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;">
+                    <button id="filterApplyBtn" class="btn-sm btn-primary" style="flex:1;">Apply</button>
+                    <button id="filterSaveBtn" class="btn-sm btn-primary" style="flex:1;">Save</button>
+                    <button id="filterClearBtn" class="btn-sm btn-neutral" style="flex:1;">Clear filter</button>
+                    <button class="btn-sm btn-neutral" onclick="closeAdvFilterModal()" style="flex:1;">Close</button>
+                </div>
+            </div>
         </div>
     </div>
 
@@ -315,8 +369,8 @@
                     return displayText.toLowerCase().includes(st);
                 }); });
             }
-            if (filterActive && parsedFilterDef && parsedFilterDef.conditions.length) {
-                data = data.filter(function(r) { return evaluateFilter(r, parsedFilterDef); });
+            if (filterActive && activeFilter && activeFilter.conditions.length) {
+                data = data.filter(function(r) { return evaluateFilter(r, activeFilter); });
             }
             if (sortField && sortDir) {
                 data = data.slice().sort(function(a, b) {
@@ -387,8 +441,12 @@
         {{end}}
 
         let filterActive = false;
-        let filterValues = [];
-        let parsedFilterDef = null;
+        let activeFilter = null;          // {name, conditions, chains}
+        let filterValues = [];            // prompted values, aligned with conditions
+        let savedFilters = [];
+        let currentConnectors = [];        // AND/OR between builder rows
+        let paramOnDone = null;            // callback receiving prompted "?" values
+        let paramTypes = [];               // field types of prompted params
 
         function parseFilterDef(def) {
             if (!def || !def.trim()) return null;
@@ -462,7 +520,7 @@
                     case '<':  return rv < fv;
                     case '>':  return rv > fv;
                     case '<=': return rv <= fv;
-                    case '=>': return rv >= fv;
+                    case '>=': return rv >= fv;
                     case '!=': return rv !== fv;
                     case '=':  return rv === fv;
                     default:   return false;
@@ -475,7 +533,7 @@
                     case '<':  return rs < fs;
                     case '>':  return rs > fs;
                     case '<=': return rs <= fs;
-                    case '=>': return rs >= fs;
+                    case '>=': return rs >= fs;
                     case '!=': return rs !== fs;
                     case '=':  return rs === fs;
                     default:   return false;
@@ -507,36 +565,59 @@
             var finalResult = results[0];
             for (var k = 0; k < parsed.chains.length; k++) {
                 var nextResult = results[k + 1];
-                if (parsed.chains[k] === '&&') finalResult = finalResult && nextResult;
-                else finalResult = finalResult || nextResult;
+                if (parsed.chains[k] === 'or' || parsed.chains[k] === '||') finalResult = finalResult || nextResult;
+                else finalResult = finalResult && nextResult;
             }
             return finalResult;
         }
 
-        function applyFilterDef(values) {
-            filterValues = values || [];
-            filterActive = true;
-            var display = filterDefStr;
-            if (parsedFilterDef) {
-                var parts = [];
-                for (var i = 0; i < parsedFilterDef.conditions.length; i++) {
-                    var c = parsedFilterDef.conditions[i];
-                    var title = getColumnTitle(c.field);
-                    var val = c.value === '?' ? (filterValues[i] || '?') : c.value;
-                    parts.push('(' + title + ' ' + c.op + ' ' + val + ')');
-                    if (i < parsedFilterDef.chains.length) parts.push(' ' + parsedFilterDef.chains[i] + ' ');
-                }
-                display = parts.join('');
+        function describeDef(def) {
+            var parts = [];
+            for (var i = 0; i < def.conditions.length; i++) {
+                var c = def.conditions[i];
+                parts.push('(' + getColumnTitle(c.field) + ' ' + c.op + ' ' + (c.value === '?' ? '?' : c.value) + ')');
+                if (i < def.chains.length) parts.push(' ' + (def.chains[i] === 'or' || def.chains[i] === '||' ? 'OR' : 'AND') + ' ');
             }
-            document.getElementById("filterLabel").textContent = "Filter is: " + display;
-            document.getElementById("filterLabel").style.display = "";
+            return parts.join('');
+        }
+
+        function showActiveFilter() {
+            var label = document.getElementById("filterLabel");
+            label.textContent = "Filter is: " + (activeFilter && activeFilter.name ? activeFilter.name : describeDef(activeFilter));
+            label.style.display = "";
             document.getElementById("filterBtn").style.background = "#e67e22";
+        }
+
+        function activateFilter(def) {
+            activeFilter = def;
+            filterActive = true;
+            showActiveFilter();
             currentPage = 1;
             render();
+            closeAdvFilterModal();
+        }
+
+        function activateFilterWithValues(def, values) {
+            filterValues = values || [];
+            for (var i = 0; i < def.conditions.length; i++) {
+                if (def.conditions[i].value === '?' && filterValues[i] === undefined) filterValues[i] = '';
+            }
+            activateFilter(def);
+        }
+
+        function activateOrPrompt(def) {
+            var needsParams = def.conditions.some(function(c) { return c.value === '?'; });
+            if (needsParams) {
+                paramOnDone = function(values) { activateFilterWithValues(def, values); };
+                promptFilterParams(def);
+            } else {
+                activateFilterWithValues(def, []);
+            }
         }
 
         function clearFilter() {
             filterActive = false;
+            activeFilter = null;
             filterValues = [];
             document.getElementById("filterLabel").style.display = "none";
             document.getElementById("filterBtn").style.background = "var(--btn-neutral)";
@@ -544,14 +625,25 @@
             render();
         }
 
-        function openFilterModal() {
-            var modalBody = document.getElementById("filterModalBody");
-            var params = parsedFilterDef.conditions.filter(function(c) { return c.value === '?'; });
+        // ---- "?" parameter prompt (reuses #filterModal) ----
+
+        function promptFilterParams(def) {
+            var body = document.getElementById("filterModalBody");
+            var params = [];
+            paramTypes = [];
+            def.conditions.forEach(function(c) {
+                if (c.value !== '?') return;
+                params.push(c);
+                paramTypes.push(getFieldType(c.field));
+            });
+            if (!params.length) { closeFilterModal(); return; }
             var html = '';
             params.forEach(function(p, idx) {
                 html += '<div class="filter-field-group"><label>' + esc(getColumnTitle(p.field)) + ' ' + esc(p.op) + '</label>';
                 var ft = getFieldType(p.field);
-                if (ft === 'date' || ft === 'autodate') {
+                if (ft === 'bool') {
+                    html += '<select id="filterParam' + idx + '"><option value="true">true</option><option value="false">false</option></select>';
+                } else if (ft === 'date' || ft === 'autodate') {
                     html += '<input type="datetime-local" id="filterParam' + idx + '">';
                 } else if (ft === 'number') {
                     html += '<input type="number" id="filterParam' + idx + '" step="any">';
@@ -561,50 +653,331 @@
                 html += '</div>';
             });
             html += '<div style="display:flex;gap:8px;margin-top:16px;">';
-            html += '<button onclick="setFilterFromModal()" style="flex:1;padding:10px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Set filter</button>';
-            html += '<button onclick="cancelFilterFromModal()" style="flex:1;padding:10px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Cancel filter</button>';
+            html += '<button onclick="submitFilterParams()" style="flex:1;padding:10px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Apply filter</button>';
+            html += '<button onclick="closeFilterModal()" style="flex:1;padding:10px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Cancel</button>';
             html += '</div>';
-            modalBody.innerHTML = html;
+            body.innerHTML = html;
             document.getElementById("filterModal").classList.add("open");
+        }
+
+        function submitFilterParams() {
+            var values = [];
+            for (var i = 0; i < paramTypes.length; i++) {
+                var el = document.getElementById("filterParam" + i);
+                var v = el ? el.value : '';
+                if (paramTypes[i] === 'date' || paramTypes[i] === 'autodate') v = v.replace('T', ' ');
+                values.push(v);
+            }
+            closeFilterModal();
+            var cb = paramOnDone;
+            paramOnDone = null;
+            if (cb) cb(values);
         }
 
         function closeFilterModal() {
             document.getElementById("filterModal").classList.remove("open");
         }
 
-        function setFilterFromModal() {
-            var params = parsedFilterDef.conditions.filter(function(c) { return c.value === '?'; });
-            var values = [];
-            for (var i = 0; i < params.length; i++) {
-                var el = document.getElementById("filterParam" + i);
-                values.push(el ? el.value : '');
-            }
-            closeFilterModal();
-            applyFilterDef(values);
-        }
-
-        function cancelFilterFromModal() {
-            closeFilterModal();
-            clearFilter();
-        }
-
         document.getElementById("filterModal").addEventListener("click", function(e) {
-            if (e.target === this) cancelFilterFromModal();
+            if (e.target === this) closeFilterModal();
         });
 
-        // filter definition from config
+        // ---- advanced filter builder ----
+
+        function filterableFields() {
+            var skip = { file: 1, relation: 1, geo: 1, json: 1, password: 1 };
+            var out = [];
+            for (var i = 0; i < fields.length; i++) {
+                if (skip[fieldTypes[i]]) continue;
+                out.push({ name: fields[i], type: fieldTypes[i], title: getColumnTitle(fields[i]) });
+            }
+            return out;
+        }
+
+        function opsForType(type) {
+            if (type === 'number' || type === 'date' || type === 'autodate') return ['>', '<', '>=', '<=', '=', '!='];
+            if (type === 'bool') return ['=', '!='];
+            return ['=', '!=', '~'];
+        }
+
+        function fillRowOpValue(wrap, fieldName, op, value) {
+            var oldOp = wrap.querySelector(".f-op");
+            if (oldOp) wrap.removeChild(oldOp);
+            var oldVal = wrap.querySelector(".f-val");
+            if (oldVal) wrap.removeChild(oldVal);
+
+            var type = getFieldType(fieldName);
+            var opSel = document.createElement("select");
+            opSel.className = "f-op";
+            opsForType(type).forEach(function(o) {
+                var opt = document.createElement("option");
+                opt.value = o;
+                opt.textContent = o;
+                if (o === op) opt.selected = true;
+                opSel.appendChild(opt);
+            });
+
+            var valEl;
+            if (type === 'bool') {
+                valEl = document.createElement("select");
+                valEl.className = "f-val";
+                ['true', 'false'].forEach(function(v) {
+                    var opt = document.createElement("option");
+                    opt.value = v;
+                    opt.textContent = v;
+                    if (String(value) === v) opt.selected = true;
+                    valEl.appendChild(opt);
+                });
+            } else {
+                valEl = document.createElement("input");
+                valEl.type = type === 'number' ? 'number' : 'text';
+                valEl.className = "f-val";
+                if (type === 'date' || type === 'autodate') valEl.placeholder = "YYYY-MM-DD HH:MM";
+                valEl.value = value || '';
+            }
+
+            var ref = wrap.querySelector(".f-remove");
+            if (ref) {
+                wrap.insertBefore(opSel, ref);
+                wrap.insertBefore(valEl, ref);
+            } else {
+                wrap.appendChild(opSel);
+                wrap.appendChild(valEl);
+            }
+        }
+
+        function makeFilterRow(cond) {
+            cond = cond || {};
+            var wrap = document.createElement("div");
+            wrap.className = "f-row";
+
+            var fieldSel = document.createElement("select");
+            fieldSel.className = "f-field";
+            var avail = filterableFields();
+            avail.forEach(function(f) {
+                var o = document.createElement("option");
+                o.value = f.name;
+                o.textContent = f.title;
+                if (f.name === cond.field) o.selected = true;
+                fieldSel.appendChild(o);
+            });
+            wrap.appendChild(fieldSel);
+
+            fieldSel.onchange = function() { fillRowOpValue(wrap, fieldSel.value, "", ""); };
+            fillRowOpValue(wrap, cond.field || (avail.length ? avail[0].name : ""), cond.op, cond.value);
+
+            var rm = document.createElement("button");
+            rm.type = "button";
+            rm.className = "f-remove";
+            rm.textContent = "\u00d7";
+            rm.onclick = function() {
+                var b = document.getElementById("filterBuilder");
+                b.removeChild(wrap);
+                syncConnectorCount();
+                refreshConnectors();
+            };
+            wrap.appendChild(rm);
+            return wrap;
+        }
+
+        function addFilterRow(cond) {
+            var builder = document.getElementById("filterBuilder");
+            builder.appendChild(makeFilterRow(cond));
+            syncConnectorCount();
+            refreshConnectors();
+        }
+
+        function syncConnectorCount() {
+            var rows = document.querySelectorAll("#filterBuilder .f-row").length;
+            while (currentConnectors.length < rows - 1) currentConnectors.push("and");
+            if (currentConnectors.length > rows - 1) currentConnectors = currentConnectors.slice(0, Math.max(0, rows - 1));
+        }
+
+        function refreshConnectors() {
+            var builder = document.getElementById("filterBuilder");
+            if (!builder) return;
+            builder.querySelectorAll(".f-conn").forEach(function(c) { c.parentNode.removeChild(c); });
+            var rows = builder.querySelectorAll(".f-row");
+            for (var i = 0; i < rows.length - 1; i++) {
+                (function(idx) {
+                    var conn = document.createElement("div");
+                    conn.className = "f-conn";
+                    var sel = document.createElement("select");
+                    sel.innerHTML = '<option value="and">AND</option><option value="or">OR</option>';
+                    sel.value = currentConnectors[idx] === 'or' ? 'or' : 'and';
+                    sel.onchange = function() { currentConnectors[idx] = sel.value; };
+                    conn.appendChild(sel);
+                    rows[idx].parentNode.insertBefore(conn, rows[idx].nextSibling);
+                })(i);
+            }
+        }
+
+        function openFilterBuilder(def) {
+            var builder = document.getElementById("filterBuilder");
+            builder.innerHTML = "";
+            currentConnectors = [];
+            var nameEl = document.getElementById("filterNameInput");
+            if (nameEl) nameEl.value = (def && def.name) || "";
+            if (def && def.conditions && def.conditions.length) {
+                def.conditions.forEach(function(c) { addFilterRow({ field: c.field, op: c.op, value: c.value }); });
+                if (def.chains && def.chains.length) {
+                    for (var i = 0; i < def.chains.length && i < currentConnectors.length; i++) {
+                        currentConnectors[i] = def.chains[i] === 'or' ? 'or' : 'and';
+                    }
+                }
+            } else {
+                addFilterRow({});
+            }
+            refreshConnectors();
+        }
+
+        function readBuilderDef() {
+            var conditions = [];
+            document.querySelectorAll("#filterBuilder .f-row").forEach(function(row) {
+                var fieldEl = row.querySelector(".f-field");
+                var opEl = row.querySelector(".f-op");
+                var valEl = row.querySelector(".f-val");
+                conditions.push({ field: fieldEl.value, op: opEl.value, value: valEl ? valEl.value : '' });
+            });
+            var chains = [];
+            for (var i = 0; i < conditions.length - 1; i++) {
+                chains.push(currentConnectors[i] === 'or' ? 'or' : 'and');
+            }
+            var nameEl = document.getElementById("filterNameInput");
+            var name = nameEl ? nameEl.value.trim() : '';
+            return { name: name || null, conditions: conditions, chains: chains };
+        }
+
+        // ---- saved filters ----
+
+        function loadSavedFilters() {
+            return fetch("/api/filters/{{.ConfigName}}")
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    savedFilters = (data && data.filters) || [];
+                    var sel = document.getElementById("savedFilterSelect");
+                    sel.innerHTML = "";
+                    if (!savedFilters.length) {
+                        var o = document.createElement("option");
+                        o.value = "";
+                        o.textContent = "No saved filters";
+                        sel.appendChild(o);
+                    } else {
+                        savedFilters.forEach(function(f) {
+                            var o = document.createElement("option");
+                            o.value = f.id;
+                            o.textContent = f.name + (f.user ? " (" + f.user + ")" : "");
+                            sel.appendChild(o);
+                        });
+                    }
+                    return savedFilters;
+                });
+        }
+
+        function selectedSavedFilter() {
+            var sel = document.getElementById("savedFilterSelect");
+            var id = sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].value : "";
+            for (var i = 0; i < savedFilters.length; i++) {
+                if (savedFilters[i].id === id) return savedFilters[i];
+            }
+            return null;
+        }
+
+        function useSavedFilter() {
+            var f = selectedSavedFilter();
+            if (!f || !f.def || !f.def.conditions || !f.def.conditions.length) return;
+            activeFilter = null;
+            activateOrPrompt(f.def);
+        }
+
+        function loadSavedFilterToBuilder() {
+            var f = selectedSavedFilter();
+            if (!f) return;
+            openFilterBuilder(f.def);
+        }
+
+        function deleteSavedFilter() {
+            var f = selectedSavedFilter();
+            if (!f) return;
+            if (!confirm('Delete saved filter "' + f.name + '"?')) return;
+            fetch("/api/filters/" + encodeURIComponent(f.id), { method: "DELETE" })
+                .then(function(r) { return r.json(); })
+                .then(function(res) {
+                    if (res.ok) loadSavedFilters();
+                    else alert("Failed to delete filter.");
+                });
+        }
+
+        function saveFilterAction() {
+            var def = readBuilderDef();
+            if (!def.name) { alert("Please enter a filter name."); return; }
+            if (!def.conditions.length) { alert("Add at least one condition."); return; }
+            document.getElementById("filterSaveBtn").disabled = true;
+            fetch("/api/filters/{{.ConfigName}}", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(def)
+            })
+                .then(function(r) { return r.json(); })
+                .then(function(res) {
+                    document.getElementById("filterSaveBtn").disabled = false;
+                    if (!res.ok) { alert(res.message || "Failed to save filter."); return; }
+                    loadSavedFilters();
+                })
+                .catch(function() { document.getElementById("filterSaveBtn").disabled = false; alert("Failed to save filter."); });
+        }
+
+        function applyFilterAction() {
+            var def = readBuilderDef();
+            if (!def.conditions.length) { alert("Add at least one condition."); return; }
+            activeFilter = null;
+            activateOrPrompt(def);
+        }
+
+        function clearFilterAction() {
+            clearFilter();
+            openFilterBuilder(null);
+        }
+
+        function openAdvFilterModal() {
+            document.getElementById("advFilterModal").classList.add("open");
+            loadSavedFilters();
+            openFilterBuilder(activeFilter);
+        }
+
+        function closeAdvFilterModal() {
+            document.getElementById("advFilterModal").classList.remove("open");
+        }
+
+        document.getElementById("advFilterModal").addEventListener("click", function(e) {
+            if (e.target === this) closeAdvFilterModal();
+        });
+
+        document.getElementById("addCondBtn").addEventListener("click", function() { addFilterRow({}); });
+        document.getElementById("useSavedBtn").addEventListener("click", useSavedFilter);
+        document.getElementById("loadSavedBtn").addEventListener("click", loadSavedFilterToBuilder);
+        document.getElementById("deleteSavedBtn").addEventListener("click", deleteSavedFilter);
+        document.getElementById("filterApplyBtn").addEventListener("click", applyFilterAction);
+        document.getElementById("filterSaveBtn").addEventListener("click", saveFilterAction);
+        document.getElementById("filterClearBtn").addEventListener("click", clearFilterAction);
+
+        // Filter button always opens the advanced filter dialog
+        document.getElementById("filterBtn").addEventListener("click", function () {
+            openAdvFilterModal();
+        });
+
+        // optional static filter expression from the _views config seeds the active filter
         {{if .Config.Filter}}
         var filterDefStr = "{{.Config.Filter | safeJS}}";
-        parsedFilterDef = parseFilterDef(filterDefStr);
-        document.getElementById("filterBtn").addEventListener("click", function () {
-            if (!parsedFilterDef || !parsedFilterDef.conditions.length) return;
-            var hasQuestion = parsedFilterDef.conditions.some(function(c) { return c.value === '?'; });
-            if (hasQuestion) {
-                openFilterModal();
-            } else {
-                if (filterActive) { clearFilter(); } else { applyFilterDef([]); }
+        var staticDef = parseFilterDef(filterDefStr);
+        if (staticDef && staticDef.conditions && staticDef.conditions.length) {
+            var hasParams = staticDef.conditions.some(function(c) { return c.value === '?'; });
+            if (!hasParams) {
+                activeFilter = { name: null, conditions: staticDef.conditions, chains: staticDef.chains };
+                filterActive = true;
+                showActiveFilter();
             }
-        });
+        }
         {{end}}
 
         // sort
@@ -736,9 +1109,47 @@
             if (e.target === this) closeRelModal();
         });
 
+        // datasource choice modal
+        var datasourceMode = ""; // "import" or "export"
+
+        function openDatasourceModal(mode) {
+            datasourceMode = mode;
+            document.getElementById("datasourceModalTitle").textContent = mode === "import" ? "Import from" : "Export to";
+            document.getElementById("datasourceModal").classList.add("open");
+        }
+
+        function closeDatasourceModal() {
+            document.getElementById("datasourceModal").classList.remove("open");
+        }
+
+        document.getElementById("datasourceModal").addEventListener("click", function(e) {
+            if (e.target === this) closeDatasourceModal();
+        });
+
+        document.getElementById("dsExcelBtn").addEventListener("click", function() {
+            closeDatasourceModal();
+            if (datasourceMode === "import") {
+                document.getElementById("importModal").classList.add("open");
+            } else {
+                document.getElementById("exportModal").classList.add("open");
+            }
+        });
+
+        var dsMssqlBtn = document.getElementById("dsMssqlBtn");
+        if (dsMssqlBtn) {
+            dsMssqlBtn.addEventListener("click", function() {
+                closeDatasourceModal();
+                document.getElementById("mssqlModal").classList.add("open");
+            });
+        }
+
         // import modal
         document.getElementById("importBtn").addEventListener("click", function() {
+            {{if .Mssql}}
+            openDatasourceModal("import");
+            {{else}}
             document.getElementById("importModal").classList.add("open");
+            {{end}}
         });
 
         function closeImportModal() {
@@ -761,7 +1172,11 @@
 
         // export modal
         document.getElementById("exportBtn").addEventListener("click", function() {
+            {{if .Mssql}}
+            openDatasourceModal("export");
+            {{else}}
             document.getElementById("exportModal").classList.add("open");
+            {{end}}
         });
 
         function closeExportModal() {
@@ -783,13 +1198,6 @@
         });
 
         // mssql modal
-        var mssqlBtn = document.getElementById("mssqlBtn");
-        if (mssqlBtn) {
-            mssqlBtn.addEventListener("click", function() {
-                document.getElementById("mssqlModal").classList.add("open");
-            });
-        }
-
         function closeMssqlModal() {
             document.getElementById("mssqlModal").classList.remove("open");
         }
@@ -803,9 +1211,9 @@
 
         function getMssqlParams() {
             return {
-                dsn: document.getElementById("mssqlDsn").value.trim(),
-                table: document.getElementById("mssqlTable").value.trim(),
-                mode: document.querySelector("input[name=mssqlMode]:checked").value
+                dsn: "{{.Mssql.DSN}}",
+                table: "{{.Mssql.Table}}",
+                mode: "{{.Mssql.Mode}}"
             };
         }
 
@@ -813,7 +1221,8 @@
         if (mssqlExportBtn) {
             mssqlExportBtn.addEventListener("click", function() {
                 var p = getMssqlParams();
-                if (!p.dsn || !p.table) { alert("Please fill in DSN and table."); return; }
+                if (!p.dsn || !p.table) { alert("MSSQL DSN and table not configured."); return; }
+                closeMssqlModal();
                 doMssqlExport(p, false);
             });
         }
@@ -844,7 +1253,8 @@
         if (mssqlImportBtn) {
             mssqlImportBtn.addEventListener("click", function() {
                 var p = getMssqlParams();
-                if (!p.dsn || !p.table) { alert("Please fill in DSN and table."); return; }
+                if (!p.dsn || !p.table) { alert("MSSQL DSN and table not configured."); return; }
+                closeMssqlModal();
                 if (!confirm("Really import from MSSQL? Existing data may be modified.")) return;
                 var fd = new FormData();
                 fd.append("dsn", p.dsn);
@@ -886,7 +1296,7 @@
         function applyTheme(mode) {
             document.body.setAttribute('data-theme', mode);
             var btn = document.getElementById('themeBtn');
-            if (btn) btn.textContent = mode === 'dark' ? '☀️ Light' : '🌙 Dark';
+            if (btn) btn.textContent = mode === 'dark' ? '☀️' : '🌙';
         }
         function toggleTheme() {
             var next = currentTheme() === 'dark' ? 'light' : 'dark';
