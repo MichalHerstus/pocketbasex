@@ -927,6 +927,14 @@ func buildTabulatorData(e *core.RequestEvent, collName string, configRec *core.R
 	headersJSON, _ := json.Marshal(visibleHeaders)
 	recordsJSON, _ := json.Marshal(allData)
 
+	selectOpts := map[string][]string{}
+	for i, f := range visibleFields {
+		if sf, ok := f.(*core.SelectField); ok {
+			selectOpts[fieldNames[i]] = sf.Values
+		}
+	}
+	fieldOptionsJSON, _ := json.Marshal(selectOpts)
+
 	totalPages := int(math.Ceil(float64(len(records)) / 20))
 	if totalPages < 1 {
 		totalPages = 1
@@ -941,8 +949,9 @@ func buildTabulatorData(e *core.RequestEvent, collName string, configRec *core.R
 		ColumnHeaders:  visibleHeaders,
 		FieldsJSON:     string(fieldsJSON),
 		FieldTypesJSON: string(fieldTypesJSON),
-		HeadersJSON:    string(headersJSON),
-		RecordsJSON:    string(recordsJSON),
+		HeadersJSON:      string(headersJSON),
+		RecordsJSON:      string(recordsJSON),
+		FieldOptionsJSON: string(fieldOptionsJSON),
 		PerPage:        20,
 		Page:           1,
 		TotalPages:     totalPages,

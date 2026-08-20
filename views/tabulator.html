@@ -69,6 +69,8 @@
         .f-op { flex: .5; }
         .f-val { flex: 1; }
         .f-val input, .f-val select { width: 100%; box-sizing: border-box; }
+        .f-param { flex-shrink: 0; display: flex; align-items: center; gap: 3px; font-size: .8rem; color: #666; cursor: pointer; white-space: nowrap; }
+        .f-param input { cursor: pointer; margin: 0; }
         .f-remove { flex-shrink: 0; width: 30px; height: 30px; border: 1px solid #ccc; background: #fff; border-radius: 6px; cursor: pointer; color: #999; font-size: 1.1rem; line-height: 1; }
         .f-remove:hover { background: #ffe3e3; color: #dc3545; border-color: #dc3545; }
         .f-conn { display: flex; align-items: center; justify-content: center; margin-bottom: 8px; }
@@ -88,12 +90,15 @@
 
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
         {{if .Config.SearchBox}}
-        <div class="search-box" style="margin-bottom:0;">
-            <input type="text" id="searchInput" placeholder="Search across all columns…">
+        <div class="search-box" style="margin-bottom:0;display:flex;align-items:center;gap:4px;">
+            <input type="text" id="searchInput" placeholder="Search across all columns…" style="flex:1;">
+            <button id="searchClearBtn" style="padding:4px 8px;background:none;border:none;cursor:pointer;font-size:1rem;color:#888;" title="Clear search">&times;</button>
         </div>
         {{end}}
-        <span id="filterLabel" style="display:none;font-size:.9rem;color:#e67e22;font-weight:600;"></span>
-        <button id="filterBtn" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">Filter</button>
+        <select id="filterSelect" style="padding:8px 12px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;min-width:180px;">
+            <option value="">-- All records --</option>
+        </select>
+        <button id="editFiltersBtn" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">Edit filters</button>
         <button id="importBtn" style="margin-left:auto;padding:8px 16px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
             <img src="/assets/Monitor-Download--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="Import"> Import
         </button>
@@ -241,10 +246,14 @@
     <div class="modal-overlay" id="filterModal">
         <div class="modal-content" style="max-width:400px;">
             <div class="modal-header">
-                <h3>Set filter values</h3>
+                <h3 id="filterModalTitle">Fill filter parameters</h3>
                 <button class="modal-close" onclick="closeFilterModal()">&times;</button>
             </div>
             <div class="modal-body" id="filterModalBody"></div>
+            <div style="display:flex;gap:8px;padding:0 20px 20px;">
+                <button onclick="submitFilterParams()" style="flex:1;padding:10px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Use filter</button>
+                <button onclick="cancelFilterParams()" style="flex:1;padding:10px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Cancel</button>
+            </div>
         </div>
     </div>
 
@@ -252,7 +261,7 @@
     <div class="modal-overlay" id="advFilterModal">
         <div class="modal-content" style="max-width:680px;">
             <div class="modal-header">
-                <h3>Filter</h3>
+                <h3>Edit filters</h3>
                 <button class="modal-close" onclick="closeAdvFilterModal()">&times;</button>
             </div>
             <div class="modal-body">
@@ -260,25 +269,21 @@
                     <label class="filter-section-label">Saved filters</label>
                     <div class="saved-filter-row">
                         <select id="savedFilterSelect"></select>
-                        <button id="useSavedBtn" class="btn-sm btn-primary">Use</button>
-                        <button id="loadSavedBtn" class="btn-sm btn-primary">Load</button>
-                        <button id="deleteSavedBtn" class="btn-sm btn-danger">Delete</button>
+                        <button id="deleteSavedBtn" class="btn-sm btn-danger">Delete filter</button>
                     </div>
+                </div>
+                <div class="filter-section">
+                    <label class="filter-section-label">Filter name</label>
+                    <input type="text" id="filterNameInput" placeholder="e.g. Price range">
                 </div>
                 <div class="filter-section">
                     <label class="filter-section-label">Conditions</label>
                     <div id="filterBuilder"></div>
                     <button id="addCondBtn" class="btn-sm btn-primary">+ Add condition</button>
                 </div>
-                <div class="filter-section">
-                    <label class="filter-section-label">Filter name</label>
-                    <input type="text" id="filterNameInput" placeholder="e.g. Price range (optional)">
-                </div>
                 <div id="filterBuilderNote" class="filter-note" style="display:none;"></div>
                 <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;">
-                    <button id="filterApplyBtn" class="btn-sm btn-primary" style="flex:1;">Apply</button>
                     <button id="filterSaveBtn" class="btn-sm btn-primary" style="flex:1;">Save</button>
-                    <button id="filterClearBtn" class="btn-sm btn-neutral" style="flex:1;">Clear filter</button>
                     <button class="btn-sm btn-neutral" onclick="closeAdvFilterModal()" style="flex:1;">Close</button>
                 </div>
             </div>
@@ -290,6 +295,7 @@
         const fieldTypes = {{.FieldTypesJSON | safeJS}};
         const headers = {{.HeadersJSON | safeJS}};
         const allRecords = {{.RecordsJSON | safeJS}};
+        const fieldOptions = {{.FieldOptionsJSON | safeJS}};
 
         const perPage = 20;
         let currentPage = 1;
@@ -438,6 +444,12 @@
             currentPage = 1;
             render();
         });
+        document.getElementById("searchClearBtn").addEventListener("click", function () {
+            document.getElementById("searchInput").value = "";
+            searchTerm = "";
+            currentPage = 1;
+            render();
+        });
         {{end}}
 
         let filterActive = false;
@@ -447,6 +459,7 @@
         let currentConnectors = [];        // AND/OR between builder rows
         let paramOnDone = null;            // callback receiving prompted "?" values
         let paramTypes = [];               // field types of prompted params
+        let currentParamFilterId = null;   // selected filter ID during parameter prompt
 
         function parseFilterDef(def) {
             if (!def || !def.trim()) return null;
@@ -581,17 +594,19 @@
             return parts.join('');
         }
 
-        function showActiveFilter() {
-            var label = document.getElementById("filterLabel");
-            label.textContent = "Filter is: " + (activeFilter && activeFilter.name ? activeFilter.name : describeDef(activeFilter));
-            label.style.display = "";
-            document.getElementById("filterBtn").style.background = "#e67e22";
-        }
-
         function activateFilter(def) {
             activeFilter = def;
             filterActive = true;
-            showActiveFilter();
+            // Update dropdown selection to match active filter
+            var sel = document.getElementById("filterSelect");
+            if (sel && def && def.name) {
+                for (var i = 0; i < sel.options.length; i++) {
+                    if (sel.options[i].textContent === def.name || sel.options[i].textContent.startsWith(def.name + " (")) {
+                        sel.value = sel.options[i].value;
+                        break;
+                    }
+                }
+            }
             currentPage = 1;
             render();
             closeAdvFilterModal();
@@ -619,8 +634,8 @@
             filterActive = false;
             activeFilter = null;
             filterValues = [];
-            document.getElementById("filterLabel").style.display = "none";
-            document.getElementById("filterBtn").style.background = "var(--btn-neutral)";
+            var sel = document.getElementById("filterSelect");
+            if (sel) sel.value = "";
             currentPage = 1;
             render();
         }
@@ -629,6 +644,7 @@
 
         function promptFilterParams(def) {
             var body = document.getElementById("filterModalBody");
+            document.getElementById("filterModalTitle").textContent = "Fill filter parameters" + (def.name ? " — " + def.name : "");
             var params = [];
             paramTypes = [];
             def.conditions.forEach(function(c) {
@@ -641,7 +657,14 @@
             params.forEach(function(p, idx) {
                 html += '<div class="filter-field-group"><label>' + esc(getColumnTitle(p.field)) + ' ' + esc(p.op) + '</label>';
                 var ft = getFieldType(p.field);
-                if (ft === 'bool') {
+                if (ft === 'select') {
+                    var opts = fieldOptions[p.field] || [];
+                    html += '<select id="filterParam' + idx + '">';
+                    opts.forEach(function(v) {
+                        html += '<option value="' + esc(v) + '">' + esc(v) + '</option>';
+                    });
+                    html += '</select>';
+                } else if (ft === 'bool') {
                     html += '<select id="filterParam' + idx + '"><option value="true">true</option><option value="false">false</option></select>';
                 } else if (ft === 'date' || ft === 'autodate') {
                     html += '<input type="datetime-local" id="filterParam' + idx + '">';
@@ -652,12 +675,16 @@
                 }
                 html += '</div>';
             });
-            html += '<div style="display:flex;gap:8px;margin-top:16px;">';
-            html += '<button onclick="submitFilterParams()" style="flex:1;padding:10px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Apply filter</button>';
-            html += '<button onclick="closeFilterModal()" style="flex:1;padding:10px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Cancel</button>';
-            html += '</div>';
             body.innerHTML = html;
             document.getElementById("filterModal").classList.add("open");
+        }
+
+        function cancelFilterParams() {
+            closeFilterModal();
+            paramOnDone = null;
+            currentParamFilterId = null;
+            var sel = document.getElementById("filterSelect");
+            if (sel && !filterActive) sel.value = "";
         }
 
         function submitFilterParams() {
@@ -763,8 +790,25 @@
             });
             wrap.appendChild(fieldSel);
 
-            fieldSel.onchange = function() { fillRowOpValue(wrap, fieldSel.value, "", ""); };
+            fieldSel.onchange = function() { fillRowOpValue(wrap, fieldSel.value, "", ""); toggleAskState(wrap, false); };
             fillRowOpValue(wrap, cond.field || (avail.length ? avail[0].name : ""), cond.op, cond.value);
+
+            var askLabel = document.createElement("label");
+            askLabel.className = "f-param";
+            var askCb = document.createElement("input");
+            askCb.type = "checkbox";
+            askLabel.appendChild(askCb);
+            askLabel.appendChild(document.createTextNode(" Ask?"));
+            wrap.appendChild(askLabel);
+
+            askCb.addEventListener("change", function() {
+                toggleAskState(wrap, askCb.checked);
+            });
+
+            if (cond.value === '?') {
+                askCb.checked = true;
+                toggleAskState(wrap, true);
+            }
 
             var rm = document.createElement("button");
             rm.type = "button";
@@ -778,6 +822,22 @@
             };
             wrap.appendChild(rm);
             return wrap;
+        }
+
+        function toggleAskState(wrap, ask) {
+            var valEl = wrap.querySelector(".f-val");
+            if (!valEl) return;
+            if (ask) {
+                valEl.disabled = true;
+                valEl.dataset.origPlaceholder = valEl.placeholder || '';
+                valEl.placeholder = '?';
+                if (valEl.tagName === 'INPUT') valEl.value = '';
+                else valEl.value = '';
+            } else {
+                valEl.disabled = false;
+                valEl.placeholder = valEl.dataset.origPlaceholder || '';
+                delete valEl.dataset.origPlaceholder;
+            }
         }
 
         function addFilterRow(cond) {
@@ -836,8 +896,9 @@
             document.querySelectorAll("#filterBuilder .f-row").forEach(function(row) {
                 var fieldEl = row.querySelector(".f-field");
                 var opEl = row.querySelector(".f-op");
-                var valEl = row.querySelector(".f-val");
-                conditions.push({ field: fieldEl.value, op: opEl.value, value: valEl ? valEl.value : '' });
+                var askCb = row.querySelector(".f-param input[type=checkbox]");
+                var val = (askCb && askCb.checked) ? '?' : (row.querySelector(".f-val") ? row.querySelector(".f-val").value : '');
+                conditions.push({ field: fieldEl.value, op: opEl.value, value: val });
             });
             var chains = [];
             for (var i = 0; i < conditions.length - 1; i++) {
@@ -851,10 +912,11 @@
         // ---- saved filters ----
 
         function loadSavedFilters() {
-            return fetch("/api/filters/{{.ConfigName}}")
+            return fetch("/api/filters/{{.ConfigName}}", { credentials: "same-origin" })
                 .then(function(r) { return r.json(); })
                 .then(function(data) {
                     savedFilters = (data && data.filters) || [];
+                    populateFilterDropdown();
                     var sel = document.getElementById("savedFilterSelect");
                     sel.innerHTML = "";
                     if (!savedFilters.length) {
@@ -883,29 +945,25 @@
             return null;
         }
 
-        function useSavedFilter() {
-            var f = selectedSavedFilter();
-            if (!f || !f.def || !f.def.conditions || !f.def.conditions.length) return;
-            activeFilter = null;
-            activateOrPrompt(f.def);
-        }
-
-        function loadSavedFilterToBuilder() {
-            var f = selectedSavedFilter();
-            if (!f) return;
-            openFilterBuilder(f.def);
-        }
-
         function deleteSavedFilter() {
             var f = selectedSavedFilter();
             if (!f) return;
             if (!confirm('Delete saved filter "' + f.name + '"?')) return;
-            fetch("/api/filters/" + encodeURIComponent(f.id), { method: "DELETE" })
+            fetch("/api/filters/" + encodeURIComponent(f.id), { method: "DELETE", credentials: "same-origin" })
                 .then(function(r) { return r.json(); })
                 .then(function(res) {
-                    if (res.ok) loadSavedFilters();
-                    else alert("Failed to delete filter.");
-                });
+                    if (res.ok) {
+                        loadSavedFilters().then(function() {
+                            var sel = document.getElementById("savedFilterSelect");
+                            if (sel.options.length) sel.selectedIndex = 0;
+                            var tbSel = document.getElementById("filterSelect");
+                            if (tbSel) tbSel.selectedIndex = 0;
+                        });
+                    } else {
+                        alert(res.message || "Failed to delete filter.");
+                    }
+                })
+                .catch(function() { alert("Failed to delete filter."); });
         }
 
         function saveFilterAction() {
@@ -916,33 +974,30 @@
             fetch("/api/filters/{{.ConfigName}}", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
+                credentials: "same-origin",
                 body: JSON.stringify(def)
             })
                 .then(function(r) { return r.json(); })
                 .then(function(res) {
                     document.getElementById("filterSaveBtn").disabled = false;
                     if (!res.ok) { alert(res.message || "Failed to save filter."); return; }
-                    loadSavedFilters();
+                    loadSavedFilters().then(function() {
+                        activateFilterWithValues(def, filterValues);
+                        closeAdvFilterModal();
+                    });
                 })
                 .catch(function() { document.getElementById("filterSaveBtn").disabled = false; alert("Failed to save filter."); });
         }
 
-        function applyFilterAction() {
-            var def = readBuilderDef();
-            if (!def.conditions.length) { alert("Add at least one condition."); return; }
-            activeFilter = null;
-            activateOrPrompt(def);
-        }
-
-        function clearFilterAction() {
-            clearFilter();
-            openFilterBuilder(null);
-        }
-
         function openAdvFilterModal() {
             document.getElementById("advFilterModal").classList.add("open");
-            loadSavedFilters();
-            openFilterBuilder(activeFilter);
+            loadSavedFilters().then(function() {
+                if (activeFilter && activeFilter.conditions && activeFilter.conditions.length) {
+                    openFilterBuilder(activeFilter);
+                } else {
+                    openFilterBuilder(null);
+                }
+            });
         }
 
         function closeAdvFilterModal() {
@@ -954,16 +1009,49 @@
         });
 
         document.getElementById("addCondBtn").addEventListener("click", function() { addFilterRow({}); });
-        document.getElementById("useSavedBtn").addEventListener("click", useSavedFilter);
-        document.getElementById("loadSavedBtn").addEventListener("click", loadSavedFilterToBuilder);
         document.getElementById("deleteSavedBtn").addEventListener("click", deleteSavedFilter);
-        document.getElementById("filterApplyBtn").addEventListener("click", applyFilterAction);
         document.getElementById("filterSaveBtn").addEventListener("click", saveFilterAction);
-        document.getElementById("filterClearBtn").addEventListener("click", clearFilterAction);
 
-        // Filter button always opens the advanced filter dialog
-        document.getElementById("filterBtn").addEventListener("click", function () {
+        document.getElementById("savedFilterSelect").addEventListener("change", function() {
+            var f = selectedSavedFilter();
+            if (f && f.def) openFilterBuilder(f.def);
+        });
+
+        // Edit filters button opens the advanced filter dialog
+        document.getElementById("editFiltersBtn").addEventListener("click", function () {
             openAdvFilterModal();
+        });
+
+        // Filter dropdown population
+        function populateFilterDropdown() {
+            var sel = document.getElementById("filterSelect");
+            while (sel.options.length > 1) sel.remove(1);
+            savedFilters.forEach(function(f) {
+                var opt = document.createElement("option");
+                opt.value = f.id;
+                opt.textContent = f.name + (f.user ? " (" + f.user + ")" : "");
+                sel.appendChild(opt);
+            });
+        }
+
+        // Filter dropdown change handler
+        document.getElementById("filterSelect").addEventListener("change", function () {
+            var selectedId = this.value;
+            if (!selectedId) {
+                clearFilter();
+                return;
+            }
+            var filter = savedFilters.find(function(f) { return f.id === selectedId; });
+            if (!filter || !filter.def) return;
+            var def = filter.def;
+            var hasParams = def.conditions && def.conditions.some(function(c) { return c.value === '?'; });
+            if (hasParams) {
+                paramOnDone = function(values) { activateFilterWithValues(def, values); };
+                currentParamFilterId = selectedId;
+                promptFilterParams(def);
+            } else {
+                activateFilterWithValues(def, []);
+            }
         });
 
         // optional static filter expression from the _views config seeds the active filter
@@ -975,7 +1063,6 @@
             if (!hasParams) {
                 activeFilter = { name: null, conditions: staticDef.conditions, chains: staticDef.chains };
                 filterActive = true;
-                showActiveFilter();
             }
         }
         {{end}}
@@ -1035,7 +1122,7 @@
         });
         {{end}}
 
-        render();
+        loadSavedFilters().then(function() { render(); }).catch(function() { render(); });
 
         // delete record
         async function deleteRecord(collName, id) {

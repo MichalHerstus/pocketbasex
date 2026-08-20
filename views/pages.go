@@ -116,9 +116,10 @@ type TabulatorPageData struct {
 	ColumnHeaders  []string
 	FieldsJSON     string
 	FieldTypesJSON string
-	HeadersJSON    string
-	RecordsJSON    string
-	PerPage        int
+	HeadersJSON      string
+	RecordsJSON      string
+	FieldOptionsJSON string
+	PerPage          int
 	Page           int
 	TotalPages     int
 	Config         TabulatorConfig
