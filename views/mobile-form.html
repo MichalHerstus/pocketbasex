@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>{{.Title}} - Form</title>
+    <link rel="stylesheet" href="/assets/theme.css">
+    <link rel="stylesheet" href="/assets/mobile.css">
+</head>
+<body data-theme="{{.Theme}}">
+    <div class="m-topbar">
+        <h1>{{.Title}}{{if .ViewOnly}} — view{{else if .ID}} — edit{{end}}</h1>
+        <button type="button" id="themeBtn" onclick="toggleTheme()">🌙</button>
+        <a class="btn" href="{{.BasePath}}/app">Close</a>
+    </div>
+
+    <div class="m-content m-form">
+        {{if .Description}}<div class="m-subtitle">{{.Description}}</div>{{end}}
+
+        {{if .SystemFields}}
+        <div class="sys-fields">
+            {{range .SystemFields}}
+            <label><span>{{.Label}}:</span> {{.Value}}</label>
+            {{end}}
+        </div>
+        {{end}}
+
+        <form method="POST" action="{{.BasePath}}/form/{{.ConfigName}}{{if .ID}}/{{.ID}}{{end}}">
+            {{if .Sections}}
+                {{range .Sections}}
+                <h3 class="section-title">{{.CollectionName}}</h3>
+                {{template "formRowLoop" (dict "Rows" .Rows "ViewOnly" $.ViewOnly)}}
+                {{end}}
+            {{else}}
+                {{template "formRowLoop" (dict "Rows" .Rows "ViewOnly" .ViewOnly)}}
+            {{end}}
+            {{if not $.ViewOnly}}
+            <div class="form-actions m-actions">
+                <button type="submit" class="m-submit">Submit</button>
+                <button type="button" class="m-cancel" onclick="goBack()">Cancel</button>
+            </div>
+            {{else}}
+            <div class="m-actions">
+                <a class="m-cancel" href="{{.BasePath}}/tabular/{{.ConfigName}}" style="text-decoration:none;">Back to list</a>
+                {{if .ID}}<a class="m-submit" href="{{.BasePath}}/form/{{.ConfigName}}/{{.ID}}" style="text-decoration:none;">Edit</a>{{end}}
+            </div>
+            {{end}}
+        </form>
+    </div>
+
+    <script>
+    document.addEventListener('DOMContentLoaded', function() {
+        document.querySelectorAll('.json-display').forEach(function(el) {
+            el.innerHTML = el.textContent.replace(/"([^"]+)":/g, '<strong>"$1"</strong>:');
+        });
+    });
+
+    function goBack() {
+        var fallback = "{{.BasePath}}/tabular/{{.ConfigName}}";
+        if (window.history.length > 1) {
+            window.history.back();
+        } else {
+            window.location.href = fallback;
+        }
+    }
+
+    function currentTheme() {
+        var t = localStorage.getItem('pbx-theme');
+        if (t === 'dark' || t === 'light') return t;
+        return document.body.getAttribute('data-theme') || 'light';
+    }
+    function applyTheme(mode) {
+        document.body.setAttribute('data-theme', mode);
+        var btn = document.getElementById('themeBtn');
+        if (btn) btn.textContent = mode === 'dark' ? '☀️' : '🌙';
+    }
+    function toggleTheme() {
+        var next = currentTheme() === 'dark' ? 'light' : 'dark';
+        localStorage.setItem('pbx-theme', next);
+        applyTheme(next);
+        fetch('/api/theme/' + next, { method: 'POST' }).catch(function(){});
+    }
+    applyTheme(currentTheme());
+    </script>
+</body>
+</html>

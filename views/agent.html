@@ -45,7 +45,7 @@
         <button type="button" id="themeBtn" onclick="toggleTheme()" style="padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1.1rem;cursor:pointer;">🌙</button>
         <span class="title">AI agent</span>
         <span id="status" class="status {{if not .Config.Enabled}}bad{{end}}">{{.Status}}</span>
-        <button type="button" onclick="goBack('/app')" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;margin-left:auto;">Close</button>
+        <button type="button" onclick="goBack('{{.BasePath}}/app')" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;margin-left:auto;">Close</button>
     </div>
 
     <div id="chat"></div>

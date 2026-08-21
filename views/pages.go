@@ -61,9 +61,9 @@ type FilterDef struct {
 
 // SavedFilter is a _filters record as returned by the list API.
 type SavedFilter struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	User string `json:"user"`
+	ID   string    `json:"id"`
+	Name string    `json:"name"`
+	User string    `json:"user"`
 	Def  FilterDef `json:"def"`
 }
 
@@ -107,24 +107,25 @@ type ViewFormConfig struct {
 }
 
 type TabulatorPageData struct {
-	Theme          string
-	ConfigName     string
-	CollectionName string
-	TotalRecords   int
-	Fields         []string
-	FieldTypes     []string
-	ColumnHeaders  []string
-	FieldsJSON     string
-	FieldTypesJSON string
+	Theme            string
+	BasePath         string
+	ConfigName       string
+	CollectionName   string
+	TotalRecords     int
+	Fields           []string
+	FieldTypes       []string
+	ColumnHeaders    []string
+	FieldsJSON       string
+	FieldTypesJSON   string
 	HeadersJSON      string
 	RecordsJSON      string
 	FieldOptionsJSON string
 	PerPage          int
-	Page           int
-	TotalPages     int
-	Config         TabulatorConfig
-	Mssql          *MssqlConfig
-	SetupLinks     bool // render actions to /pbx-setup/record/... editors
+	Page             int
+	TotalPages       int
+	Config           TabulatorConfig
+	Mssql            *MssqlConfig
+	SetupLinks       bool // render actions to /pbx-setup/record/... editors
 }
 
 type FormFieldItem struct {
@@ -177,6 +178,7 @@ type FormConfigJSON struct {
 
 type FormPageData struct {
 	Theme          string
+	BasePath       string
 	ConfigName     string
 	CollectionName string
 	ID             string
@@ -202,19 +204,20 @@ type AppGroup struct {
 }
 
 type AppPageData struct {
-	Theme  string
-	Name   string
-	Error  string
-	Groups []AppGroup
+	Theme    string
+	BasePath string
+	Name     string
+	Error    string
+	Groups   []AppGroup
 }
 
 type PbxSetupPageData struct {
-	Theme        string
-	MssqlDSN     string
-	Agent        AgentConfig
-	Sections     []TabulatorPageData
-	Rules        []SetupCollectionRules
-	Users        []SetupUser
+	Theme    string
+	MssqlDSN string
+	Agent    AgentConfig
+	Sections []TabulatorPageData
+	Rules    []SetupCollectionRules
+	Users    []SetupUser
 }
 
 // SetupUser is a user record shown in the rules editor's user checkbox list.
@@ -227,11 +230,11 @@ type SetupUser struct {
 type RuleMode string
 
 const (
-	RuleModePublic    RuleMode = "public"    // "" (everyone)
-	RuleModeSignedIn  RuleMode = "signedin"  // @request.auth.id != ''
-	RuleModeSelected  RuleMode = "selected"  // OR-chain of selected user ids
-	RuleModeSuper     RuleMode = "super"     // nil (superusers only)
-	RuleModeCustom    RuleMode = "custom"    // raw filter expression
+	RuleModePublic   RuleMode = "public"   // "" (everyone)
+	RuleModeSignedIn RuleMode = "signedin" // @request.auth.id != ''
+	RuleModeSelected RuleMode = "selected" // OR-chain of selected user ids
+	RuleModeSuper    RuleMode = "super"    // nil (superusers only)
+	RuleModeCustom   RuleMode = "custom"   // raw filter expression
 )
 
 // SetupRule holds the UI state for one of the 5 API rules of a collection.
@@ -267,6 +270,7 @@ type AgentConfig struct {
 // AgentPageData backs the /ai agent chat page.
 type AgentPageData struct {
 	Theme    string
+	BasePath string
 	Name     string
 	Config   AgentConfig
 	IsSuper  bool
@@ -291,14 +295,14 @@ type PbxConfigPageData struct {
 // ConfigEditorPageData backs the /pbx-config/view/new|{name} editor form for a
 // unified _views record (holds list + form config in one record).
 type ConfigEditorPageData struct {
-	Theme          string
-	Name           string
-	CollName       string
-	TabulatorJSON  string
-	FormJSON       string
-	MssqlJSON      string
-	Collections    []string
-	IsNew          bool
+	Theme         string
+	Name          string
+	CollName      string
+	TabulatorJSON string
+	FormJSON      string
+	MssqlJSON     string
+	Collections   []string
+	IsNew         bool
 }
 
 // FieldOpt is a single option of a structured JSON field (checkbox option or
@@ -351,26 +355,26 @@ type SetupRecordPageData struct {
 
 // WizardColumn is one editable column in the import wizard preview step.
 type WizardColumn struct {
-	Header   string
-	Field    string
-	Type     string
-	Include  bool
-	Values   string
+	Header  string
+	Field   string
+	Type    string
+	Include bool
+	Values  string
 }
 
 // ImportWizardPageData backs the /pbx-config/import-* wizard.
 type ImportWizardPageData struct {
-	Theme    string
-	Source   string // "excel" | "mssql"
-	Step     int    // 1 = source, 2 = preview, 3 = done
-	Name     string
-	FileName string
-	Sheet    string
-	DSN      string
-	Table    string
-	Import   bool
-	Columns  []WizardColumn
-	Message  string
-	Created  string // created collection name (step 3)
+	Theme     string
+	Source    string // "excel" | "mssql"
+	Step      int    // 1 = source, 2 = preview, 3 = done
+	Name      string
+	FileName  string
+	Sheet     string
+	DSN       string
+	Table     string
+	Import    bool
+	Columns   []WizardColumn
+	Message   string
+	Created   string // created collection name (step 3)
 	CreatedID string
 }

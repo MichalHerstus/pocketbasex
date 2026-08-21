@@ -48,7 +48,7 @@
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">
         <h1 style="margin:0">{{.Title}}{{if .ViewOnly}} — view{{else if .ID}} — edit{{end}}</h1>
         <button type="button" id="themeBtn" onclick="toggleTheme()" style="padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1.1rem;cursor:pointer;">🌙</button>
-        <button type="button" onclick="goBack('/app')" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;margin-left:auto;">Close</button>
+        <button type="button" onclick="goBack('{{.BasePath}}/app')" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;margin-left:auto;">Close</button>
     </div>
 
     {{if .Description}}<p>{{.Description}}</p>{{end}}
@@ -196,7 +196,7 @@
     {{end}}
     {{end}}
 
-    <form method="POST" action="/form/{{.ConfigName}}{{if .ID}}/{{.ID}}{{end}}">
+    <form method="POST" action="{{.BasePath}}/form/{{.ConfigName}}{{if .ID}}/{{.ID}}{{end}}">
         {{if .Sections}}
             {{range .Sections}}
             <h3 class="section-title">{{.CollectionName}}</h3>
@@ -208,7 +208,7 @@
         {{if not $.ViewOnly}}
         <div class="form-actions">
             <button type="submit">Submit</button>
-            <button type="button" onclick="goBack('/app')">Cancel</button>
+            <button type="button" onclick="goBack('{{.BasePath}}/app')">Cancel</button>
         </div>
         {{end}}
     </form>

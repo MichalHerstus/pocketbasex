@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>PBX</title>
+    <link rel="stylesheet" href="/assets/theme.css">
+    <link rel="stylesheet" href="/assets/mobile.css">
+</head>
+<body data-theme="{{.Theme}}">
+    <div class="m-topbar">
+        <h1>PBX<span class="m-sub">{{if .Name}}{{.Name}}{{else}}{{if .Error}}not signed in{{end}}{{end}}</span></h1>
+        <button type="button" id="themeBtn" onclick="toggleTheme()">🌙</button>
+        <a class="btn" href="/logout">Logout</a>
+    </div>
+
+    <div class="m-content">
+        {{if .Error}}
+        <div class="m-card">
+            <div class="m-card-row">
+                <div class="m-card-value" style="color:var(--muted)">Please sign in</div>
+            </div>
+        </div>
+        {{end}}
+
+        {{range .Groups}}
+        <div class="m-group-card">
+            <div class="m-group-head">{{if .GroupIcon}}<img src="{{.GroupIcon}}">{{end}}{{.GroupLabel}}</div>
+            <ul class="m-app-links">
+                {{range .Links}}
+                <li><a href="{{.URL}}">{{.Label}}</a></li>
+                {{end}}
+            </ul>
+        </div>
+        {{end}}
+
+        <div class="m-group-card">
+            <div class="m-group-head">Assistent</div>
+            <ul class="m-app-links">
+                <li><a href="{{.BasePath}}/ai">AI agent</a></li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        function currentTheme() {
+            var t = localStorage.getItem('pbx-theme');
+            if (t === 'dark' || t === 'light') return t;
+            return document.body.getAttribute('data-theme') || 'light';
+        }
+        function applyTheme(mode) {
+            document.body.setAttribute('data-theme', mode);
+            var btn = document.getElementById('themeBtn');
+            if (btn) btn.textContent = mode === 'dark' ? '☀️' : '🌙';
+        }
+        function toggleTheme() {
+            var next = currentTheme() === 'dark' ? 'light' : 'dark';
+            localStorage.setItem('pbx-theme', next);
+            applyTheme(next);
+            fetch('/api/theme/' + next, { method: 'POST' }).catch(function(){});
+        }
+        applyTheme(currentTheme());
+    </script>
+</body>
+</html>

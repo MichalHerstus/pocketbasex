@@ -1,0 +1,500 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>{{if .Config.PageTitle}}{{.Config.PageTitle}}{{else}}{{.CollectionName}}{{end}}</title>
+    <link rel="stylesheet" href="/assets/theme.css">
+    <link rel="stylesheet" href="/assets/mobile.css">
+</head>
+<body data-theme="{{.Theme}}">
+    <div class="m-topbar">
+        <h1>{{if .Config.PageTitle}}{{.Config.PageTitle}}{{else}}{{.CollectionName}}{{end}}<span class="m-sub" id="recordCount">&nbsp;</span></h1>
+        <button type="button" id="themeBtn" onclick="toggleTheme()">🌙</button>
+        <a class="btn" href="{{.BasePath}}/app">Close</a>
+    </div>
+
+    <div class="m-content">
+        {{if .Config.CollectionDescr}}<div class="m-subtitle">{{.Config.CollectionDescr}}</div>{{end}}
+
+        {{if .Config.SearchBox}}
+        <div class="m-search">
+            <input type="text" id="searchInput" placeholder="Search…">
+            <button id="searchClearBtn" class="m-clear" title="Clear search">&times;</button>
+        </div>
+        {{end}}
+
+        <div class="m-filterbar">
+            <select id="filterSelect">
+                <option value="">-- All records --</option>
+            </select>
+            <select id="sortSelect" title="Sort by">
+                <option value="">Sort…</option>
+            </select>
+        </div>
+
+        <div id="recordsList"></div>
+
+        {{if .Config.Pagination}}
+        <div class="m-pagination" id="pagination">
+            <button id="firstBtn">«</button>
+            <button id="prevBtn">‹</button>
+            <input type="text" id="pageInput" inputmode="numeric">
+            <button id="nextBtn">›</button>
+            <button id="lastBtn">»</button>
+            <span class="m-info" id="pageInfo"></span>
+        </div>
+        {{end}}
+    </div>
+
+    <a class="m-fab" href="{{.BasePath}}/form/{{.ConfigName}}">+</a>
+
+    <!-- parameter prompt modal -->
+    <div class="m-modal-overlay" id="paramModal">
+        <div class="m-modal">
+            <h3 id="paramTitle">Fill filter parameters</h3>
+            <div id="paramBody"></div>
+            <div class="m-modal-actions">
+                <button type="button" class="m-cancel" onclick="cancelParamPrompt()">Cancel</button>
+                <button type="button" class="m-use" onclick="useParamPrompt()">Use filter</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="m-toast" id="toast"></div>
+
+    <script>
+        const fields = {{.FieldsJSON | safeJS}};
+        const fieldTypes = {{.FieldTypesJSON | safeJS}};
+        const headers = {{.HeadersJSON | safeJS}};
+        const allRecords = {{.RecordsJSON | safeJS}};
+        const fieldOptions = {{.FieldOptionsJSON | safeJS}};
+        const basePath = "{{.BasePath}}";
+        const configName = "{{.ConfigName}}";
+
+        const perPage = 20;
+        let currentPage = 1;
+        let sortField = "";
+        let sortDir = "";
+        let searchTerm = "";
+        let savedFilters = [];
+        let filterActive = false;
+        let activeFilter = null;
+        let filterValues = [];
+        let pendingDef = null;
+
+        function esc(s) {
+            if (s == null) return "";
+            const d = document.createElement("div");
+            d.textContent = String(s);
+            return d.innerHTML;
+        }
+
+        function getFieldType(name) {
+            var i = fields.indexOf(name);
+            return i === -1 ? null : fieldTypes[i];
+        }
+        function getColumnTitle(name) {
+            var i = fields.indexOf(name);
+            return (i === -1 || i >= headers.length) ? name : (headers[i] || name);
+        }
+
+        function renderCell(val, ft) {
+            switch (ft) {
+                case "number":
+                    if (val === null || val === undefined) return "";
+                    return Number(val).toLocaleString();
+                case "bool":
+                    if (val === true) return '<span class="bool-true">✓</span>';
+                    if (val === false) return '<span class="bool-false">✗</span>';
+                    return '<span class="bool-empty">—</span>';
+                case "url":
+                    if (!val) return "";
+                    var url = String(val);
+                    var label = url.split('/').filter(Boolean).pop() || url;
+                    return '<a href="' + esc(url) + '" target="_blank">' + esc(label) + '</a>';
+                case "editor":
+                    if (!val) return "";
+                    var txt = val.replace(/<[^>]*>/g, '');
+                    return txt.length > 40 ? esc(txt.substring(0, 40)) + '…' : esc(txt);
+                case "email":
+                case "select":
+                case "text":
+                default:
+                    return esc(val || "");
+            }
+        }
+
+        function coerceValue(val, fieldType) {
+            if (fieldType === 'number') {
+                var n = parseFloat(val);
+                return isNaN(n) ? null : n;
+            }
+            if (fieldType === 'date' || fieldType === 'autodate') return val ? val.trim() : '';
+            return String(val);
+        }
+        function compareValues(recordVal, filterVal, op, fieldType) {
+            if (fieldType === 'number') {
+                var rv = (recordVal == null) ? null : parseFloat(recordVal);
+                var fv = (filterVal == null) ? null : parseFloat(filterVal);
+                if (rv === null && op === '!=') return true;
+                if (fv === null) return false;
+                if (rv === null) return op === '!=';
+                switch (op) {
+                    case '<': return rv < fv;
+                    case '>': return rv > fv;
+                    case '<=': return rv <= fv;
+                    case '>=': return rv >= fv;
+                    case '!=': return rv !== fv;
+                    case '=': return rv === fv;
+                    default: return false;
+                }
+            }
+            if (fieldType === 'date' || fieldType === 'autodate') {
+                var rs = recordVal ? String(recordVal).trim() : '';
+                var fs = filterVal ? String(filterVal).trim() : '';
+                switch (op) {
+                    case '<': return rs < fs;
+                    case '>': return rs > fs;
+                    case '<=': return rs <= fs;
+                    case '>=': return rs >= fs;
+                    case '!=': return rs !== fs;
+                    case '=': return rs === fs;
+                    default: return false;
+                }
+            }
+            var rs2 = recordVal != null ? String(recordVal).toLowerCase() : '';
+            var fs2 = filterVal != null ? String(filterVal).toLowerCase() : '';
+            switch (op) {
+                case '=': return rs2 === fs2;
+                case '!=': return rs2 !== fs2;
+                case '~': return fs2 !== '' && rs2.indexOf(fs2) !== -1;
+                case '<': return rs2 < fs2;
+                case '>': return rs2 > fs2;
+                case '<=': return rs2 <= fs2;
+                case '>=': return rs2 >= fs2;
+                default: return false;
+            }
+        }
+        function evaluateFilter(record, parsed) {
+            if (!parsed || !parsed.conditions || !parsed.conditions.length) return true;
+            var results = [];
+            for (var c = 0; c < parsed.conditions.length; c++) {
+                var cond = parsed.conditions[c];
+                var ft = getFieldType(cond.field);
+                if (!ft) { results.push(false); continue; }
+                var recVal = record[cond.field];
+                var fVal = cond.value === '?' ? filterValues[c] : cond.value;
+                if (fVal === undefined || fVal === null) fVal = '';
+                results.push(compareValues(recVal, coerceValue(fVal, ft), cond.op, ft));
+            }
+            var finalResult = results[0];
+            for (var k = 0; k < parsed.chains.length; k++) {
+                if (parsed.chains[k] === 'or' || parsed.chains[k] === '||') finalResult = finalResult || results[k + 1];
+                else finalResult = finalResult && results[k + 1];
+            }
+            return finalResult;
+        }
+
+        function getFiltered() {
+            var data = allRecords;
+            if (searchTerm) {
+                var st = searchTerm.toLowerCase();
+                data = data.filter(function(r) {
+                    return fields.some(function(f, i) {
+                        var ft = fieldTypes[i];
+                        if (ft === "file" || ft === "relation" || ft === "geo") return false;
+                        var raw = r[f];
+                        if (raw == null) return false;
+                        var txt = "";
+                        if (ft === "number") txt = String(raw);
+                        else if (ft === "bool") txt = raw ? "true" : "false";
+                        else txt = String(raw);
+                        return txt.toLowerCase().indexOf(st) !== -1;
+                    });
+                });
+            }
+            if (filterActive && activeFilter && activeFilter.conditions.length) {
+                data = data.filter(function(r) { return evaluateFilter(r, activeFilter); });
+            }
+            if (sortField && sortDir) {
+                data = data.slice().sort(function(a, b) {
+                    var va = a[sortField];
+                    var vb = b[sortField];
+                    if (va == null && vb == null) return 0;
+                    if (va == null) return 1;
+                    if (vb == null) return -1;
+                    if (typeof va === "number" && typeof vb === "number") {
+                        return sortDir === "asc" ? va - vb : vb - va;
+                    }
+                    var sa = String(va).toLowerCase();
+                    var sb = String(vb).toLowerCase();
+                    if (sa < sb) return sortDir === "asc" ? -1 : 1;
+                    if (sa > sb) return sortDir === "asc" ? 1 : -1;
+                    return 0;
+                });
+            }
+            return data;
+        }
+
+        function cardHTML(r) {
+            var shown = 0;
+            var rows = "";
+            for (var i = 0; i < fields.length && shown < 3; i++) {
+                var raw = r[fields[i]];
+                if (raw == null || raw === false || raw === "") continue;
+                var ft = fieldTypes[i];
+                if (ft === "file" || ft === "relation" || ft === "geo") continue;
+                rows += '<div class="m-card-row"><div class="m-card-label">' + esc(getColumnTitle(fields[i])) + '</div>' +
+                    '<div class="m-card-value">' + renderCell(raw, ft) + '</div></div>';
+                shown++;
+            }
+            var extra = fields && fields.length && fields.reduce(function(n, f, i) {
+                var raw = r[f];
+                var ft = fieldTypes[i];
+                if (ft === "file" || ft === "relation" || ft === "geo") return n;
+                return (raw != null && raw !== false && raw !== "") ? n + 1 : n;
+            }, 0) - shown;
+            var more = extra > 0 ? '<div class="m-more">+' + extra + ' more</div>' : '';
+            if (!rows) rows = '<div class="m-card-row"><div class="m-card-value" style="color:var(--empty)">(no data)</div></div>';
+            return '<div class="m-card">' + rows + more +
+                '<div class="m-card-actions">' +
+                '<a class="m-action-view" href="' + basePath + '/form/' + configName + '/' + r.id + '?view=1">View</a>' +
+                '<a class="m-action-edit" href="' + basePath + '/form/' + configName + '/' + r.id + '">Edit</a>' +
+                '<button type="button" class="m-action-del" onclick="deleteRecord(\'' + r.id + '\')">Delete</button>' +
+                '</div></div>';
+        }
+
+        function render() {
+            var filtered = getFiltered();
+            var totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
+            if (currentPage > totalPages) currentPage = totalPages;
+            if (currentPage < 1) currentPage = 1;
+            var start = (currentPage - 1) * perPage;
+            var pageRecords = filtered.slice(start, start + perPage);
+
+            var el = document.getElementById("recordsList");
+            if (!pageRecords.length) {
+                el.innerHTML = '<div class="m-card"><div class="m-card-row"><div class="m-card-value" style="color:var(--empty)">No records found</div></div></div>';
+            } else {
+                el.innerHTML = pageRecords.map(cardHTML).join("");
+            }
+            var rc = document.getElementById("recordCount");
+            if (rc) rc.textContent = filtered.length + " record" + (filtered.length === 1 ? "" : "s");
+
+            var pag = document.getElementById("pagination");
+            if (pag) {
+                document.getElementById("firstBtn").disabled = currentPage <= 1;
+                document.getElementById("prevBtn").disabled = currentPage <= 1;
+                document.getElementById("nextBtn").disabled = currentPage >= totalPages;
+                document.getElementById("lastBtn").disabled = currentPage >= totalPages;
+                document.getElementById("pageInput").value = currentPage;
+                document.getElementById("pageInfo").textContent = "Page " + currentPage + " of " + totalPages;
+            }
+        }
+
+        // ---- search ----
+        {{if .Config.SearchBox}}
+        document.getElementById("searchInput").addEventListener("input", function () {
+            searchTerm = this.value;
+            currentPage = 1;
+            render();
+        });
+        document.getElementById("searchClearBtn").addEventListener("click", function () {
+            document.getElementById("searchInput").value = "";
+            searchTerm = "";
+            currentPage = 1;
+            render();
+        });
+        {{end}}
+
+        // ---- sort ----
+        var sortSel = document.getElementById("sortSelect");
+        for (var si = 0; si < fields.length; si++) {
+            var so = document.createElement("option");
+            so.value = fields[si];
+            so.textContent = getColumnTitle(fields[si]);
+            sortSel.appendChild(so);
+        }
+        sortSel.addEventListener("change", function () {
+            if (!this.value) { sortField = ""; sortDir = ""; currentPage = 1; render(); return; }
+            if (this.value === sortField) {
+                sortDir = sortDir === "asc" ? "desc" : "asc";
+            } else {
+                sortField = this.value;
+                sortDir = "asc";
+            }
+            currentPage = 1;
+            render();
+        });
+
+        // ---- saved filters ----
+        function loadSavedFilters() {
+            return fetch("/api/filters/" + configName, { credentials: "same-origin" })
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    savedFilters = (data && data.filters) || [];
+                    var sel = document.getElementById("filterSelect");
+                    while (sel.options.length > 1) sel.remove(1);
+                    savedFilters.forEach(function(f) {
+                        var opt = document.createElement("option");
+                        opt.value = f.id;
+                        opt.textContent = f.name + (f.user ? " (" + f.user + ")" : "");
+                        sel.appendChild(opt);
+                    });
+                    return savedFilters;
+                });
+        }
+
+        document.getElementById("filterSelect").addEventListener("change", function () {
+            var selectedId = this.value;
+            if (!selectedId) {
+                filterActive = false;
+                activeFilter = null;
+                filterValues = [];
+                currentPage = 1;
+                render();
+                return;
+            }
+            var filter = savedFilters.find(function(f) { return f.id === selectedId; });
+            if (!filter || !filter.def) return;
+            var def = filter.def;
+            if (def.conditions && def.conditions.some(function(c) { return c.value === '?'; })) {
+                pendingDef = def;
+                openParamPrompt(def);
+            } else {
+                filterValues = [];
+                activeFilter = def;
+                filterActive = true;
+                currentPage = 1;
+                render();
+            }
+        });
+
+        function openParamPrompt(def) {
+            var params = [];
+            def.conditions.forEach(function(c) { if (c.value === '?') params.push(c); });
+            document.getElementById("paramTitle").textContent = "Fill filter parameters" + (def.name ? " — " + def.name : "");
+            var html = '';
+            params.forEach(function(p, idx) {
+                html += '<div class="m-param-group"><label>' + esc(getColumnTitle(p.field)) + ' ' + esc(p.op) + '</label>';
+                var ft = getFieldType(p.field);
+                if (ft === 'bool') {
+                    html += '<select id="paramInput' + idx + '"><option value="true">true</option><option value="false">false</option></select>';
+                } else if (ft === 'number') {
+                    html += '<input type="number" id="paramInput' + idx + '" step="any">';
+                } else if (ft === 'date' || ft === 'autodate') {
+                    html += '<input type="datetime-local" id="paramInput' + idx + '">';
+                } else if (ft === 'select') {
+                    var opts = fieldOptions[p.field] || [];
+                    html += '<select id="paramInput' + idx + '"><option value=""></option>';
+                    opts.forEach(function(v) { html += '<option value="' + esc(v) + '">' + esc(v) + '</option>'; });
+                    html += '</select>';
+                } else {
+                    html += '<input type="text" id="paramInput' + idx + '">';
+                }
+                html += '</div>';
+            });
+            document.getElementById("paramBody").innerHTML = html;
+            document.getElementById("paramModal").classList.add("open");
+        }
+
+        function useParamPrompt() {
+            if (!pendingDef) return;
+            var values = [];
+            var vi = 0;
+            pendingDef.conditions.forEach(function(c, idx) {
+                if (c.value !== '?') { values.push(null); return; }
+                var el = document.getElementById("paramInput" + vi);
+                var v = el ? el.value : '';
+                var ft = getFieldType(c.field);
+                if (ft === 'date' || ft === 'autodate') v = v.replace('T', ' ');
+                values.push(v);
+                vi++;
+            });
+            filterValues = values;
+            activeFilter = pendingDef;
+            filterActive = true;
+            pendingDef = null;
+            currentPage = 1;
+            document.getElementById("paramModal").classList.remove("open");
+            render();
+        }
+        function cancelParamPrompt() {
+            pendingDef = null;
+            var sel = document.getElementById("filterSelect");
+            if (sel) sel.value = "";
+            document.getElementById("paramModal").classList.remove("open");
+        }
+
+        // ---- delete ----
+        function deleteRecord(id) {
+            if (!confirm("Really delete selected record?")) return;
+            fetch(basePath + "/form/" + configName + "/" + id + "/delete", { method: "POST" })
+                .then(function(res) {
+                    if (!res.ok) throw new Error();
+                    var idx = allRecords.findIndex(function(r) { return r.id === id; });
+                    if (idx !== -1) allRecords.splice(idx, 1);
+                    render();
+                    toast("Record deleted.");
+                })
+                .catch(function() { toast("Failed to delete record."); });
+        }
+
+        function toast(msg) {
+            var t = document.getElementById("toast");
+            t.textContent = msg;
+            t.classList.add("show");
+            setTimeout(function() { t.classList.remove("show"); }, 2000);
+        }
+
+        // show success message passed via ?msg=
+        var sp = new URLSearchParams(window.location.search);
+        var smsg = sp.get("msg");
+        if (smsg) {
+            toast(smsg);
+            sp.delete("msg");
+            var newUrl = window.location.pathname + (sp.toString() ? "?" + sp.toString() : "");
+            window.history.replaceState({}, "", newUrl);
+        }
+
+        // ---- pagination ----
+        {{if .Config.Pagination}}
+        document.getElementById("firstBtn").addEventListener("click", function () { currentPage = 1; render(); });
+        document.getElementById("prevBtn").addEventListener("click", function () { if (currentPage > 1) currentPage--; render(); });
+        document.getElementById("nextBtn").addEventListener("click", function () { currentPage++; render(); });
+        document.getElementById("lastBtn").addEventListener("click", function () { currentPage = 999999; render(); });
+        document.getElementById("pageInput").addEventListener("change", function () {
+            var p = parseInt(this.value, 10);
+            if (isNaN(p) || p < 1) p = 1;
+            currentPage = p;
+            render();
+        });
+        {{end}}
+
+        // ---- theme ----
+        function currentTheme() {
+            var t = localStorage.getItem('pbx-theme');
+            if (t === 'dark' || t === 'light') return t;
+            return document.body.getAttribute('data-theme') || 'light';
+        }
+        function applyTheme(mode) {
+            document.body.setAttribute('data-theme', mode);
+            var btn = document.getElementById('themeBtn');
+            if (btn) btn.textContent = mode === 'dark' ? '☀️' : '🌙';
+        }
+        function toggleTheme() {
+            var next = currentTheme() === 'dark' ? 'light' : 'dark';
+            localStorage.setItem('pbx-theme', next);
+            applyTheme(next);
+            fetch('/api/theme/' + next, { method: 'POST' }).catch(function(){});
+        }
+        applyTheme(currentTheme());
+
+        document.addEventListener('DOMContentLoaded', function() {
+            render();
+            loadSavedFilters().catch(function() {}).then(function() { render(); });
+        });
+    </script>
+</body>
+</html>

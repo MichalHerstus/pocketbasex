@@ -26,8 +26,8 @@ import (
 	"github.com/pocketbase/pocketbase/tools/filesystem"
 	"github.com/pocketbase/pocketbase/tools/hook"
 	"github.com/pocketbase/pocketbase/tools/inflector"
-	"github.com/pocketbase/pocketbase/tools/security"
 	"github.com/pocketbase/pocketbase/tools/search"
+	"github.com/pocketbase/pocketbase/tools/security"
 
 	"pbx/pbai"
 	"pbx/pbexcel"
@@ -184,6 +184,31 @@ func main() {
 			// delete record
 			se.Router.POST("/form/{configName}/{id}/delete", func(e *core.RequestEvent) error {
 				return handleDeleteRecord(e)
+			})
+			// mobile views (phone/tablet)
+			se.Router.GET("/mobile/app", func(e *core.RequestEvent) error {
+				return handleMobileApp(e)
+			})
+			se.Router.GET("/mobile/tabular/{configName}", func(e *core.RequestEvent) error {
+				return handleMobileTabulator(e)
+			})
+			se.Router.GET("/mobile/form/{configName}", func(e *core.RequestEvent) error {
+				return handleMobileForm(e)
+			})
+			se.Router.GET("/mobile/form/{configName}/{id}", func(e *core.RequestEvent) error {
+				return handleMobileForm(e)
+			})
+			se.Router.POST("/mobile/form/{configName}", func(e *core.RequestEvent) error {
+				return handleMobileFormPost(e)
+			})
+			se.Router.POST("/mobile/form/{configName}/{id}", func(e *core.RequestEvent) error {
+				return handleMobileFormPost(e)
+			})
+			se.Router.POST("/mobile/form/{configName}/{id}/delete", func(e *core.RequestEvent) error {
+				return handleDeleteRecord(e)
+			})
+			se.Router.GET("/mobile/ai", func(e *core.RequestEvent) error {
+				return handleMobileAi(e)
 			})
 			// JSON data for relation modal
 			se.Router.GET("/api/tabulator-data/{collectionName}", func(e *core.RequestEvent) error {
@@ -357,6 +382,38 @@ func printPbxEndpoints(se *core.ServeEvent) {
 // --- App ---
 
 func handleApp(e *core.RequestEvent) error {
+	if isMobile(e.Request) {
+		return e.Redirect(http.StatusFound, "/mobile/app")
+	}
+	data, signedIn, err := buildAppData(e, "")
+	if err != nil {
+		return e.InternalServerError("Failed to fetch app records", err)
+	}
+	if !signedIn {
+		data.Error = "Please sign in"
+	}
+
+	e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	return templates.ExecuteTemplate(e.Response, "app.html", data)
+}
+
+// handleMobileApp renders the dashboard for mobile browsers.
+func handleMobileApp(e *core.RequestEvent) error {
+	data, signedIn, err := buildAppData(e, "/mobile")
+	if err != nil {
+		return e.InternalServerError("Failed to fetch app records", err)
+	}
+	if !signedIn {
+		data.Error = "Please sign in"
+	}
+
+	e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	return templates.ExecuteTemplate(e.Response, "mobile-app.html", data)
+}
+
+// buildAppData loads the _app records and groups them for the dashboard.
+// linkURLs are prefixed with basePath ("" for desktop, "/mobile" for mobile).
+func buildAppData(e *core.RequestEvent, basePath string) (views.AppPageData, bool, error) {
 	var userName string
 	signedIn := false
 
@@ -374,7 +431,7 @@ func handleApp(e *core.RequestEvent) error {
 
 	appRecs, recErr := e.App.FindAllRecords("_app")
 	if recErr != nil {
-		return e.InternalServerError("Failed to fetch app records", recErr)
+		return views.AppPageData{Theme: getThemeMode(e.App), BasePath: basePath}, signedIn, recErr
 	}
 
 	appColl, _ := e.App.FindCachedCollectionByNameOrId("_app")
@@ -429,7 +486,7 @@ func handleApp(e *core.RequestEvent) error {
 		g.Links = append(g.Links, views.AppLink{
 			Collection: ent.collection,
 			Label:      ent.label,
-			URL:        "/tabular/" + linkURL,
+			URL:        basePath + "/tabular/" + linkURL,
 		})
 	}
 
@@ -438,17 +495,12 @@ func handleApp(e *core.RequestEvent) error {
 		grouped = append(grouped, *groups[g])
 	}
 
-	data := views.AppPageData{
-		Theme:  getThemeMode(e.App),
-		Name:   userName,
-		Groups: grouped,
-	}
-	if !signedIn {
-		data.Error = "Please sign in"
-	}
-
-	e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
-	return templates.ExecuteTemplate(e.Response, "app.html", data)
+	return views.AppPageData{
+		Theme:    getThemeMode(e.App),
+		BasePath: basePath,
+		Name:     userName,
+		Groups:   grouped,
+	}, signedIn, nil
 }
 
 // --- Login ---
@@ -479,6 +531,15 @@ func handleLoginPost(e *core.RequestEvent) error {
 				HttpOnly: true,
 				Secure:   false,
 			})
+			viewName := record.GetString("_view")
+			if viewName != "" {
+				if _, _, err := resolveListConfig(e, viewName); err == nil {
+					if isMobile(e.Request) {
+						return e.Redirect(http.StatusSeeOther, "/mobile/tabular/"+viewName)
+					}
+					return e.Redirect(http.StatusSeeOther, "/tabular/"+viewName)
+				}
+			}
 			return e.Redirect(http.StatusSeeOther, "/app")
 		}
 	}
@@ -941,22 +1002,22 @@ func buildTabulatorData(e *core.RequestEvent, collName string, configRec *core.R
 	}
 
 	return &views.TabulatorPageData{
-		Theme:          getThemeMode(e.App),
-		CollectionName: collName,
-		TotalRecords:   len(records),
-		Fields:         fieldNames,
-		FieldTypes:     fieldTypes,
-		ColumnHeaders:  visibleHeaders,
-		FieldsJSON:     string(fieldsJSON),
-		FieldTypesJSON: string(fieldTypesJSON),
+		Theme:            getThemeMode(e.App),
+		CollectionName:   collName,
+		TotalRecords:     len(records),
+		Fields:           fieldNames,
+		FieldTypes:       fieldTypes,
+		ColumnHeaders:    visibleHeaders,
+		FieldsJSON:       string(fieldsJSON),
+		FieldTypesJSON:   string(fieldTypesJSON),
 		HeadersJSON:      string(headersJSON),
 		RecordsJSON:      string(recordsJSON),
 		FieldOptionsJSON: string(fieldOptionsJSON),
-		PerPage:        20,
-		Page:           1,
-		TotalPages:     totalPages,
-		Config:         cfg,
-		Mssql:          effectiveMssqlConfig(parseMssqlConfig(configRec), getMssqlDSN(e.App)),
+		PerPage:          20,
+		Page:             1,
+		TotalPages:       totalPages,
+		Config:           cfg,
+		Mssql:            effectiveMssqlConfig(parseMssqlConfig(configRec), getMssqlDSN(e.App)),
 	}, nil
 }
 
@@ -976,6 +1037,10 @@ func effectiveMssqlConfig(mc views.MssqlConfig, globalDSN string) *views.MssqlCo
 func handleTabulator(e *core.RequestEvent) error {
 	configName := e.Request.PathValue("configName")
 
+	if isMobile(e.Request) {
+		return e.Redirect(http.StatusFound, "/mobile/tabular/"+configName)
+	}
+
 	collName, configRec, err := resolveListConfig(e, configName)
 	if err != nil {
 		return e.NotFoundError("Configuration not found", err)
@@ -989,6 +1054,26 @@ func handleTabulator(e *core.RequestEvent) error {
 
 	e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	return templates.ExecuteTemplate(e.Response, "tabulator.html", data)
+}
+
+// handleMobileTabulator renders the card-based list for mobile browsers.
+func handleMobileTabulator(e *core.RequestEvent) error {
+	configName := e.Request.PathValue("configName")
+
+	collName, configRec, err := resolveListConfig(e, configName)
+	if err != nil {
+		return e.NotFoundError("Configuration not found", err)
+	}
+
+	data, err := buildTabulatorData(e, collName, configRec)
+	if err != nil {
+		return e.NotFoundError("Collection not found", err)
+	}
+	data.ConfigName = configName
+	data.BasePath = "/mobile"
+
+	e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	return templates.ExecuteTemplate(e.Response, "mobile-tabulator.html", data)
 }
 
 // --- PBX Setup ---
@@ -1549,16 +1634,16 @@ func jsonValueFromSetupForm(e *core.RequestEvent, collection *core.Collection, f
 		return raw, nil
 	}
 
-for _, ff := range sec.Fields {
-			key := prefix + ff.Key
-			switch ff.Type {
-			case "text", "select":
-				v := e.Request.FormValue(key)
-				if v == "" {
-					delete(existing, ff.Key)
-				} else {
-					existing[ff.Key] = v
-				}
+	for _, ff := range sec.Fields {
+		key := prefix + ff.Key
+		switch ff.Type {
+		case "text", "select":
+			v := e.Request.FormValue(key)
+			if v == "" {
+				delete(existing, ff.Key)
+			} else {
+				existing[ff.Key] = v
+			}
 		case "number":
 			v := e.Request.FormValue(key)
 			if v == "" {
@@ -1700,7 +1785,7 @@ func handleTabulatorDataJSON(e *core.RequestEvent) error {
 	}
 
 	return e.JSON(http.StatusOK, map[string]any{
-		"fields": fieldNames,
+		"fields":  fieldNames,
 		"records": allData,
 	})
 }
@@ -2276,7 +2361,7 @@ func isSystemField(name string) bool {
 }
 
 // handleViewForm renders a form for editing a view collection record.
-func handleViewForm(e *core.RequestEvent, configName, recordID string, configRec *core.Record) error {
+func handleViewForm(e *core.RequestEvent, configName, recordID string, configRec *core.Record, basePath string) error {
 	viewColl, err := e.App.FindCachedCollectionByNameOrId(configRec.GetString("_collName"))
 	if err != nil {
 		return e.NotFoundError("View collection not found", err)
@@ -2401,6 +2486,7 @@ func handleViewForm(e *core.RequestEvent, configName, recordID string, configRec
 
 	data := views.FormPageData{
 		Theme:          getThemeMode(e.App),
+		BasePath:       basePath,
 		ConfigName:     configName,
 		CollectionName: viewColl.Name,
 		ID:             recordID,
@@ -2411,12 +2497,17 @@ func handleViewForm(e *core.RequestEvent, configName, recordID string, configRec
 		ViewOnly:       e.Request.URL.Query().Get("view") == "1",
 	}
 
+	tmplName := "form.html"
+	if basePath != "" {
+		tmplName = "mobile-form.html"
+	}
+
 	e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
-	return templates.ExecuteTemplate(e.Response, "form.html", data)
+	return templates.ExecuteTemplate(e.Response, tmplName, data)
 }
 
 // handleViewFormPost saves a view form submission across multiple base collections.
-func handleViewFormPost(e *core.RequestEvent, configName, recordID string, configRec *core.Record) error {
+func handleViewFormPost(e *core.RequestEvent, configName, recordID string, configRec *core.Record, basePath string) error {
 	viewColl, err := e.App.FindCachedCollectionByNameOrId(configRec.GetString("_collName"))
 	if err != nil {
 		return e.NotFoundError("View collection not found", err)
@@ -2516,7 +2607,7 @@ func handleViewFormPost(e *core.RequestEvent, configName, recordID string, confi
 	if recordID != "" {
 		msg = "Record successfully updated."
 	}
-	return e.Redirect(http.StatusSeeOther, "/form/"+configName+"?msg="+url.QueryEscape(msg))
+	return e.Redirect(http.StatusSeeOther, basePath+"/form/"+configName+"?msg="+url.QueryEscape(msg))
 }
 
 // handleViewDelete deletes the main base record for a view collection.
@@ -2548,6 +2639,31 @@ func handleForm(e *core.RequestEvent) error {
 	configName := e.Request.PathValue("configName")
 	recordID := e.Request.PathValue("id")
 
+	if isMobile(e.Request) {
+		target := "/mobile/form/" + configName
+		if recordID != "" {
+			target += "/" + recordID
+		}
+		if e.Request.URL.Query().Get("view") == "1" {
+			target += "?view=1"
+		}
+		return e.Redirect(http.StatusFound, target)
+	}
+
+	return renderFormPage(e, "form.html", "")
+}
+
+// handleMobileForm renders the stacked mobile form (new or edit).
+func handleMobileForm(e *core.RequestEvent) error {
+	return renderFormPage(e, "mobile-form.html", "/mobile")
+}
+
+// renderFormPage loads the shared form data and renders it with the given
+// template (desktop "form.html" or "mobile-form.html") and basePath.
+func renderFormPage(e *core.RequestEvent, tmplName, basePath string) error {
+	configName := e.Request.PathValue("configName")
+	recordID := e.Request.PathValue("id")
+
 	collName, configRec, err := resolveFormConfig(e, configName)
 	if err != nil {
 		return e.NotFoundError("Configuration not found", err)
@@ -2559,7 +2675,7 @@ func handleForm(e *core.RequestEvent) error {
 	}
 
 	if collection.IsView() {
-		return handleViewForm(e, configName, recordID, configRec)
+		return handleViewForm(e, configName, recordID, configRec, basePath)
 	}
 
 	fields := collection.Fields
@@ -2667,10 +2783,10 @@ func handleForm(e *core.RequestEvent) error {
 				continue
 			}
 			item := views.FormFieldItem{
-				Name: fName,
+				Name:  fName,
 				Label: fName,
-				Type: "text",
-				Data: map[string]any{},
+				Type:  "text",
+				Data:  map[string]any{},
 			}
 			if record != nil {
 				if fName == "id" {
@@ -2753,6 +2869,7 @@ func handleForm(e *core.RequestEvent) error {
 
 	data := views.FormPageData{
 		Theme:          getThemeMode(e.App),
+		BasePath:       basePath,
 		ConfigName:     configName,
 		CollectionName: collName,
 		ID:             recordID,
@@ -2765,12 +2882,22 @@ func handleForm(e *core.RequestEvent) error {
 	}
 
 	e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
-	return templates.ExecuteTemplate(e.Response, "form.html", data)
+	return templates.ExecuteTemplate(e.Response, tmplName, data)
 }
 
 // --- Form POST (create/update) ---
 
 func handleFormPost(e *core.RequestEvent) error {
+	return handleFormPostBase(e, "", "/tabular/")
+}
+
+// handleMobileFormPost processes the mobile form submission and redirects back
+// to the mobile tabular view.
+func handleMobileFormPost(e *core.RequestEvent) error {
+	return handleFormPostBase(e, "/mobile", "/mobile/tabular/")
+}
+
+func handleFormPostBase(e *core.RequestEvent, basePath, listPrefix string) error {
 	configName := e.Request.PathValue("configName")
 	recordID := e.Request.PathValue("id")
 
@@ -2785,7 +2912,7 @@ func handleFormPost(e *core.RequestEvent) error {
 	}
 
 	if collection.IsView() {
-		return handleViewFormPost(e, configName, recordID, configRec)
+		return handleViewFormPost(e, configName, recordID, configRec, basePath)
 	}
 
 	var record *core.Record
@@ -2860,7 +2987,7 @@ func handleFormPost(e *core.RequestEvent) error {
 		msg = "Record successfully updated."
 	}
 
-	return e.Redirect(http.StatusSeeOther, "/tabular/"+configName+"?msg="+url.QueryEscape(msg))
+	return e.Redirect(http.StatusSeeOther, listPrefix+configName+"?msg="+url.QueryEscape(msg))
 }
 
 // --- Export ---
@@ -2936,10 +3063,10 @@ func handleMssqlExport(e *core.RequestEvent) error {
 				}
 			} else {
 				return e.JSON(http.StatusConflict, map[string]any{
-					"ok":          false,
+					"ok":           false,
 					"tableMissing": true,
-					"table":       missing.Table,
-					"message":     "Table " + missing.Table + " does not exist on the MSSQL server.",
+					"table":        missing.Table,
+					"message":      "Table " + missing.Table + " does not exist on the MSSQL server.",
 				})
 			}
 		} else {
@@ -3003,6 +3130,15 @@ func handleMssqlIntrospect(e *core.RequestEvent) error {
 
 // handleAgent renders the /ai chat page for a signed-in user.
 func handleAgent(e *core.RequestEvent) error {
+	return renderAgentPage(e, "")
+}
+
+// handleMobileAi renders the /mobile/ai chat page for a signed-in mobile user.
+func handleMobileAi(e *core.RequestEvent) error {
+	return renderAgentPage(e, "/mobile")
+}
+
+func renderAgentPage(e *core.RequestEvent, basePath string) error {
 	cookie, err := e.Request.Cookie("pb_auth")
 	if err != nil {
 		return e.Redirect(http.StatusSeeOther, "/login")
@@ -3019,11 +3155,12 @@ func handleAgent(e *core.RequestEvent) error {
 	}
 
 	data := views.AgentPageData{
-		Theme:   getThemeMode(e.App),
-		Name:    record.GetString("name"),
-		Config:  cfg,
-		IsSuper: record.Collection().Name == "_superusers",
-		Status:  status,
+		Theme:    getThemeMode(e.App),
+		BasePath: basePath,
+		Name:     record.GetString("name"),
+		Config:   cfg,
+		IsSuper:  record.Collection().Name == "_superusers",
+		Status:   status,
 	}
 	e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	return templates.ExecuteTemplate(e.Response, "agent.html", data)
@@ -3153,6 +3290,26 @@ func authRequestInfo(e *core.RequestEvent) (*core.RequestInfo, error) {
 		}
 	}
 	return info, nil
+}
+
+// isMobile reports whether the request comes from a phone or tablet browser
+// based on the User-Agent header. Used to auto-redirect to /mobile/ routes.
+func isMobile(r *http.Request) bool {
+	ua := strings.ToLower(r.UserAgent())
+	mobiles := []string{"iphone", "ipod", "android", "mobile", "windows phone",
+		"blackberry", "opera mini", "opera mobi"}
+	tablets := []string{"ipad", "tablet", "kindle", "silk"}
+	for _, m := range mobiles {
+		if strings.Contains(ua, m) {
+			return true
+		}
+	}
+	for _, t := range tablets {
+		if strings.Contains(ua, t) {
+			return true
+		}
+	}
+	return false
 }
 
 // agentRequestInfo is kept as an alias for the AI agent handlers.

@@ -105,7 +105,7 @@
         <button id="exportBtn" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
             <img src="/assets/Upload-Brackets--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="Export"> Export
         </button>
-        <a href="/form/{{.ConfigName}}" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">+ Add new</a>
+        <a href="{{.BasePath}}/form/{{.ConfigName}}" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">+ Add new</a>
     </div>
 
     <div class="table-wrap">
@@ -416,9 +416,9 @@
                     return "<tr>" +
                         fields.map(function(f, i) { return "<td>" + renderCell(r[f], fieldTypes[i]) + "</td>"; }).join("") +
                         '<td style="white-space:nowrap">' +
-                        '<a href="/form/' + configName + '/' + r.id + '?view=1" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid var(--btn-neutral);border-radius:4px;margin-right:4px;line-height:0">' +
+                        '<a href="{{.BasePath}}/form/' + configName + '/' + r.id + '?view=1" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid var(--btn-neutral);border-radius:4px;margin-right:4px;line-height:0">' +
                         '<img src="/assets/Binocular--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="View"></a>' +
-                        '<a href="/form/' + configName + '/' + r.id + '" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid #007bff;border-radius:4px;margin-right:4px;line-height:0">' +
+                        '<a href="{{.BasePath}}/form/' + configName + '/' + r.id + '" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid #007bff;border-radius:4px;margin-right:4px;line-height:0">' +
                         '<img src="/assets/Arrange-List-Descending-1--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="Edit"></a>' +
                         '<button onclick="deleteRecord(\'' + configName + '\',\'' + r.id + '\')" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid var(--btn-danger);border-radius:4px;cursor:pointer;line-height:0">' +
                         '<img src="/assets/Bin-1--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="Delete"></button>' +
@@ -1127,7 +1127,7 @@
         // delete record
         async function deleteRecord(collName, id) {
             if (!confirm("Really delete selected record?")) return;
-            var res = await fetch("/form/" + collName + "/" + id + "/delete", { method: "POST" });
+            var res = await fetch("{{.BasePath}}/form/" + collName + "/" + id + "/delete", { method: "POST" });
             if (!res.ok) { alert("Failed to delete record."); return; }
             var idx = allRecords.findIndex(function(r) { return r.id === id; });
             if (idx !== -1) allRecords.splice(idx, 1);
