@@ -331,6 +331,10 @@ func main() {
 			se.Router.POST("/ai/chat", func(e *core.RequestEvent) error {
 				return handleAgentChat(e)
 			})
+			// AI agent chat request (SSE streaming variant)
+			se.Router.POST("/ai/chat/stream", func(e *core.RequestEvent) error {
+				return handleAgentChatStream(e)
+			})
 			// AI agent write-op confirmation
 			se.Router.POST("/ai/confirm", func(e *core.RequestEvent) error {
 				return handleAgentConfirm(e)
@@ -3305,6 +3309,55 @@ func handleAgentChat(e *core.RequestEvent) error {
 	return e.JSON(http.StatusOK, result)
 }
 
+// handleAgentChatStream is the SSE variant of handleAgentChat: assistant
+// text deltas stream to the client as they are generated, followed by
+// status notices during tool execution and one final done event carrying
+// the full ChatResult (identical payload to POST /ai/chat).
+func handleAgentChatStream(e *core.RequestEvent) error {
+	var req struct {
+		Messages []pbai.ChatMessage `json:"messages"`
+		File     *pbai.FileInput    `json:"file,omitempty"`
+	}
+	if err := json.NewDecoder(e.Request.Body).Decode(&req); err != nil {
+		return e.BadRequestError("Invalid request body", err)
+	}
+
+	cfg := getAgentConfig(e)
+	if !cfg.Enabled || cfg.BaseURL == "" || cfg.Model == "" {
+		return e.BadRequestError("The AI agent is not configured. Ask a superuser to set it up in /pbx-setup → AI agent.", nil)
+	}
+
+	info, err := agentRequestInfo(e)
+	if err != nil {
+		return e.InternalServerError("Failed to resolve request context", err)
+	}
+
+	fl, ok := e.Response.(http.Flusher)
+	if !ok {
+		return e.InternalServerError("Streaming not supported", nil)
+	}
+
+	e.Response.Header().Set("Content-Type", "text/event-stream")
+	e.Response.Header().Set("Cache-Control", "no-cache")
+	e.Response.Header().Set("X-Accel-Buffering", "no")
+	e.Response.WriteHeader(http.StatusOK)
+
+	writeEvent := func(ev pbai.StreamEvent) {
+		b, merr := json.Marshal(ev)
+		if merr != nil {
+			return
+		}
+		fmt.Fprintf(e.Response, "data: %s\n\n", b)
+		fl.Flush()
+	}
+
+	agent := pbai.NewAgent(e.App, info, cfg)
+	_, err = agent.RunStream(e.Request.Context(), req.Messages, req.File, writeEvent)
+	if err != nil {
+		writeEvent(pbai.StreamEvent{Type: "error", Message: "Agent failed: " + err.Error()})
+	}
+	return nil
+}
 // handleAgentConfirm executes or rejects a pending agent write action.
 func handleAgentConfirm(e *core.RequestEvent) error {
 	var req struct {

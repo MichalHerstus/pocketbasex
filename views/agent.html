@@ -18,6 +18,12 @@
         .msg.assistant { align-self: flex-start; background: #fff; border: 1px solid #e0e0e0; }
         .msg.tool { align-self: center; background: #fff8e1; border: 1px solid #e0c46a; font-size: .85rem; }
         .msg.err { align-self: center; background: #fdecea; border: 1px solid #e0a0a0; color: #a33; }
+        .msg code { background: #f0f2f5; border: 1px solid #e0e0e0; border-radius: 4px; padding: 1px 5px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .85em; }
+        .msg.tbl { align-self: flex-start; max-width: 95%; padding: 0; overflow: auto; max-height: 320px; }
+        .msg.tbl table { width: max-content; min-width: 100%; border-collapse: collapse; background: var(--card-bg, #fff); border-radius: 8px; font-size: .85rem; }
+        .msg.tbl th, .msg.tbl td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #eee; white-space: nowrap; }
+        .msg.tbl th { position: sticky; top: 0; z-index: 1; background: #fafafa; font-weight: 600; font-size: .75rem; text-transform: uppercase; letter-spacing: .03em; color: #555; user-select: none; }
+        .msg.tbl tr:hover td { background: #f0f7ff; }
         .inputbar { padding: 12px 20px; background: #fff; border-top: 1px solid #e0e0e0; display: flex; gap: 8px; align-items: center; }
         .inputbar input[type=text] { flex: 1; padding: 10px 12px; border: 1px solid #ccc; border-radius: 6px; font-size: .9rem; outline: none; }
         .inputbar button { padding: 10px 16px; border: none; border-radius: 6px; font-size: .9rem; cursor: pointer; }
@@ -35,8 +41,13 @@
         .modal .actions button { padding: 8px 16px; border: none; border-radius: 6px; cursor: pointer; font-size: .9rem; }
         .modal .actions .approve { background: #28a745; color: #fff; }
         .modal .actions .reject { background: #dc3545; color: #fff; }
-        .spinner { display: none; font-size: .85rem; color: #888; padding: 8px 0; }
-        .spinner.show { display: block; }
+        .spinner { display: none; font-size: .85rem; color: var(--muted, #888); padding: 8px 20px; align-items: center; }
+        .spinner.show { display: flex; }
+        .spinner .d { display: inline-block; width: 6px; height: 6px; margin-left: 4px; border-radius: 50%; background: currentColor; animation: pulse 1.2s infinite ease-in-out; }
+        .spinner .d:nth-of-type(2) { animation-delay: .15s; }
+        .spinner .d:nth-of-type(3) { animation-delay: .3s; }
+        @keyframes pulse { 0%, 80%, 100% { opacity: .25; transform: scale(.75); } 40% { opacity: 1; transform: scale(1); } }
+        #spinTime { margin-left: 6px; font-variant-numeric: tabular-nums; }
     </style>
     <link rel="stylesheet" href="/assets/theme.css">
 </head>
@@ -45,7 +56,8 @@
         <button type="button" id="themeBtn" onclick="toggleTheme()" style="padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1.1rem;cursor:pointer;">🌙</button>
         <span class="title">AI agent</span>
         <span id="status" class="status {{if not .Config.Enabled}}bad{{end}}">{{.Status}}</span>
-        <button type="button" onclick="goBack('{{.BasePath}}/app')" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;margin-left:auto;">Close</button>
+        <button type="button" onclick="newChat()" style="padding:8px 16px;background:var(--btn-neutral,#6c757d);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;margin-left:auto;">New chat</button>
+        <button type="button" onclick="goBack('{{.BasePath}}/app')" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">Close</button>
     </div>
 
     <div id="chat"></div>
@@ -58,7 +70,7 @@
         <button type="button" class="btn-primary" onclick="send()">Send</button>
     </div>
 
-    <div class="spinner" id="spinner">Thinking…</div>
+    <div class="spinner" id="spinner">Thinking<span class="d"></span><span class="d"></span><span class="d"></span><span id="spinTime"></span></div>
 
     <div class="modal-overlay" id="confirmModal">
         <div class="modal">
@@ -75,15 +87,93 @@
     <script>
         var fileData = null; // {name, mime, data(base64)}
         var pendingAction = null;
+        var chatHistory = []; // conversation turns sent with every request
+        var streaming = null; // {div, text} assistant bubble being streamed
+        var gotAnyText = false;
+        var busy = false;
+
+        var HISTORY_LIMIT = 16; // max turns sent per request (server clamps at 40)
 
         function addMsg(role, text) {
             var chat = document.getElementById('chat');
             var div = document.createElement('div');
             div.className = 'msg ' + role;
-            div.textContent = text;
+            if (role === 'assistant') {
+                div.innerHTML = md(text);
+            } else {
+                div.textContent = text;
+            }
             chat.appendChild(div);
             chat.scrollTop = chat.scrollHeight;
             return div;
+        }
+
+        // esc escapes HTML special characters (always applied before any
+        // markdown transform, so model output can never inject markup).
+        function esc(s) {
+            return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        // md renders a safe subset of markdown in already-escaped text:
+        // `code`, **bold**, and leading "* "/"- " bullets. Newlines are
+        // preserved by the .msg white-space: pre-wrap rule.
+        function md(text) {
+            var h = esc(text);
+            h = h.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+            h = h.replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+            h = h.replace(/(^|\n)[ \t]*\* +/g, '$1\u2022 ');
+            h = h.replace(/(^|\n)[ \t]*- +/g, '$1\u2022 ');
+            return h;
+        }
+
+        // addRecordsTable renders a query_records dataset as a table styled
+        // after the /tabular views (tabulator.html), inside a chat bubble.
+        function addRecordsTable(records) {
+            if (!records || !records.length) return;
+            var cols = [];
+            var seen = {};
+            for (var i = 0; i < records.length; i++) {
+                for (var k in records[i]) {
+                    if (k === 'collectionId' || k === 'collectionName' || seen[k]) continue;
+                    seen[k] = true;
+                    cols.push(k);
+                }
+            }
+            cols.sort(function(a, b) {
+                if (a === 'id') return -1;
+                if (b === 'id') return 1;
+                return a < b ? -1 : a > b ? 1 : 0;
+            });
+            if (!cols.length) return;
+
+            var chat = document.getElementById('chat');
+            var div = document.createElement('div');
+            div.className = 'msg tbl';
+            var table = document.createElement('table');
+            var thead = document.createElement('thead');
+            var hr = document.createElement('tr');
+            cols.forEach(function(c) {
+                var th = document.createElement('th');
+                th.textContent = c;
+                hr.appendChild(th);
+            });
+            thead.appendChild(hr);
+            table.appendChild(thead);
+            var tbody = document.createElement('tbody');
+            records.forEach(function(rec) {
+                var tr = document.createElement('tr');
+                cols.forEach(function(c) {
+                    var td = document.createElement('td');
+                    var v = rec[c];
+                    td.textContent = (v === null || v === undefined) ? '' : (typeof v === 'object' ? JSON.stringify(v) : String(v));
+                    tr.appendChild(td);
+                });
+                tbody.appendChild(tr);
+            });
+            table.appendChild(tbody);
+            div.appendChild(table);
+            chat.appendChild(div);
+            chat.scrollTop = chat.scrollHeight;
         }
 
         function goBack(fallback) {
@@ -127,47 +217,151 @@
                 alert('Please confirm or reject the pending action first.');
                 return;
             }
+            if (busy) return;
+            busy = true;
+            if (text) rememberPrompt(text);
             addMsg('user', text || '(file attached)');
+            chatHistory.push({ role: 'user', content: text });
             input.value = '';
+            gotAnyText = false;
             showSpinner(true);
 
-            var body = {
-                messages: [{ role: 'user', content: text }]
-            };
+            var body = { messages: chatHistory.slice(-HISTORY_LIMIT) };
             if (fileData) {
                 body.file = fileData;
             }
 
-            fetch('/ai/chat', {
+            fetch('/ai/chat/stream', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(body)
             })
-                .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, status: r.status, data: d }; }); })
-                .then(function(res) {
-                    showSpinner(false);
-                    if (!res.ok) {
-                        addMsg('err', res.data.message || 'Request failed (' + res.status + ')');
-                        return;
+                .then(function(r) {
+                    if (!r.ok) {
+                        return r.json().then(function(d) {
+                            fail(d.message || 'Request failed (' + r.status + ')');
+                        });
                     }
-                    renderResult(res.data);
+                    var ct = r.headers.get('content-type') || '';
+                    if (ct.indexOf('text/event-stream') === -1) {
+                        // non-SSE fallback (e.g. plain JSON response)
+                        return r.json().then(function(d) {
+                            showSpinner(false);
+                            renderResult(d, false);
+                            applyResultToHistory(d);
+                            busy = false;
+                        });
+                    }
+                    var reader = r.body.getReader();
+                    var dec = new TextDecoder();
+                    var buf = '';
+                    function pump() {
+                        return reader.read().then(function(res) {
+                            if (res.done) {
+                                endStream();
+                                showSpinner(false);
+                                busy = false;
+                                return;
+                            }
+                            buf += dec.decode(res.value, { stream: true });
+                            var idx;
+                            while ((idx = buf.indexOf('\n\n')) >= 0) {
+                                var raw = buf.slice(0, idx);
+                                buf = buf.slice(idx + 2);
+                                raw.split('\n').forEach(function(line) {
+                                    if (line.slice(0, 5) !== 'data:') return;
+                                    try { handleEvent(JSON.parse(line.slice(5))); } catch (e) {}
+                                });
+                            }
+                            return pump();
+                        });
+                    }
+                    return pump();
                 })
                 .catch(function() {
-                    showSpinner(false);
-                    addMsg('err', 'Network error.');
+                    fail('Network error.');
                 });
         }
 
-        function renderResult(data) {
-            var shown = false;
-            if (data.transcript && data.transcript.length) {
-                for (var i = 0; i < data.transcript.length; i++) {
-                    var m = data.transcript[i];
-                    addMsg(m.role === 'user' ? 'user' : 'assistant', m.content);
-                    shown = true;
+        function fail(message) {
+            endStream();
+            showSpinner(false);
+            addMsg('err', message);
+            busy = false;
+        }
+
+        function handleEvent(ev) {
+            if (ev.type === 'text') {
+                showSpinner(false);
+                gotAnyText = true;
+                if (!streaming) {
+                    streaming = { div: addMsg('assistant', ''), text: '' };
                 }
+                streaming.text += ev.delta;
+                streaming.div.innerHTML = md(streaming.text);
+                var chat = document.getElementById('chat');
+                chat.scrollTop = chat.scrollHeight;
+            } else if (ev.type === 'status') {
+                endStream();
+                addMsg('tool', ev.message);
+                showSpinner(true);
+            } else if (ev.type === 'done') {
+                endStream();
+                showSpinner(false);
+                busy = false;
+                if (ev.result) {
+                    renderResult(ev.result, true);
+                    applyResultToHistory(ev.result);
+                }
+            } else if (ev.type === 'error') {
+                fail(ev.message);
             }
-            if (!shown && data.finalText) {
+        }
+
+        function endStream() {
+            if (streaming) streaming = null;
+        }
+
+        // applyResultToHistory records the assistant side of a finished turn
+        // so follow-up prompts keep their context.
+        function applyResultToHistory(result) {
+            if (result.transcript && result.transcript.length) {
+                for (var i = 0; i < result.transcript.length; i++) {
+                    var m = result.transcript[i];
+                    if (m.role !== 'user') chatHistory.push({ role: 'assistant', content: m.content });
+                }
+            } else if (result.records && result.records.length) {
+                var cn = result.records[0].collectionName;
+                chatHistory.push({ role: 'assistant', content: '(fetched ' + result.records.length + ' records' + (cn ? ' from collection ' + cn : '') + ')' });
+            }
+        }
+
+        function newChat() {
+            chatHistory = [];
+            pendingAction = null;
+            streaming = null;
+            closeConfirm();
+            document.getElementById('chat').innerHTML = '';
+        }
+
+        function renderResult(data, skipText) {
+            var hasRecords = !!(data.records && data.records.length);
+            if (hasRecords) {
+                // tabular answer: show only the records table
+                addRecordsTable(data.records);
+            } else if (!skipText) {
+                var shown = false;
+                if (data.transcript && data.transcript.length) {
+                    for (var i = 0; i < data.transcript.length; i++) {
+                        var m = data.transcript[i];
+                        addMsg(m.role === 'user' ? 'user' : 'assistant', m.content);
+                        shown = true;
+                    }
+                }
+                if (!shown && data.finalText) {
+                    addMsg('assistant', data.finalText);
+                }
+            } else if (!gotAnyText && data.finalText) {
                 addMsg('assistant', data.finalText);
             }
             if (data.pendingAction) {
@@ -205,8 +399,10 @@
                     }
                     if (res.data.ok) {
                         addMsg('assistant', res.data.message);
+                        chatHistory.push({ role: 'assistant', content: 'Executed: ' + res.data.message });
                     } else {
                         addMsg('err', res.data.message);
+                        chatHistory.push({ role: 'assistant', content: res.data.message });
                     }
                 })
                 .catch(function() {
@@ -216,13 +412,68 @@
                 });
         }
 
+        var spinTimer = null;
         function showSpinner(on) {
             var s = document.getElementById('spinner');
-            if (on) s.classList.add('show'); else s.classList.remove('show');
+            if (on) {
+                s.classList.add('show');
+                document.getElementById('spinTime').textContent = '';
+                var start = Date.now();
+                spinTimer = setInterval(function() {
+                    var secs = Math.floor((Date.now() - start) / 1000);
+                    document.getElementById('spinTime').textContent = secs >= 1 ? secs + 's' : '';
+                }, 1000);
+            } else {
+                s.classList.remove('show');
+                if (spinTimer) { clearInterval(spinTimer); spinTimer = null; }
+            }
+        }
+
+        var promptHistory = []; // previously sent prompts (ArrowUp/Down recall)
+        var promptIdx = -1;
+        var promptDraft = '';
+
+        function rememberPrompt(t) {
+            if (promptHistory[promptHistory.length - 1] !== t) {
+                promptHistory.push(t);
+            }
+            promptIdx = promptHistory.length;
+            promptDraft = '';
         }
 
         document.getElementById('messageInput').addEventListener('keydown', function(ev) {
-            if (ev.key === 'Enter') send();
+            if (ev.key === 'Enter') {
+                ev.preventDefault();
+                send();
+                return;
+            }
+            if (ev.key === 'Escape') {
+                var inp = document.getElementById('messageInput');
+                inp.value = '';
+                promptIdx = promptHistory.length;
+                promptDraft = '';
+                inp.blur();
+                return;
+            }
+            if (ev.key === 'ArrowUp') {
+                if (promptHistory.length === 0) return;
+                if (promptIdx === promptHistory.length) {
+                    promptDraft = document.getElementById('messageInput').value;
+                    promptIdx = promptHistory.length - 1;
+                } else if (promptIdx > 0) {
+                    promptIdx--;
+                } else {
+                    return;
+                }
+                document.getElementById('messageInput').value = promptHistory[promptIdx];
+                ev.preventDefault();
+            } else if (ev.key === 'ArrowDown') {
+                if (promptIdx >= promptHistory.length) return;
+                promptIdx++;
+                var inp = document.getElementById('messageInput');
+                inp.value = (promptIdx === promptHistory.length) ? promptDraft : promptHistory[promptIdx];
+                ev.preventDefault();
+            }
         });
 
         function currentTheme() {

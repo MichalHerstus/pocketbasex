@@ -268,6 +268,7 @@ Total: ~895 new lines, ~20 modified lines.
 ## phases 1 - 8 are implemented!
 -------------------------------------------------------------------------
 ## Phase 9 — User landing page (`_view` field)
+### done!
 
 Context: After login, regular users always go to `/app` (line 482). Superusers always go to `/pbx-setup` (line 500). Some users need a specific view as their landing page (e.g., a tabular view of data they work with daily).
 
@@ -310,6 +311,7 @@ Superusers (line 500) remain unchanged — always redirect to `/pbx-setup`.
 - With Phase 8: login as mobile user with `_view` → redirected to `/mobile/tabular/{viewName}`
 
 ## Phase 10 — Custom actions in tabular and form views
+### done!
 
 Context: Users need to run custom business logic (report generation, bulk updates, cross-collection operations) from the tabular and form views. Actions are scripts stored in an `_actions` collection, executed via Goja (already in go.mod as indirect dep via PocketBase jsvm). Scripts run as the current user with collection rules enforced at the Go level.
 
@@ -1023,3 +1025,48 @@ Decisions confirmed with user:
 - `go build ./... && go vet ./...`, `go test ./pbai/`.
 - Manual E2E as superuser (`mherstus@pointx.cz` / `Michal_1962`): gate `/pbx-setup`; edit `_app` (incl. icon upload), `_views` (structured JSON + columnOrder checkboxes), `_agent`; save rules via user selection; confirm non-superuser sees filtered `/tabular` and 403 on create when rules deny.
 - Update `AGENTS.md` (new routes, rules editor, enforcement, setup-record page).
+
+## Phase 13 — Agent AI enhancements
+
+Context: two issues surfaced while using `/ai` with a local LM Studio model (`google/gemma-4-e4b`):
+1. Prompt "list all records in collection produkty" got an answer about a nonexistent "produkti" collection — the LLM mistyped the name inside its tool-call arguments and relayed the terse `collection "produkti" not found` error instead of retrying.
+2. The same request took ~20s. Measured breakdown: call 1 (770 prompt tok → tool call) 5.7s incl. 90 hidden reasoning tokens; call 2 (1190 prompt tok → final answer) 10.9s generating a markdown table that the UI discards (it renders records as its own table). The second LLM call is pure waste for tabular questions.
+
+Decisions confirmed with user:
+- Fix #1 via self-correcting errors: fuzzy-match suggestions (Levenshtein) + list of available collections in the not-found error, plus a system-prompt rule to retry with the suggested name.
+- Fix #2 via short-circuit: skip the final LLM call when `query_records` is the first and only executed tool call of the turn and it returned ≥1 record — the UI shows just the table anyway.
+- Deferred: SSE token streaming (separate follow-up), slimming LLM-facing tool results, prompt compression, LM Studio tuning checklist (disable Reasoning toggle ≈3–8s/call, GPU offload, flash attention, minimal context).
+
+### 13.1 Self-correcting collection lookup (`pbai/tools.go`) — done
+
+- New `(a *Agent) findCollection(name string) (*core.Collection, error)`: exact `FindCachedCollectionByNameOrId` first; on failure builds accessible collection names (skip `_`-prefixed, view collections, non-listable), computes case-insensitive Levenshtein distance (threshold `min(2, max(1, len/3))`), returns e.g. `collection "produkti" not found (did you mean "produkty"?). Available collections: ...`.
+- Small `levenshtein(a, b string) int` DP helper.
+- All 8 call sites switched (get_schema, query_records, insert_records pending+exec, set_view_config pending+exec, create_action pending+exec); canned `fmt.Errorf("collection %q not found")` messages removed so the detailed error propagates. `create_collection` existence check untouched.
+- System prompt rule added: copy collection names exactly; on not-found retry with the suggested name or call `list_collections` first.
+
+### 13.2 Tabular fast path — skip final LLM call (`pbai/agent.go`)
+
+- In `Run()` add `toolCallsSoFar := 0`; increment per executed tool call.
+- After a successful `query_records` exec (records parsed into `lastRecords`), if `toolCallsSoFar == 1 && len(lastRecords) > 0` return immediately:
+  `&ChatResult{Transcript: transcript, Records: lastRecords}` — `FinalText` stays empty; UI already renders table-only when `records` is present.
+- Guardrails: "No accessible records found." leaves `lastRecords` nil → normal flow; multi-step flows (schema/list first, or query_records as 2nd exec) keep the final LLM pass; pending-action path untouched.
+
+### 13.3 Tests (`pbai/agent_test.go`)
+
+- `TestFindCollectionSuggestsTypo`: exact match works; `"produkti"` error contains suggestion `"products"` + `Available collections:`; same through the `query_records` tool path.
+- `TestRunCapturesQueryRecords` updated: mock server counts requests — expect exactly **1** LLM call, `res.Records` populated, `res.FinalText == ""`.
+- New `TestQueryRecordsFastPathNotForMultiStep`: schema → query_records → final text = 3 LLM calls, final text passes through (guardrail holds).
+
+### 13.4 Verification
+
+- `go build ./... && go vet ./... && go test ./pbai/`, rebuild `./pbx`.
+- Manual: "list all records in collection produkty" drops from ~20s to ~5–6s (single LLM call), table-only answer; misspelled collection names self-correct within the same turn.
+
+### 13.5 Follow-ups implemented in the same phase
+
+- **Conversation memory** (was: agent forgot everything between prompts — the UI sent only the current message and `Run` is stateless): `views/agent.html` keeps the visible turns in a JS array, sends the last 16 with each request (server clamps at 40), records assistant answers / fast-path table notes / pending summaries / confirm outcomes into it; "New chat" button resets. Test `TestRunSendsHistoryToLLM`.
+- **SSE streaming**: `Client.Stream` (`pbai/llm.go`) assembles streamed tool-call deltas by index; `RunStream` (`pbai/agent.go`) mirrors the loop emitting `text`/`status`/`done` events (`Run` delegates to it); `POST /ai/chat/stream` (`main.go`) serves `text/event-stream`; UI consumes via fetch ReadableStream — live text bubbles, tool status lines, table/pending rendering on done. All LLM traffic now uses the streaming API; test mocks emit SSE chunks; `TestStreamAssemblyMultiChunk`.
+
+### 13.6 Still deferred
+
+- Truncate long field values in the LLM-facing `query_records` result (UI table keeps full data via side-channel); compress system prompt/tool descriptions; document LM Studio performance checklist in `AGENTS.md`.

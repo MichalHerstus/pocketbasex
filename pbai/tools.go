@@ -2,12 +2,14 @@ package pbai
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/dop251/goja"
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/inflector"
@@ -52,6 +54,8 @@ func allTools() []tool {
 		insertRecordsTool(),
 		createCollectionTool(),
 		setViewConfigTool(),
+		createActionTool(),
+		listActionsTool(),
 	}
 }
 
@@ -88,6 +92,74 @@ func (a *Agent) canCreate(coll *core.Collection) bool {
 func (a *Agent) canAccessRecord(rec *core.Record) bool {
 	ok, err := a.App.CanAccessRecord(rec, a.Info, rec.Collection().ViewRule)
 	return err == nil && ok
+}
+
+// findCollection resolves a collection by name or id. On failure it returns
+// an error suggesting the closest matching accessible collection names -
+// LLMs frequently mistype collection names in tool arguments, and a
+// self-correcting error lets them retry with the right one.
+func (a *Agent) findCollection(name string) (*core.Collection, error) {
+	coll, err := a.App.FindCachedCollectionByNameOrId(name)
+	if err == nil {
+		return coll, nil
+	}
+
+	var available, suggestions []string
+	colls, lerr := a.App.FindAllCollections()
+	if lerr == nil {
+		threshold := len(name) / 3
+		if threshold < 1 {
+			threshold = 1
+		}
+		if threshold > 2 {
+			threshold = 2
+		}
+		for _, c := range colls {
+			if strings.HasPrefix(c.Name, "_") || c.IsView() || !a.canList(c) {
+				continue
+			}
+			available = append(available, c.Name)
+			if levenshtein(strings.ToLower(name), strings.ToLower(c.Name)) <= threshold {
+				suggestions = append(suggestions, c.Name)
+			}
+		}
+		sort.Strings(available)
+	}
+
+	msg := fmt.Sprintf("collection %q not found", name)
+	switch len(suggestions) {
+	case 0:
+	case 1:
+		msg += fmt.Sprintf(" (did you mean %q?)", suggestions[0])
+	default:
+		msg += fmt.Sprintf(" (did you mean one of %q?)", suggestions)
+	}
+	if len(available) > 0 {
+		msg += ". Available collections: " + strings.Join(available, ", ")
+	}
+	return nil, errors.New(msg)
+}
+
+// levenshtein computes the edit distance between two strings.
+func levenshtein(a, b string) int {
+	ar, br := []rune(a), []rune(b)
+	prev := make([]int, len(br)+1)
+	cur := make([]int, len(br)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(ar); i++ {
+		cur[0] = i
+		for j := 1; j <= len(br); j++ {
+			cost := 1
+			if ar[i-1] == br[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(br)]
 }
 
 // checkCreateRule enforces the collection createRule for a non-superuser.
@@ -203,9 +275,9 @@ func getSchemaTool() tool {
 			if in.Collection == "" {
 				return "", fmt.Errorf("collection name is required")
 			}
-			coll, err := a.App.FindCachedCollectionByNameOrId(in.Collection)
+			coll, err := a.findCollection(in.Collection)
 			if err != nil {
-				return "", fmt.Errorf("collection %q not found", in.Collection)
+				return "", err
 			}
 			if !a.canView(coll) {
 				return "", fmt.Errorf("you do not have permission to view %q", coll.Name)
@@ -259,9 +331,9 @@ func queryRecordsTool() tool {
 			if in.Collection == "" {
 				return "", fmt.Errorf("collection name is required")
 			}
-			coll, err := a.App.FindCachedCollectionByNameOrId(in.Collection)
+			coll, err := a.findCollection(in.Collection)
 			if err != nil {
-				return "", fmt.Errorf("collection %q not found", in.Collection)
+				return "", err
 			}
 			if !a.canList(coll) {
 				return "", fmt.Errorf("you do not have permission to list %q", coll.Name)
@@ -335,9 +407,9 @@ func insertRecordsTool() tool {
 			if len(in.Records) == 0 {
 				return nil, fmt.Errorf("no records provided")
 			}
-			coll, err := a.App.FindCachedCollectionByNameOrId(in.Collection)
+			coll, err := a.findCollection(in.Collection)
 			if err != nil {
-				return nil, fmt.Errorf("collection %q not found", in.Collection)
+				return nil, err
 			}
 			if !a.canCreate(coll) {
 				return nil, fmt.Errorf("you do not have permission to create records in %q", coll.Name)
@@ -375,9 +447,9 @@ func insertRecordsTool() tool {
 			if err := json.Unmarshal(args, &in); err != nil {
 				return "", err
 			}
-			coll, err := a.App.FindCachedCollectionByNameOrId(in.Collection)
+			coll, err := a.findCollection(in.Collection)
 			if err != nil {
-				return "", fmt.Errorf("collection %q not found", in.Collection)
+				return "", err
 			}
 			var created []string
 			for _, raw := range in.Records {
@@ -627,8 +699,8 @@ func setViewConfigTool() tool {
 			if in.Collection == "" {
 				return nil, fmt.Errorf("collection name is required")
 			}
-			if _, err := a.App.FindCachedCollectionByNameOrId(in.Collection); err != nil {
-				return nil, fmt.Errorf("collection %q not found", in.Collection)
+			if _, err := a.findCollection(in.Collection); err != nil {
+			return nil, err
 			}
 			if in.ConfigName == "" {
 				in.ConfigName = sanitizeName(in.Collection)
@@ -659,8 +731,8 @@ func setViewConfigTool() tool {
 			if !a.isSuper() {
 				return "", fmt.Errorf("only superusers can update view configurations")
 			}
-			if _, err := a.App.FindCachedCollectionByNameOrId(in.Collection); err != nil {
-				return "", fmt.Errorf("collection %q not found", in.Collection)
+			if _, err := a.findCollection(in.Collection); err != nil {
+			return "", err
 			}
 			if in.ConfigName == "" {
 				in.ConfigName = sanitizeName(in.Collection)
@@ -705,6 +777,180 @@ func setViewConfigTool() tool {
 				return "", fmt.Errorf("failed to save view config: %w", err)
 			}
 			return fmt.Sprintf("View configuration %q saved for collection %q.", in.ConfigName, in.Collection), nil
+		},
+	}
+}
+
+// actionArgs holds the parsed create_action arguments (shared by pending/exec).
+type actionArgs struct {
+	Name        string `json:"name"`
+	Collection  string `json:"collection"`
+	Script      string `json:"script"`
+	Description string `json:"description"`
+	OnList      *bool  `json:"onList"`
+	OnForm      *bool  `json:"onForm"`
+	Public      *bool  `json:"public"`
+}
+
+// resolveDefaults applies the documented defaults for unset flags.
+func (in *actionArgs) resolveDefaults() {
+	t, f := true, false
+	if in.OnList == nil {
+		in.OnList = &t
+	}
+	if in.OnForm == nil {
+		in.OnForm = &f
+	}
+	if in.Public == nil {
+		in.Public = &f
+	}
+}
+
+// createActionTool upserts an _actions record (custom Goja action script).
+func createActionTool() tool {
+	return tool{
+		name: "create_action",
+		description: "Creates or updates a custom action: a JavaScript script attached to a collection that the user can run from its tabular or form view. Superuser only. Upserts by name - if an action with the same name exists it is updated. Args: {\"name\": \"display name\", \"collection\": \"target collection\", \"script\": \"JavaScript source\", \"description\": \"optional help text\", \"onList\": true, \"onForm\": false, \"public\": false}.",
+		params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"name":        map[string]any{"type": "string"},
+				"collection":  map[string]any{"type": "string"},
+				"script":      map[string]any{"type": "string"},
+				"description": map[string]any{"type": "string"},
+				"onList":      map[string]any{"type": "boolean", "description": "show in tabular view dropdown (default true)"},
+				"onForm":      map[string]any{"type": "boolean", "description": "show in form view dropdown (default false)"},
+				"public":      map[string]any{"type": "boolean", "description": "visible to non-superusers (default false)"},
+			},
+			"required": []string{"name", "collection", "script"},
+		},
+		write: true,
+		pending: func(a *Agent, args json.RawMessage) (*PendingAction, error) {
+			var in actionArgs
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, err
+			}
+			if !a.isSuper() {
+				return nil, fmt.Errorf("only superusers can create or update actions")
+			}
+			if in.Name == "" {
+				return nil, fmt.Errorf("action name is required")
+			}
+			if in.Script == "" {
+				return nil, fmt.Errorf("script is required")
+			}
+			coll, err := a.findCollection(in.Collection)
+			if err != nil {
+				return nil, err
+			}
+			if _, err := goja.Compile("action.js", in.Script, false); err != nil {
+				return nil, fmt.Errorf("script compile error: %w", err)
+			}
+			detail, _ := json.MarshalIndent(in, "", "  ")
+			return &PendingAction{
+				Type:       "create_action",
+				Summary:    fmt.Sprintf("Create/update action %q on collection %q", in.Name, coll.Name),
+				Detail:     string(detail),
+				Collection: coll.Name,
+				toolName:   "create_action",
+				params:     mustMarshal(in),
+			}, nil
+		},
+		exec: func(a *Agent, args json.RawMessage) (string, error) {
+			var in actionArgs
+			if err := json.Unmarshal(args, &in); err != nil {
+				return "", err
+			}
+			if !a.isSuper() {
+				return "", fmt.Errorf("only superusers can create or update actions")
+			}
+			if _, err := a.findCollection(in.Collection); err != nil {
+			return "", err
+			}
+			in.resolveDefaults()
+
+			actionsColl, err := a.App.FindCachedCollectionByNameOrId("_actions")
+			if err != nil {
+				return "", fmt.Errorf("actions collection not found")
+			}
+			recs, err := a.App.FindRecordsByFilter("_actions", "_name = {:name}", "", 1, 0, dbx.Params{"name": in.Name})
+			if err != nil {
+				return "", err
+			}
+			var rec *core.Record
+			created := false
+			if len(recs) > 0 {
+				rec = recs[0]
+			} else {
+				rec = core.NewRecord(actionsColl)
+				created = true
+			}
+			rec.Set("_name", in.Name)
+			rec.Set("_collection", in.Collection)
+			rec.Set("_script", in.Script)
+			rec.Set("_description", in.Description)
+			rec.Set("_onList", *in.OnList)
+			rec.Set("_onForm", *in.OnForm)
+			rec.Set("_public", *in.Public)
+			if err := a.App.Save(rec); err != nil {
+				return "", fmt.Errorf("failed to save action: %w", err)
+			}
+			verb := "updated"
+			if created {
+				verb = "created"
+			}
+			return fmt.Sprintf("Action %q %s for collection %q.", in.Name, verb, in.Collection), nil
+		},
+	}
+}
+
+// listActionsTool lists the custom actions defined for a collection.
+func listActionsTool() tool {
+	return tool{
+		name:        "list_actions",
+		description: "Lists the custom actions defined for a collection with their flags and descriptions. Superuser only. Args: {\"collection\": \"name\"}.",
+		params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"collection": map[string]any{"type": "string"},
+			},
+			"required": []string{"collection"},
+		},
+		exec: func(a *Agent, args json.RawMessage) (string, error) {
+			var in struct {
+				Collection string `json:"collection"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return "", err
+			}
+			if !a.isSuper() {
+				return "", fmt.Errorf("only superusers can list actions")
+			}
+			if in.Collection == "" {
+				return "", fmt.Errorf("collection name is required")
+			}
+			recs, err := a.App.FindRecordsByFilter("_actions", "_collection = {:coll}", "_name", 100, 0, dbx.Params{"coll": in.Collection})
+			if err != nil {
+				return "", err
+			}
+			if len(recs) == 0 {
+				return fmt.Sprintf("No custom actions defined for collection %q.", in.Collection), nil
+			}
+			var out []string
+			for _, r := range recs {
+				var flags []string
+				if r.GetBool("_onList") {
+					flags = append(flags, "list")
+				}
+				if r.GetBool("_onForm") {
+					flags = append(flags, "form")
+				}
+				if r.GetBool("_public") {
+					flags = append(flags, "public")
+				}
+				out = append(out, fmt.Sprintf("- %s [%s]: %s", r.GetString("_name"), strings.Join(flags, ","), r.GetString("_description")))
+			}
+			return strings.Join(out, "\n"), nil
 		},
 	}
 }

@@ -5,8 +5,8 @@
     --muted: #659287;
     --muted2: #5c8173;
     --descr: #659287;
-    --card-bg: #b1d3b9;
-    --card2-bg: #9dc5ac;
+    --card-bg: #ffffff;
+    --card2-bg: #5c8173;
     --border: #a5c9b3;
     --border2: #88bda4;
     --input-bg: #f0f7ea;
@@ -19,8 +19,8 @@
     --modal-bg: #b1d3b9;
     --empty: #8aa79a;
     --field-value-bg: #f0f7ea;
-    --json-bg: #b1d3b9;
-    --file-bg: #9dc5ac;
+    --json-bg: #ffffff;
+    --file-bg: #ffffff;
     --readonly-bg: #e9f3e1;
     --accent: #659287;
     --accent-soft: #d8e9de;
