@@ -265,6 +265,8 @@ Total: ~895 new lines, ~20 modified lines.
 - `/pbx-setup` on mobile shows desktop view (no redirect)
 - `/mobile/ai` renders the agent chat page correctly on mobile
 
+## phases 1 - 8 are implemented!
+-------------------------------------------------------------------------
 ## Phase 9 — User landing page (`_view` field)
 
 Context: After login, regular users always go to `/app` (line 482). Superusers always go to `/pbx-setup` (line 500). Some users need a specific view as their landing page (e.g., a tabular view of data they work with daily).
