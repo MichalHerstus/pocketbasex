@@ -29,6 +29,7 @@ import (
 	"github.com/pocketbase/pocketbase/tools/search"
 	"github.com/pocketbase/pocketbase/tools/security"
 
+	"pbx/pbactions"
 	"pbx/pbai"
 	"pbx/pbexcel"
 	"pbx/pbmssql"
@@ -333,6 +334,14 @@ func main() {
 			// AI agent write-op confirmation
 			se.Router.POST("/ai/confirm", func(e *core.RequestEvent) error {
 				return handleAgentConfirm(e)
+			})
+			// custom actions (Phase 10): list actions for a collection
+			se.Router.GET("/api/actions/{collectionName}", func(e *core.RequestEvent) error {
+				return handleActionsList(e)
+			})
+			// custom actions (Phase 10): execute an action
+			se.Router.POST("/actions/execute", func(e *core.RequestEvent) error {
+				return handleActionExecute(e)
 			})
 
 			err := se.Next()
@@ -1083,7 +1092,7 @@ func handlePbxSetup(e *core.RequestEvent) error {
 		return err
 	}
 
-	collections := []string{"_app", "_views"}
+	collections := []string{"_app", "_views", "_actions"}
 	sections := make([]views.TabulatorPageData, 0, len(collections))
 
 	for _, name := range collections {
@@ -2630,9 +2639,110 @@ func handleViewDelete(e *core.RequestEvent, recordID string, configRec *core.Rec
 	if err := e.App.Delete(record); err != nil {
 		return e.InternalServerError("Failed to delete record", err)
 	}
+
 	return e.JSON(http.StatusOK, map[string]any{"ok": true})
 }
 
+// --- Custom actions (Phase 10) ---
+
+// actionDefToPbx converts an _actions record to a pbactions.ActionDef.
+func actionDefToPbx(rec *core.Record) pbactions.ActionDef {
+	return pbactions.ActionDef{
+		ID:          rec.Id,
+		Name:        rec.GetString("_name"),
+		Description: rec.GetString("_description"),
+		Script:      rec.GetString("_script"),
+		Collection:  rec.GetString("_collection"),
+		OnList:      rec.GetBool("_onList"),
+		OnForm:      rec.GetBool("_onForm"),
+		Public:      rec.GetBool("_public"),
+	}
+}
+
+// isSuperUserFromRequest reports whether the request carries a superuser auth.
+func isSuperUserFromRequest(e *core.RequestEvent) bool {
+	info, err := authRequestInfo(e)
+	if err != nil {
+		return false
+	}
+	return info.HasSuperuserAuth()
+}
+
+// handleActionsList returns actions for a collection. Non-superusers only see
+// actions where _public = true.
+func handleActionsList(e *core.RequestEvent) error {
+	collName := e.Request.PathValue("collectionName")
+	isSuper := isSuperUserFromRequest(e)
+
+	recs, err := e.App.FindRecordsByFilter("_actions", "_collection = {:coll}", "", 100, 0, dbx.Params{"coll": collName})
+	if err != nil {
+		return e.InternalServerError("Failed to load actions", err)
+	}
+
+	type actionSummary struct {
+		ID          string `json:"id"`
+		Name        string `json:"name"`
+		Description string `json:"description"`
+		OnList      bool   `json:"onList"`
+		OnForm      bool   `json:"onForm"`
+	}
+	actions := make([]actionSummary, 0, len(recs))
+	for _, rec := range recs {
+		def := actionDefToPbx(rec)
+		if !def.Public && !isSuper {
+			continue
+		}
+		actions = append(actions, actionSummary{
+			ID:          def.ID,
+			Name:        def.Name,
+			Description: def.Description,
+			OnList:      def.OnList,
+			OnForm:      def.OnForm,
+		})
+	}
+
+	return e.JSON(http.StatusOK, map[string]any{"actions": actions})
+}
+
+// handleActionExecute runs a custom action against the given record ids.
+func handleActionExecute(e *core.RequestEvent) error {
+	var req struct {
+		ActionID  string   `json:"actionId"`
+		RecordIDs []string `json:"recordIds"`
+	}
+	if err := json.NewDecoder(e.Request.Body).Decode(&req); err != nil {
+		return e.BadRequestError("Invalid request body", err)
+	}
+	if req.ActionID == "" {
+		return e.BadRequestError("Missing actionId", nil)
+	}
+
+	actionRec, err := e.App.FindRecordById("_actions", req.ActionID)
+	if err != nil {
+		return e.NotFoundError("Action not found", err)
+	}
+	def := actionDefToPbx(actionRec)
+
+	// verify the caller may access the target collection (listRule for reads,
+	// createRule etc. are enforced per-builtin by the runner)
+	isSuper := isSuperUserFromRequest(e)
+	if !def.Public && !isSuper {
+		return e.ForbiddenError("You are not allowed to run this action", nil)
+	}
+
+	info, err := authRequestInfo(e)
+	if err != nil {
+		return e.InternalServerError("Failed to resolve request context", err)
+	}
+
+	runner := pbactions.NewRunner(e.App, info.Auth)
+	result, runErr := runner.Run(e.Request.Context(), &def, req.RecordIDs)
+	if runErr != nil {
+		return e.InternalServerError("Action failed: "+runErr.Error(), runErr)
+	}
+
+	return e.JSON(http.StatusOK, result)
+}
 // --- Form ---
 
 func handleForm(e *core.RequestEvent) error {

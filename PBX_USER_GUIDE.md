@@ -6,10 +6,10 @@ PocketBase capabilities (data storage, the stock admin UI at `/_/`, CLI) and ext
 them with ready-made list (tabular) and form pages, a dashboard, Excel and MSSQL
 import/export, an AI agent, mobile views, and a superadmin setup area.
 
-This guide covers everything implemented up to **Phase 9** of `PBX_plan.md`
+This guide covers everything implemented up to **Phase 10** of `PBX_plan.md`
 (configuration model, config-name routing, superadmin config editor, view-collection
-editing, Excel/MSSQL import+sync, collection-creation wizard, mobile views, and the
-per-user landing-page `_view` field).
+editing, Excel/MSSQL import+sync, collection-creation wizard, mobile views, the
+per-user landing-page `_view` field, and custom actions).
 
 ---
 
@@ -199,6 +199,7 @@ Opens a live table of the collection's records:
   DSN in `/pbx-setup`). Export to a not-yet-existing table asks for confirmation before the table
   is created.
 - **+ Add new** — jumps to a blank form for a new record.
+- **Actions** — if the collection has custom actions configured, an **Actions** dropdown + **Run** button appears. Check the boxes next to the records you want to process (or select none to run on all visible records), pick an action, and press Run. The result (output lines, affected count, or error) is shown in a modal. See [§5 Custom actions](#5-custom-actions-scripts).
 
 Row actions (view / edit / delete) appear in the last column. Deleting asks for
 confirmation.
@@ -219,6 +220,9 @@ The form page shows one record at a time:
 - **View-only collections** — if the collection is a PB **view** (SQL view), editing shows
   **one section per base collection** the view joins. Saving a multi-table view updates each
   base table in a single transaction, so the joined result reflects all new values.
+- **Actions** — when editing an existing record (`{id}` present), an **Actions** dropdown +
+  **Run** button is shown. Picking an action runs it against the current record and displays
+  the result in a modal. See [§5 Custom actions](#5-custom-actions-scripts).
 
 ### 4.4 AI agent — `/ai`
 
@@ -237,27 +241,139 @@ If the agent is unconfigured, it says so — a superuser must fill in `/pbx-setu
 
 ---
 
-## 5. Superadmin area: `/pbx-setup`
+## 5. Custom actions (scripts)
+
+Custom actions let you run business logic (reports, bulk updates, cross-collection
+operations, clean-ups) directly from the tabular and form views. An action is a small
+**JavaScript** script stored in the system `_actions` collection and executed on the server.
+
+### 5.1 How actions are shown
+
+- **List view** (`/tabular/...`) — an **Actions** dropdown next to "Run". Check the records you
+  want to process, or select none to run on **all visible** (filtered) records.
+- **Form view** (`/form/.../id`) — the **Actions** dropdown runs against the single open record.
+- **Mobile** — the same Actions dropdown is available in both views.
+- A result modal shows the script's `log()` output, the number of records affected, or an
+  error if the script failed.
+
+### 5.2 Who can see and run actions
+
+- Non-superusers only see actions that are marked **Public** (`_public = true`).
+- Superusers see and can run all actions.
+- Each action visibly runs as the **current user**, so the script's reads and writes are
+  checked against the target collections' API rules (list/view/create/update/delete).
+- Actions execute with a **10-second timeout** — an infinite loop is killed automatically.
+
+### 5.3 Creating an action (superuser)
+
+Actions live in the `_actions` collection, edited from **`/pbx-setup`** (the Setup page lists
+`_actions`; use **+ Add new** / **Edit** to open the record editor). Fill in:
+
+| Field | Meaning |
+|-------|---------|
+| `_name` | Display name shown in the Actions dropdown (e.g. `Bulk +10% price`). |
+| `_description` | Help text shown as a tooltip. |
+| `_script` | The JavaScript source (Goja) to run. |
+| `_collection` | The collection the action is configured for (shown only on that collection's views). |
+| `_onList` | Show the action in the tabular (list) view dropdown. |
+| `_onForm` | Show the action in the form view dropdown. |
+| `_public` | Let non-superusers see and run the action. |
+
+### 5.4 Available built-in functions
+
+| Function | Description |
+|----------|-------------|
+| `select(coll, filter, sort?, limit?)` | Return `[]` of records matching a PB filter. Enforces `listRule`. |
+| `get(coll, id)` | Return a single record as a map, or `null`. Enforces `viewRule`. |
+| `count(coll, filter?)` | Return the number of matching records. Enforces `listRule`. |
+| `insert(coll, data)` | Create a record; returns the new record id. Enforces `createRule`. |
+| `update(coll, id, data)` | Update a record; returns `true`/`false`. Enforces `updateRule`. |
+| `delete(coll, id)` | Delete a record; returns `true`/`false`. Enforces `deleteRule`. |
+| `log(...)` | Append text to the result output (shown in the result modal). |
+| `currentUser()` | The current user `{id, name, email}`. |
+| `currentRecord()` | The current record (form) or first selected record (list), or `null`. |
+| `selectedRecords()` | All selected records (list), or `[currentRecord]` (form). |
+
+### 5.5 Example 1 — report (list view, read-only)
+
+Prints a report of products priced under 100 to the result modal:
+
+```javascript
+var rows = select("produkty", "cena < 100", "", 100);
+log("Cheap products: " + rows.length);
+rows.forEach(function (r) {
+    log(r.nazev + " — " + r.cena + " Kč");
+});
+```
+
+### 5.6 Example 2 — bulk update (list view, write)
+
+Increases the price of all products under 100 by 10 %:
+
+```javascript
+var rows = select("produkty", "cena < 100", "", 0);
+var updated = 0;
+rows.forEach(function (r) {
+    var ok = update("produkty", r.id, { cena: Math.round(r.cena * 1.1) });
+    if (ok) updated++;
+});
+log("Updated " + updated + " products (price +10%).");
+```
+
+### 5.7 Example 3 — cross-collection (form view)
+
+Completes all tasks assigned to the current employee:
+
+```javascript
+var emp = currentRecord();
+var tasks = select("ukoly", "zamestnanec = '" + emp.id + "'", "", 0);
+var done = 0;
+tasks.forEach(function (t) {
+    if (update("ukoly", t.id, { stav: "dokonceno" })) done++;
+});
+log("Completed " + done + " tasks for " + emp.jmeno);
+```
+
+### 5.8 Example 4 — delete with confirmation (list view)
+
+Deletes the selected records from the `poznamky` collection:
+
+```javascript
+var rows = selectedRecords();
+var deleted = 0;
+rows.forEach(function (r) {
+    if (delete("poznamky", r.id)) deleted++;
+});
+log("Deleted " + deleted + " note(s).");
+```
+
+> When a list action runs with **no records selected**, it runs against all visible records.
+> You can use `selectedRecords()` or `currentRecord()` in combination with safe selections —
+> double-check the filter before a destructive bulk action.
+
+---
+
+## 6. Superadmin area: `/pbx-setup`
 
 Superusers land here after login. The page has separate focused panels:
 
-### 5.1 Theme
+### 6.1 Theme
 
 - A Light/Dark toggle that sets the **global default** theme, stored server-side. Users can
   still override per-browser with the topbar switch.
 
-### 5.2 MSSQL (global DSN)
+### 6.2 MSSQL (global DSN)
 
 - A single text box for the **global default DSN** used by the MSSQL Sync feature /
   import wizards. Example: `sqlserver://user:pass@host:1433?database=db&encrypt=disable`.
 
-### 5.3 AI agent
+### 6.3 AI agent
 
 - Provider (`openrouter` or `lmstudio`), Base URL, API key (typed and stored only in the
   `_agent` config record, never in env or git), Model name, Timeout in seconds, and an
   **Enabled** checkbox.
 
-### 5.4 System record browsers ( `_app`, `_views`)
+### 6.4 System record browsers ( `_app`, `_views`)
 
 The two sections show `_app` and `_views` as tables. Each row has **+ Add new** and per-record
 **Edit / Delete** links. Editing a system record goes to a **record editor** form
@@ -278,7 +394,7 @@ The two sections show `_app` and `_views` as tables. Each row has **+ Add new** 
 - **`_app` records** — the `group`, `group_label`, `collection`/`collectionLabel`,
   `configName` fields, plus **group icon** file upload (with a remove option).
 
-### 5.5 Collection API rules (per collection)
+### 6.5 Collection API rules (per collection)
 
 This is a security matrix for **every data collection** (excluding `users`, `roles`, `_`-
 prefixed system collections, and view collections). For each operation — **List / View /
@@ -298,9 +414,9 @@ EDIT/POST (update + create), and delete. Superusers always bypass the rules.
 
 ---
 
-## 6. Configuration & collection import (`/pbx-config`, superuser)
+## 7. Configuration & collection import (`/pbx-config`, superuser)
 
-### 6.1 Config editor `/pbx-config`
+### 7.1 Config editor `/pbx-config`
 
 The one section lists every `_views` (list + form) configuration. For each row you can:
 
@@ -311,7 +427,7 @@ The one section lists every `_views` (list + form) configuration. For each row y
 
 **Create collection from source** — two wizard links: **From Excel** and **From MSSQL**.
 
-### 6.2 View config editor `/pbx-config/view/...`
+### 7.2 View config editor `/pbx-config/view/...`
 
 A form that edits the `_tabulator`, `_form` and `_MSSQL` JSON of a `_views` record. You
 pick the target collection, name the config (once saved, the endpoint uses this name), and
@@ -325,7 +441,7 @@ edit each JSON block in a collapsible textarea with hints:
 - `_MSSQL` keys: `dsn`, `table`, `mode` (`insert`/`update`/`replace`), `mapping`
   (`[{pbField,dbField}]`).
 
-### 6.3 Collection import from Excel / MSSQL
+### 7.3 Collection import from Excel / MSSQL
 
 `/pbx-config/import-excel` and `/pbx-config/import-mssql` are a **3-step wizard**
 (Source → Preview/Edit → Create):
@@ -342,7 +458,7 @@ Field/collection names are normalized to lowercase `[a-z0-9_]`; reserved system 
 
 ---
 
-## 7. Managing via the standard PocketBase UI (`/_/`)
+## 8. Managing via the standard PocketBase UI (`/_/`)
 
 The classic PocketBase admin console is **always available** on top of PBX (at `/_/`); it is
 not disabled. It is useful for things the PBX UI does not cover.
@@ -387,7 +503,7 @@ Field editor, and use the field editor. On save, PocketBase creates/updates/may 
 
 ---
 
-## 8. Mobile
+## 9. Mobile
 
 PBX auto-detects phone/tablet browsers (server-side **User-Agent**) and redirects the desktop
 route to a `/mobile/...` equivalent:
@@ -410,9 +526,9 @@ wizards — they are superuser tools.
 
 ---
 
-## 9. Reference: routes & data
+## 10. Reference: routes & data
 
-### 9.1 Web routes
+### 10.1 Web routes
 
 | Method+Path | Purpose |
 |-------------|---------|
@@ -431,18 +547,20 @@ wizards — they are superuser tools.
 | `GET /mobile/app` · `/mobile/tabular/...` · `/mobile/form/...` · `/mobile/ai` | Mobile views. |
 | `POST /mobile/form/...` · `/mobile/form/.../{id}/delete` | Mobile form create / update / delete. |
 | `GET /ai` · `POST /ai/chat` · `POST /ai/confirm` | AI agent chat + confirm modal. |
+| `GET /api/actions/{collectionName}` | List custom actions for a collection. |
+| `POST /actions/execute` | Run a custom action (`{actionId, recordIds}`). |
 | `GET /api/ai/status` · `/api/ai-config` | AI status / config. |
 | `POST /api/theme/{mode}` | Persist global default theme. |
 | `POST /api/mssql-dsn` | Persist global DSN. |
 | `GET /pbx-setup` (superuser landing) + record editors + collection rules editor | Superuser setup hub. |
-| `GET /pbx-setup/record/{coll}/{id}` | Record editor for `_app` / `_views` / `_agent`. |
+| `GET /pbx-setup/record/{coll}/{id}` | Record editor for `_app` / `_views` / `_agent` / `_actions`. |
 | `POST /pbx-setup/record/{coll}` · `/{id}` · `/{id}/delete` | Save/delete system records. |
 | `POST /pbx-setup/rules` | Save collection API rules. |
 | `GET /pbx-config` | Config editor overview (list/form configs, edit/delete links). |
 | `GET /pbx-config/view/new` · `/view/{name}` · `POST /pbx-config/save` · `/delete` | JSON config editor. |
 | `GET/POST /pbx-config/import-excel` · `/pbx-config/import-mssql` | Collection-from-source wizard. |
 
-### 9.2 Template files
+### 10.2 Template files
 
 | Template | Backs |
 |----------|-------|
@@ -456,7 +574,7 @@ wizards — they are superuser tools.
 | `import-wizard.html` | Excel / MSSQL collection wizard |
 | `agent.html` | AI agent chat |
 
-### 9.3 System (underscore) collections
+### 10.3 System (underscore) collections
 
 | Collection | Purpose | Edited from |
 |------------|----------|-------------|
@@ -466,10 +584,11 @@ wizards — they are superuser tools.
 | `_app` | Dashboard links/groups/icons | `/pbx-setup` record editor |
 | `_views` | List+form config (JSON) | `/pbx-config` |
 | `_agent` | AI agent config | `/pbx-setup` → AI agent |
+| `_actions` | Custom action scripts | `/pbx-setup` record editor |
 | `_filters` | Saved advanced filters | saved per-user from `/tabular` |
 | `_metadata` | PocketBase internals | `/_/` (system) |
 
-### 9.4 Migration lifecycle
+### 10.4 Migration lifecycle
 
 When you start `serve`, PocketBase runs any new `pb_migrations/*.js` scripts. Every schema
 change (fields, new columns, etc.) is captured this way. PBX ships migration scripts that
@@ -477,6 +596,7 @@ create/extend the underscore collections and the `users._view` landing field.
 
 ---
 
-*This document describes PBX as of **Phase 9** — the named feature set above is complete
+*This document describes PBX as of **Phase 10** — the named feature set above is complete
 up to the config model & routing, superuser setup/config editing, view-collection editing,
-Excel/MSSQL sync, the collection-from-wizard, mobile views, and the per-user `_view` landing.*
+Excel/MSSQL sync, the collection-from-wizard, mobile views, the per-user `_view` landing,
+and custom actions.*

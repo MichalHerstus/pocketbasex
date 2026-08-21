@@ -67,6 +67,12 @@
         .f-row select, .f-row input { padding: 8px; border: 1px solid #ccc; border-radius: 6px; font-size: .9rem; outline: none; min-width: 0; }
         .f-field { flex: 1.4; }
         .f-op { flex: .5; }
+        .action-result-out { background: #f6f8fa; border: 1px solid #eee; border-radius: 6px; padding: 10px 12px; font-family: monospace; font-size: .85rem; line-height: 1.5; white-space: pre-wrap; max-height: 320px; overflow-y: auto; margin-bottom: 12px; }
+        .action-result-out:empty { display: none; }
+        .action-status { padding: 8px 12px; border-radius: 6px; font-size: .9rem; font-weight: 600; }
+        .action-status.ok { background: #d4edda; color: #155724; }
+        .action-status.err { background: #f8d7da; color: #721c24; }
+        .row-check { width: 34px; text-align: center; cursor: pointer; }
         .f-val { flex: 1; }
         .f-val input, .f-val select { width: 100%; box-sizing: border-box; }
         .f-param { flex-shrink: 0; display: flex; align-items: center; gap: 3px; font-size: .8rem; color: #666; cursor: pointer; white-space: nowrap; }
@@ -106,12 +112,19 @@
             <img src="/assets/Upload-Brackets--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="Export"> Export
         </button>
         <a href="{{.BasePath}}/form/{{.ConfigName}}" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">+ Add new</a>
+        <select id="actionSelect" style="padding:8px 12px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;min-width:170px;">
+            <option value="">— Actions —</option>
+        </select>
+        <button id="runActionBtn" style="padding:8px 16px;background:var(--btn-danger);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">Run</button>
     </div>
 
     <div class="table-wrap">
         <table>
             <thead>
                 <tr>
+                    <th class="row-check">
+                        <input type="checkbox" id="selectAllChk" title="Select all">
+                    </th>
                     {{range $i, $h := $.ColumnHeaders}}
                     <th class="{{if $.Config.ColumnSorting}}sortable{{end}}" data-field="{{index $.Fields $i}}">
                         {{$h}}
@@ -290,6 +303,20 @@
         </div>
     </div>
 
+    <!-- Action result modal -->
+    <div class="modal-overlay" id="actionResultModal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Action Result</h3>
+                <button class="modal-close" onclick="closeActionResultModal()">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="action-result-out" id="actionResultOutput"></div>
+                <div class="action-status" id="actionResultStatus"></div>
+            </div>
+        </div>
+    </div>
+
     <script>
         const fields = {{.FieldsJSON | safeJS}};
         const fieldTypes = {{.FieldTypesJSON | safeJS}};
@@ -409,11 +436,12 @@
 
             var tbody = document.getElementById("tableBody");
             if (!pageRecords.length) {
-                tbody.innerHTML = '<tr><td class="empty" colspan="' + (fields.length + 1) + '">No records found</td></tr>';
+                tbody.innerHTML = '<tr><td class="empty" colspan="' + (fields.length + 2) + '">No records found</td></tr>';
             } else {
                 var configName = "{{.ConfigName}}";
                 tbody.innerHTML = pageRecords.map(function(r) {
                     return "<tr>" +
+                        '<td class="row-check"><input type="checkbox" class="row-chk" value="' + r.id + '"></td>' +
                         fields.map(function(f, i) { return "<td>" + renderCell(r[f], fieldTypes[i]) + "</td>"; }).join("") +
                         '<td style="white-space:nowrap">' +
                         '<a href="{{.BasePath}}/form/' + configName + '/' + r.id + '?view=1" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid var(--btn-neutral);border-radius:4px;margin-right:4px;line-height:0">' +
@@ -1392,6 +1420,106 @@
             fetch('/api/theme/' + next, { method: 'POST' }).catch(function(){});
         }
         applyTheme(currentTheme());
+
+        // ---- custom actions ----
+        var actionList = [];
+        var actionOptions = {}; // actionId -> {onForm, onList}
+
+        function loadActions() {
+            fetch('/api/actions/{{.CollectionName}}')
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    actionList = data.actions || [];
+                    var sel = document.getElementById('actionSelect');
+                    // clear existing options except the placeholder
+                    while (sel.options.length > 1) sel.remove(1);
+                    actionList.forEach(function(a) {
+                        if (a.onList === false) return;
+                        var opt = document.createElement('option');
+                        opt.value = a.id;
+                        opt.textContent = a.name;
+                        opt.title = a.description || '';
+                        sel.add(opt);
+                    });
+                    actionOptions = {};
+                    actionList.forEach(function(a) { actionOptions[a.id] = a; });
+                })
+                .catch(function(){});
+        }
+
+        function selectedIds() {
+            return Array.prototype.map.call(
+                document.querySelectorAll('.row-chk:checked'),
+                function(cb) { return cb.value; });
+        }
+
+        document.getElementById('selectAllChk').addEventListener('change', function() {
+            var checked = this.checked;
+            document.querySelectorAll('.row-chk').forEach(function(cb) { cb.checked = checked; });
+        });
+
+        // select-all applies to all rows on any given page after re-render
+        function syncSelectAll() {
+            var chks = document.querySelectorAll('.row-chk');
+            var all = chks.length > 0;
+            chks.forEach(function(cb) { if (!cb.checked) all = false; });
+            document.getElementById('selectAllChk').checked = all && chks.length > 0;
+        }
+
+        document.getElementById('runActionBtn').addEventListener('click', function() {
+            var actionId = document.getElementById('actionSelect').value;
+            if (!actionId) { alert('Select an action first.'); return; }
+            var ids = selectedIds();
+            var action = actionOptions[actionId];
+            var confirmed = true;
+            if (!ids.length && action && action.onList !== undefined) {
+                // no selection: run on all visible records
+                confirmed = confirm("No records selected. Run this action on all visible records?");
+            }
+            if (!confirmed) return;
+            runAction(actionId, ids);
+        });
+
+        function runAction(actionId, ids) {
+            var btn = document.getElementById('runActionBtn');
+            var prev = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = 'Running…';
+            fetch('/actions/execute', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ actionId: actionId, recordIds: ids })
+            })
+            .then(function(r) { return r.json().then(function(j) { return { ok: r.ok, body: j }; }); })
+            .then(function(resp) {
+                var body = resp.body || {};
+                showActionResult(body);
+            })
+            .catch(function(err) {
+                showActionResult({ ok: false, error: String(err) });
+            })
+            .finally(function() {
+                btn.disabled = false;
+                btn.textContent = prev;
+            });
+        }
+
+        function showActionResult(res) {
+            var out = document.getElementById('actionResultOutput');
+            var status = document.getElementById('actionResultStatus');
+            out.textContent = (res.output || []).join('\n');
+            status.className = 'action-status ' + (res.ok !== false ? 'ok' : 'err');
+            status.textContent = res.ok === false
+                ? ('Error: ' + (res.error || 'unknown error'))
+                : ('Success' + (res.affected ? ' — ' + res.affected + ' record(s) affected' : ''));
+            document.getElementById('actionResultModal').classList.add('open');
+        }
+
+        function closeActionResultModal() {
+            document.getElementById('actionResultModal').classList.remove('open');
+        }
+
+        loadActions();
     </script>
 </body>
 </html>

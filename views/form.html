@@ -48,6 +48,12 @@
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">
         <h1 style="margin:0">{{.Title}}{{if .ViewOnly}} — view{{else if .ID}} — edit{{end}}</h1>
         <button type="button" id="themeBtn" onclick="toggleTheme()" style="padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1.1rem;cursor:pointer;">🌙</button>
+        {{if .ID}}
+        <select id="actionSelect" style="padding:8px 12px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;min-width:170px;">
+            <option value="">— Actions —</option>
+        </select>
+        <button id="runActionBtn" style="padding:8px 16px;background:var(--btn-danger);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">Run</button>
+        {{end}}
         <button type="button" onclick="goBack('{{.BasePath}}/app')" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;margin-left:auto;">Close</button>
     </div>
 
@@ -213,6 +219,21 @@
         {{end}}
     </form>
 
+    {{if .ID}}
+    <div class="modal-overlay" id="actionResultModal" style="display:none;position:fixed;z-index:1000;left:0;top:0;width:100%;height:100%;background:rgba(0,0,0,.4);align-items:center;justify-content:center;">
+        <div style="background:#fff;border-radius:10px;max-width:80vw;max-height:80vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 4px 24px rgba(0,0,0,.2);">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid #eee;">
+                <h3 style="margin:0;font-size:1.1rem;">Action Result</h3>
+                <button onclick="closeActionResultModal()" style="background:none;border:none;font-size:1.4rem;cursor:pointer;color:#999;padding:0 6px;">&times;</button>
+            </div>
+            <div style="padding:16px 20px;overflow-y:auto;">
+                <div style="background:#f6f8fa;border:1px solid #eee;border-radius:6px;padding:10px 12px;font-family:monospace;font-size:.85rem;line-height:1.5;white-space:pre-wrap;max-height:320px;overflow-y:auto;margin-bottom:12px;" id="actionResultOutput"></div>
+                <div style="padding:8px 12px;border-radius:6px;font-size:.9rem;font-weight:600;" id="actionResultStatus"></div>
+            </div>
+        </div>
+    </div>
+    {{end}}
+
     <script>
     document.addEventListener('DOMContentLoaded', function() {
         document.querySelectorAll('.json-display').forEach(function(el) {
@@ -245,6 +266,74 @@
         fetch('/api/theme/' + next, { method: 'POST' }).catch(function(){});
     }
     applyTheme(currentTheme());
+
+    {{if .ID}}
+    // ---- custom actions (form view, single record) ----
+    var recordId = "{{.ID}}";
+    var actionOptions = {};
+
+    function loadActions() {
+        fetch('/api/actions/{{.CollectionName}}')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                var sel = document.getElementById('actionSelect');
+                (data.actions || []).forEach(function(a) {
+                    if (a.onForm === false) return;
+                    var opt = document.createElement('option');
+                    opt.value = a.id;
+                    opt.textContent = a.name;
+                    opt.title = a.description || '';
+                    sel.add(opt);
+                    actionOptions[a.id] = a;
+                });
+            })
+            .catch(function(){});
+    }
+
+    document.getElementById('runActionBtn').addEventListener('click', function() {
+        var actionId = document.getElementById('actionSelect').value;
+        if (!actionId) { alert('Select an action first.'); return; }
+        var btn = this;
+        var prev = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Running…';
+        fetch('/actions/execute', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ actionId: actionId, recordIds: [recordId] })
+        })
+        .then(function(r) { return r.json().then(function(j) { return { ok: r.ok, body: j }; }); })
+        .then(function(resp) {
+            var body = resp.body || {};
+            var out = document.getElementById('actionResultOutput');
+            var status = document.getElementById('actionResultStatus');
+            out.textContent = (body.output || []).join('\n');
+            status.style.background = body.ok === false ? '#f8d7da' : '#d4edda';
+            status.style.color = body.ok === false ? '#721c24' : '#155724';
+            status.textContent = body.ok === false
+                ? ('Error: ' + (body.error || 'unknown error'))
+                : ('Success' + (body.affected ? ' — ' + body.affected + ' record(s) affected' : ''));
+            document.getElementById('actionResultModal').style.display = 'flex';
+        })
+        .catch(function(err) {
+            var status = document.getElementById('actionResultStatus');
+            status.style.background = '#f8d7da';
+            status.style.color = '#721c24';
+            status.textContent = 'Error: ' + String(err);
+            document.getElementById('actionResultModal').style.display = 'flex';
+        })
+        .finally(function() {
+            btn.disabled = false;
+            btn.textContent = prev;
+        });
+    });
+
+    function closeActionResultModal() {
+        document.getElementById('actionResultModal').style.display = 'none';
+    }
+
+    loadActions();
+    {{end}}
     </script>
 </body>
 </html>

@@ -63,6 +63,8 @@ No CI, no test runner. `pbai/agent_test.go` has unit tests (run with `go test ./
 | `GET /ai` | AI agent chat | Chat UI (`agent.html`), linked from `/app` |
 | `POST /ai/chat` | AI agent chat | Run agent loop; returns `{transcript, finalText, pendingAction?}` |
 | `POST /ai/confirm` | AI agent confirm | Approve/reject a pending write action (`{actionID, approved}`) |
+| `GET /api/actions/{collectionName}` | list actions | Actions for a collection (all for superusers, `_public` only otherwise) |
+| `POST /actions/execute` | run action | Execute a custom action (`{actionID, recordIds}`) → `{ok, output[], affected}` |
 | `GET /assets/{path...}` | static | Serves `views/assets/` files |
 
 **Auth**: Cookie-based `pb_auth` (JWT via PocketBase). Login uses `FindAuthRecordByEmail("users", ...)` — name field is the email. NB: PocketBase's `loadAuthToken` middleware only reads the `Authorization` header, NOT the `pb_auth` cookie, so `e.RequestInfo().Auth` is nil on custom routes. The AI handlers resolve the cookie manually via `agentRequestInfo()` (main.go).
@@ -136,7 +138,15 @@ Configures the `/app` dashboard. Fields:
 
 ## Collections (from `_app`, `_tabulator`, `_form` records in DB)
 
-`zamestnanci`, `produkty`, `karta_majetku`, `inventury`, `inv_radky`, `cinnosti`, `mapa_umisteni`, `umisteni`, `organizacni_struktura`, `kat_produktu`, `definice_stitku`, `poznamky`. System: `users` (auth), `roles`, `_views`, `_app`, `_metadata`, `_agent`, `_filters`.
+`zamestnanci`, `produkty`, `karta_majetku`, `inventury`, `inv_radky`, `cinnosti`, `mapa_umisteni`, `umisteni`, `organizacni_struktura`, `kat_produktu`, `definice_stitku`, `poznamky`. System: `users` (auth), `roles`, `_views`, `_app`, `_metadata`, `_agent`, `_filters`, `_actions`.
+
+## Custom actions (`pbactions` package)
+
+User-defined Goja (JavaScript) scripts that run from the tabular and form views (Phase 10). Package `pbactions/` (`types.go`, `runner.go`, `builtins.go`).
+
+- **`_actions` collection**: `_name` (text req), `_description` (text), `_script` (editor req), `_collection` (text req), `_onList`/`_onForm`/`_public` (bool). Rules are `nil` (superuser only) — actions are created/edited via the `/pbx-setup` record editor (the Setup page lists `_actions`). Non-superusers only see/run `_public` actions.
+- **Execution** (`runner.go`): fresh Goja VM per run, 10-second timeout via `vm.Interrupt()`, injects `record`/`records` (selected ids, filtered by `viewRule`). Builtins (`builtins.go`): `select`, `get`, `count`, `insert`, `update`, `delete`, `log`, `currentUser`, `currentRecord`, `selectedRecords`. Each enforces the PB rules for the caller; `insert` uses a create-rule check, `update`/`delete` use `updateRule`/`deleteRule` per record. Affected count accumulates writes.
+- **Routes**: `GET /api/actions/{collectionName}` (list; `_public` only for non-superusers), `POST /actions/execute` (`{actionId, recordIds}` → `{ok, output[], affected}`).
 
 ## AI agent (`pbai` package)
 
@@ -164,6 +174,7 @@ Add/modify collection fields via **JS SDK** in `pb_migrations/`. See `.opencode/
 - `pbexcel/` — Excel import/export logic (`pb-excel.go`); also `IntrospectSheet` (header/type detection) for the collection wizard
 - `pbmssql/` — MSSQL import/export/introspection logic (`pb-mssql.go`)
 - `pbai/` — AI agent (`llm.go`, `agent.go`, `tools.go`, `ingest.go`)
+- `pbactions/` — custom action engine (`types.go`, `runner.go`, `builtins.go`)
 - `views/import-wizard.html` — shared 3-step wizard: Source → Preview/Edit → Create (used by both Excel and MSSQL collection import)
 - `views/pages.go` — Go structs for template data (`TabulatorPageData`, `FormPageData`, `AppPageData`, `ImportWizardPageData`, etc.)
 - No `README.md` exists

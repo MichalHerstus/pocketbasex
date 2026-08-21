@@ -33,6 +33,13 @@
             </select>
         </div>
 
+        <div class="m-filterbar" style="margin-bottom:12px;">
+            <select id="actionSelect" style="flex:1;">
+                <option value="">— Actions —</option>
+            </select>
+            <button id="runActionBtn" class="m-btn m-btn-danger" style="flex:.5;">Run</button>
+        </div>
+
         <div id="recordsList"></div>
 
         {{if .Config.Pagination}}
@@ -491,10 +498,84 @@
         }
         applyTheme(currentTheme());
 
+        // ---- custom actions ----
+        var actionList = [];
+        var actionOptions = {};
+
+        function loadActions() {
+            fetch('/api/actions/' + configName)
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    actionList = data.actions || [];
+                    var sel = document.getElementById('actionSelect');
+                    while (sel.options.length > 1) sel.remove(1);
+                    actionList.forEach(function(a) {
+                        if (a.onList === false) return;
+                        var opt = document.createElement('option');
+                        opt.value = a.id;
+                        opt.textContent = a.name;
+                        opt.title = a.description || '';
+                        sel.add(opt);
+                        actionOptions[a.id] = a;
+                    });
+                })
+                .catch(function(){});
+        }
+
+        // actions apply to all filtered (visible) records
+        function actionIds() {
+            return getFiltered().map(function(r) { return r.id; });
+        }
+
+        document.getElementById('runActionBtn').addEventListener('click', function() {
+            var actionId = document.getElementById('actionSelect').value;
+            if (!actionId) { alert('Select an action first.'); return; }
+            var ids = actionIds();
+            if (!ids.length) { alert('No records to run this action on.'); return; }
+            var btn = this;
+            btn.disabled = true;
+            fetch('/actions/execute', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ actionId: actionId, recordIds: ids })
+            })
+            .then(function(r) { return r.json().then(function(j) { return { ok: r.ok, body: j }; }); })
+            .then(function(resp) { showActionResult(resp.body || {}); })
+            .catch(function(err) { showActionResult({ ok: false, error: String(err) }); })
+            .finally(function() { btn.disabled = false; });
+        });
+
+        function showActionResult(res) {
+            document.getElementById('resultOutput').textContent = (res.output || []).join('\n');
+            var status = document.getElementById('resultStatus');
+            status.style.background = res.ok === false ? '#f8d7da' : '#d4edda';
+            status.style.color = res.ok === false ? '#721c24' : '#155724';
+            status.textContent = res.ok === false
+                ? ('Error: ' + (res.error || 'unknown error'))
+                : ('Success' + (res.affected ? ' — ' + res.affected + ' record(s) affected' : ''));
+            document.getElementById('resultModal').style.display = 'flex';
+        }
+        function closeResultModal() {
+            document.getElementById('resultModal').style.display = 'none';
+        }
+
+        loadActions();
+
         document.addEventListener('DOMContentLoaded', function() {
             render();
             loadSavedFilters().catch(function() {}).then(function() { render(); });
         });
     </script>
+
+    <div class="m-modal-overlay" id="resultModal" style="display:none;">
+        <div class="m-modal">
+            <h3>Action Result</h3>
+            <div style="background:#f6f8fa;border:1px solid #eee;border-radius:6px;padding:10px 12px;font-family:monospace;font-size:.85rem;line-height:1.5;white-space:pre-wrap;max-height:50vh;overflow-y:auto;margin-bottom:12px;" id="resultOutput"></div>
+            <div style="padding:8px 12px;border-radius:6px;font-size:.9rem;font-weight:600;" id="resultStatus"></div>
+            <div class="m-modal-actions">
+                <button type="button" class="m-use" onclick="closeResultModal()">Close</button>
+            </div>
+        </div>
+    </div>
 </body>
 </html>

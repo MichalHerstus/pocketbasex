@@ -3,8 +3,12 @@ module pbx
 go 1.26.3
 
 require (
+	github.com/dop251/goja v0.0.0-20260311135729-065cd970411c
+	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728
 	github.com/microsoft/go-mssqldb v1.10.0
+	github.com/pocketbase/dbx v1.12.0
 	github.com/pocketbase/pocketbase v0.39.0
+	github.com/sashabaranov/go-openai v1.42.0
 	github.com/xuri/excelize/v2 v2.11.0
 )
 
@@ -14,7 +18,6 @@ require (
 	github.com/dlclark/regexp2 v1.11.5 // indirect
 	github.com/domodwyer/mailyak/v3 v3.6.2 // indirect
 	github.com/dop251/base64dec v0.0.0-20231022112746-c6c9f9a96217 // indirect
-	github.com/dop251/goja v0.0.0-20260311135729-065cd970411c // indirect
 	github.com/dop251/goja_nodejs v0.0.0-20260212111938-1f56ff5bcf14 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/fatih/color v1.19.0 // indirect
@@ -29,15 +32,12 @@ require (
 	github.com/google/pprof v0.0.0-20260402051712-545e8a4df936 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/ledongthuc/pdf v0.0.0-20250511090121-5959a4027728 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
-	github.com/pocketbase/dbx v1.12.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/richardlehane/mscfb v1.0.7 // indirect
 	github.com/richardlehane/msoleps v1.0.6 // indirect
-	github.com/sashabaranov/go-openai v1.42.0 // indirect
 	github.com/shopspring/decimal v1.4.0 // indirect
 	github.com/spf13/cast v1.10.0 // indirect
 	github.com/spf13/cobra v1.10.2 // indirect
