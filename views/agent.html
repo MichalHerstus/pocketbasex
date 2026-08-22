@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{.Lang}}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI agent</title>
+    <title>{{t .Lang "agent.title"}} - PBX</title>
     <style>
         * { box-sizing: border-box; }
         body { font-family: sans-serif; margin: 0; padding: 0; background: var(--body-bg, #f5f5f5); color: #333; height: 100vh; display: flex; flex-direction: column; }
@@ -73,36 +73,38 @@
         #spinTime { margin-left: 6px; font-variant-numeric: tabular-nums; }
     </style>
     <link rel="stylesheet" href="/assets/theme.css">
+    <script src="/api/lang/{{.Lang}}/catalog.js"></script>
 </head>
 <body data-theme="{{.Theme}}">
     <div class="topbar">
         <button type="button" id="themeBtn" onclick="toggleTheme()" style="padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1.1rem;cursor:pointer;">🌙</button>
-        <span class="title">AI agent</span>
+        <button type="button" onclick="toggleLang()" style="padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">{{if eq .Lang "cs"}}EN{{else}}CS{{end}}</button>
+        <span class="title">{{t .Lang "agent.title"}}</span>
         <span id="status" class="status {{if not .Config.Enabled}}bad{{end}}">{{.Status}}</span>
-        <button type="button" onclick="newChat()" style="padding:8px 16px;background:var(--btn-neutral,#6c757d);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;margin-left:auto;">New chat</button>
-        <button type="button" onclick="goBack('{{.BasePath}}/app')" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">Close</button>
+        <button type="button" onclick="newChat()" style="padding:8px 16px;background:var(--btn-neutral,#6c757d);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;margin-left:auto;">{{t .Lang "agent.newChat"}}</button>
+        <button type="button" onclick="goBack('{{.BasePath}}/app')" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">{{t .Lang "common.close"}}</button>
     </div>
 
     <div id="chat"></div>
 
     <div class="inputbar">
         <span id="fileChip" class="filechip" style="display:none;"></span>
-        <input type="text" id="messageInput" placeholder="Ask about your data, e.g. 'How many products are there?' or 'Add this product: ...'" autocomplete="off">
+        <input type="text" id="messageInput" placeholder="{{t .Lang "agent.placeholder"}}" autocomplete="off">
         <button type="button" class="btn-neutral" onclick="document.getElementById('fileInput').click();">📎</button>
         <input type="file" id="fileInput" style="display:none;" onchange="fileChosen(this)">
-        <button type="button" class="btn-primary" onclick="send()">Send</button>
+        <button type="button" class="btn-primary" onclick="send()">{{t .Lang "agent.send"}}</button>
     </div>
 
-    <div class="spinner" id="spinner">Thinking<span class="d"></span><span class="d"></span><span class="d"></span><span id="spinTime"></span></div>
+    <div class="spinner" id="spinner">{{t .Lang "agent.thinking"}}<span class="d"></span><span class="d"></span><span class="d"></span><span id="spinTime"></span></div>
 
     <div class="modal-overlay" id="confirmModal">
         <div class="modal">
-            <h3>Confirm action</h3>
+            <h3>{{t .Lang "agent.confirmTitle"}}</h3>
             <div class="summary" id="confirmSummary"></div>
             <pre id="confirmDetail"></pre>
             <div class="actions">
-                <button type="button" class="reject" onclick="confirmAction(false)">Reject</button>
-                <button type="button" class="approve" onclick="confirmAction(true)">Approve &amp; execute</button>
+                <button type="button" class="reject" onclick="confirmAction(false)">{{t .Lang "agent.reject"}}</button>
+                <button type="button" class="approve" onclick="confirmAction(true)">{{t .Lang "agent.approveExecute"}}</button>
             </div>
         </div>
     </div>
@@ -537,6 +539,13 @@
             var t = localStorage.getItem('pbx-theme');
             if (t === 'dark' || t === 'light') return t;
             return document.body.getAttribute('data-theme') || 'light';
+        }
+        function toggleLang() {
+            var next = document.documentElement.lang === 'cs' ? 'en' : 'cs';
+            var d = new Date(); d.setTime(d.getTime() + 365*24*3600*1000);
+            document.cookie = 'pb_lang=' + next + ';path=/;expires=' + d.toUTCString();
+            fetch('/api/lang/' + next, { method: 'POST' }).catch(function(){});
+            window.location.reload();
         }
         function applyTheme(mode) {
             document.body.setAttribute('data-theme', mode);

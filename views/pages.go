@@ -1,5 +1,12 @@
 package views
 
+// LangData carries the active UI language for a rendered page. It is embedded
+// in every page data struct so templates can call {{t .Lang "key"}} and the
+// client-side catalog URL keeps working across pages.
+type LangData struct {
+	Lang string
+}
+
 type TopbarData struct {
 	BaseURL       string
 	ShowSearchBar bool
@@ -107,6 +114,7 @@ type ViewFormConfig struct {
 }
 
 type TabulatorPageData struct {
+	LangData
 	Theme            string
 	BasePath         string
 	ConfigName       string
@@ -177,6 +185,7 @@ type FormConfigJSON struct {
 }
 
 type FormPageData struct {
+	LangData
 	Theme          string
 	BasePath       string
 	ConfigName     string
@@ -204,6 +213,7 @@ type AppGroup struct {
 }
 
 type AppPageData struct {
+	LangData
 	Theme    string
 	BasePath string
 	Name     string
@@ -212,6 +222,7 @@ type AppPageData struct {
 }
 
 type PbxSetupPageData struct {
+	LangData
 	Theme    string
 	MssqlDSN string
 	Agent    AgentConfig
@@ -269,6 +280,7 @@ type AgentConfig struct {
 
 // AgentPageData backs the /ai agent chat page.
 type AgentPageData struct {
+	LangData
 	Theme    string
 	BasePath string
 	Name     string
@@ -287,6 +299,7 @@ type ConfigEntry struct {
 }
 
 type PbxConfigPageData struct {
+	LangData
 	Theme       string
 	ListConfigs []ConfigEntry
 	FormConfigs []ConfigEntry
@@ -295,6 +308,7 @@ type PbxConfigPageData struct {
 // ConfigEditorPageData backs the /pbx-config/view/new|{name} editor form for a
 // unified _views record (holds list + form config in one record).
 type ConfigEditorPageData struct {
+	LangData
 	Theme         string
 	Name          string
 	CollName      string
@@ -342,6 +356,7 @@ type JsonFormSection struct {
 
 // SetupRecordPageData backs the /pbx-setup/record/{coll}/... editors.
 type SetupRecordPageData struct {
+	LangData
 	Theme        string
 	CollName     string
 	RecordID     string
@@ -364,6 +379,7 @@ type WizardColumn struct {
 
 // ImportWizardPageData backs the /pbx-config/import-* wizard.
 type ImportWizardPageData struct {
+	LangData
 	Theme     string
 	Source    string // "excel" | "mssql"
 	Step      int    // 1 = source, 2 = preview, 3 = done

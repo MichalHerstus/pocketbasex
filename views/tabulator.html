@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{.Lang}}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -84,38 +84,40 @@
         .filter-note { font-size: .8rem; color: #e67e22; margin-top: 4px; }
     </style>
     <link rel="stylesheet" href="/assets/theme.css">
+    <script src="/api/lang/{{.Lang}}/catalog.js"></script>
 </head>
 <body data-theme="{{.Theme}}">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">
         <h1 style="margin:0">{{if .Config.PageTitle}}{{.Config.PageTitle}}{{else}}{{.CollectionName}}{{end}}</h1>
         <button type="button" id="themeBtn" onclick="toggleTheme()" style="padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1.1rem;cursor:pointer;">🌙</button>
-        <button type="button" onclick="window.location.href='/app'" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;margin-left:auto;">Close</button>
+        <button type="button" onclick="toggleLang()" style="padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">{{if eq .Lang "cs"}}EN{{else}}CS{{end}}</button>
+        <button type="button" onclick="window.location.href='/app'" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;margin-left:auto;">{{t .Lang "common.close"}}</button>
     </div>
-    <div class="subtitle">{{.TotalRecords}} record{{if ne .TotalRecords 1}}s{{end}}</div>
+    <div class="subtitle">{{.TotalRecords}} {{if eq .TotalRecords 1}}{{t .Lang "common.recordWord"}}{{else}}{{t .Lang "common.recordsWord"}}{{end}}</div>
     {{if .Config.CollectionDescr}}<div class="descr">{{.Config.CollectionDescr}}</div>{{end}}
 
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
         {{if .Config.SearchBox}}
         <div class="search-box" style="margin-bottom:0;display:flex;align-items:center;gap:4px;">
-            <input type="text" id="searchInput" placeholder="Search across all columns…" style="flex:1;">
-            <button id="searchClearBtn" style="padding:4px 8px;background:none;border:none;cursor:pointer;font-size:1rem;color:#888;" title="Clear search">&times;</button>
+            <input type="text" id="searchInput" placeholder="{{t .Lang "common.searchPlaceholder"}}" style="flex:1;">
+            <button id="searchClearBtn" style="padding:4px 8px;background:none;border:none;cursor:pointer;font-size:1rem;color:#888;" title="{{t .Lang "common.clearSearch"}}">&times;</button>
         </div>
         {{end}}
         <select id="filterSelect" style="padding:8px 12px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;min-width:180px;">
-            <option value="">-- All records --</option>
+            <option value="">{{t .Lang "tabulator.allRecords"}}</option>
         </select>
-        <button id="editFiltersBtn" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">Edit filters</button>
+        <button id="editFiltersBtn" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">{{t .Lang "tabulator.editFilters"}}</button>
         <button id="importBtn" style="margin-left:auto;padding:8px 16px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
-            <img src="/assets/Monitor-Download--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="Import"> Import
+            <img src="/assets/Monitor-Download--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="{{t .Lang "tabulator.import"}}"> {{t .Lang "tabulator.import"}}
         </button>
         <button id="exportBtn" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
-            <img src="/assets/Upload-Brackets--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="Export"> Export
+            <img src="/assets/Upload-Brackets--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="{{t .Lang "tabulator.export"}}"> {{t .Lang "tabulator.export"}}
         </button>
-        <a href="{{.BasePath}}/form/{{.ConfigName}}" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">+ Add new</a>
+        <a href="{{.BasePath}}/form/{{.ConfigName}}" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">{{t .Lang "tabulator.addNew"}}</a>
         <select id="actionSelect" style="padding:8px 12px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;min-width:170px;">
-            <option value="">— Actions —</option>
+            <option value="">— {{t .Lang "common.actions"}} —</option>
         </select>
-        <button id="runActionBtn" style="padding:8px 16px;background:var(--btn-danger);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">Run</button>
+        <button id="runActionBtn" style="padding:8px 16px;background:var(--btn-danger);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">{{t .Lang "common.run"}}</button>
     </div>
 
     <div class="table-wrap">
@@ -123,7 +125,7 @@
             <thead>
                 <tr>
                     <th class="row-check">
-                        <input type="checkbox" id="selectAllChk" title="Select all">
+                        <input type="checkbox" id="selectAllChk" title="{{t .Lang "common.selectAll"}}">
                     </th>
                     {{range $i, $h := $.ColumnHeaders}}
                     <th class="{{if $.Config.ColumnSorting}}sortable{{end}}" data-field="{{index $.Fields $i}}">
@@ -131,7 +133,7 @@
                         {{if $.Config.ColumnSorting}}<span class="sort-icon">↕</span>{{end}}
                     </th>
                     {{end}}
-                    <th style="width:130px">Actions</th>
+                    <th style="width:130px">{{t .Lang "common.actions"}}</th>
                 </tr>
             </thead>
             <tbody id="tableBody"></tbody>
@@ -153,7 +155,7 @@
     <div class="modal-overlay" id="relModal">
         <div class="modal-content">
             <div class="modal-header">
-                <h3 id="relModalTitle">Related records</h3>
+                <h3 id="relModalTitle">{{t .Lang "common.relatedRecords"}}</h3>
                 <button class="modal-close" onclick="closeRelModal()">&times;</button>
             </div>
             <div class="modal-body" id="relModalBody"></div>
@@ -164,33 +166,33 @@
     <div class="modal-overlay" id="importModal">
         <div class="modal-content" style="max-width:400px;">
             <div class="modal-header">
-                <h3>Import from Excel</h3>
+                <h3>{{t .Lang "tabulator.importFromExcel"}}</h3>
                 <button class="modal-close" onclick="closeImportModal()">&times;</button>
             </div>
             <div class="modal-body">
                 <form id="importForm" action="/import/{{.CollectionName}}" method="POST">
-                    <label style="display:block;margin-bottom:6px;font-size:.9rem;font-weight:600;">File name</label>
+                    <label style="display:block;margin-bottom:6px;font-size:.9rem;font-weight:600;">{{t .Lang "tabulator.fileName"}}</label>
                     <input type="text" name="excelFileName" value="{{.CollectionName}}" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;margin-bottom:12px;outline:none;box-sizing:border-box;">
 
-                    <label style="display:block;margin-bottom:6px;font-size:.9rem;font-weight:600;">Sheet name</label>
+                    <label style="display:block;margin-bottom:6px;font-size:.9rem;font-weight:600;">{{t .Lang "tabulator.sheetName"}}</label>
                     <input type="text" name="sheetName" value="Sheet1" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;margin-bottom:12px;outline:none;box-sizing:border-box;">
 
-                    <label style="display:block;margin-bottom:6px;font-size:.9rem;font-weight:600;">Mode</label>
+                    <label style="display:block;margin-bottom:6px;font-size:.9rem;font-weight:600;">{{t .Lang "tabulator.mode"}}</label>
                     <div style="margin-bottom:20px;">
                         <label style="display:inline-flex;align-items:center;gap:4px;margin-right:16px;font-size:.9rem;cursor:pointer;">
-                            <input type="radio" name="mode" value="insert" checked> Insert
+                            <input type="radio" name="mode" value="insert" checked> {{t .Lang "tabulator.insert"}}
                         </label>
                         <label style="display:inline-flex;align-items:center;gap:4px;margin-right:16px;font-size:.9rem;cursor:pointer;">
-                            <input type="radio" name="mode" value="update"> Update
+                            <input type="radio" name="mode" value="update"> {{t .Lang "tabulator.update"}}
                         </label>
                         <label style="display:inline-flex;align-items:center;gap:4px;font-size:.9rem;cursor:pointer;">
-                            <input type="radio" name="mode" value="replace"> Replace
+                            <input type="radio" name="mode" value="replace"> {{t .Lang "tabulator.replace"}}
                         </label>
                     </div>
 
                     <div style="display:flex;gap:8px;">
-                        <button type="submit" style="flex:1;padding:10px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Import</button>
-                        <button type="button" onclick="closeImportModal()" style="flex:1;padding:10px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Cancel</button>
+                        <button type="submit" style="flex:1;padding:10px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">{{t .Lang "tabulator.import"}}</button>
+                        <button type="button" onclick="closeImportModal()" style="flex:1;padding:10px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">{{t .Lang "common.cancel"}}</button>
                     </div>
                 </form>
             </div>
@@ -201,17 +203,17 @@
     <div class="modal-overlay" id="exportModal">
         <div class="modal-content" style="max-width:400px;">
             <div class="modal-header">
-                <h3>Export to Excel</h3>
+                <h3>{{t .Lang "tabulator.exportToExcel"}}</h3>
                 <button class="modal-close" onclick="closeExportModal()">&times;</button>
             </div>
             <div class="modal-body">
-                <label style="display:block;margin-bottom:6px;font-size:.9rem;font-weight:600;">File name</label>
+                <label style="display:block;margin-bottom:6px;font-size:.9rem;font-weight:600;">{{t .Lang "tabulator.fileName"}}</label>
                 <input type="text" id="exportFileName" value="{{.CollectionName}}" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;margin-bottom:12px;outline:none;box-sizing:border-box;">
-                <label style="display:block;margin-bottom:6px;font-size:.9rem;font-weight:600;">Sheet name</label>
+                <label style="display:block;margin-bottom:6px;font-size:.9rem;font-weight:600;">{{t .Lang "tabulator.sheetName"}}</label>
                 <input type="text" id="exportSheetName" value="Sheet1" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;margin-bottom:20px;outline:none;box-sizing:border-box;">
                 <div style="display:flex;gap:8px;">
-                    <button id="exportSubmitBtn" style="flex:1;padding:10px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Export</button>
-                    <button type="button" onclick="closeExportModal()" style="flex:1;padding:10px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Cancel</button>
+                    <button id="exportSubmitBtn" style="flex:1;padding:10px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">{{t .Lang "tabulator.export"}}</button>
+                    <button type="button" onclick="closeExportModal()" style="flex:1;padding:10px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">{{t .Lang "common.cancel"}}</button>
                 </div>
             </div>
         </div>
@@ -222,14 +224,14 @@
     <div class="modal-overlay" id="mssqlModal">
         <div class="modal-content" style="max-width:400px;">
             <div class="modal-header">
-                <h3>MSSQL</h3>
+                <h3>{{t .Lang "tabulator.mssql"}}</h3>
                 <button class="modal-close" onclick="closeMssqlModal()">&times;</button>
             </div>
             <div class="modal-body">
                 <div style="display:flex;gap:8px;">
-                    <button id="mssqlImportBtn" style="flex:1;padding:10px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Import</button>
-                    <button id="mssqlExportBtn" style="flex:1;padding:10px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Export</button>
-                    <button type="button" onclick="closeMssqlModal()" style="flex:1;padding:10px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Cancel</button>
+                    <button id="mssqlImportBtn" style="flex:1;padding:10px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">{{t .Lang "tabulator.import"}}</button>
+                    <button id="mssqlExportBtn" style="flex:1;padding:10px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">{{t .Lang "tabulator.export"}}</button>
+                    <button type="button" onclick="closeMssqlModal()" style="flex:1;padding:10px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">{{t .Lang "common.cancel"}}</button>
                 </div>
             </div>
         </div>
@@ -240,16 +242,16 @@
     <div class="modal-overlay" id="datasourceModal">
         <div class="modal-content" style="max-width:300px;">
             <div class="modal-header">
-                <h3 id="datasourceModalTitle">Choose datasource</h3>
+                <h3 id="datasourceModalTitle">{{t .Lang "tabulator.chooseDatasource"}}</h3>
                 <button class="modal-close" onclick="closeDatasourceModal()">&times;</button>
             </div>
             <div class="modal-body">
                 <div style="display:flex;flex-direction:column;gap:10px;">
-                    <button id="dsExcelBtn" style="padding:12px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Excel</button>
+                    <button id="dsExcelBtn" style="padding:12px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">{{t .Lang "tabulator.excel"}}</button>
                     {{if .Mssql}}
-                    <button id="dsMssqlBtn" style="padding:12px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">MSSQL</button>
+                    <button id="dsMssqlBtn" style="padding:12px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">{{t .Lang "tabulator.mssql"}}</button>
                     {{end}}
-                    <button type="button" onclick="closeDatasourceModal()" style="padding:10px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Cancel</button>
+                    <button type="button" onclick="closeDatasourceModal()" style="padding:10px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">{{t .Lang "common.cancel"}}</button>
                 </div>
             </div>
         </div>
@@ -259,13 +261,13 @@
     <div class="modal-overlay" id="filterModal">
         <div class="modal-content" style="max-width:400px;">
             <div class="modal-header">
-                <h3 id="filterModalTitle">Fill filter parameters</h3>
+                <h3 id="filterModalTitle">{{t .Lang "tabulator.fillParams"}}</h3>
                 <button class="modal-close" onclick="closeFilterModal()">&times;</button>
             </div>
             <div class="modal-body" id="filterModalBody"></div>
             <div style="display:flex;gap:8px;padding:0 20px 20px;">
-                <button onclick="submitFilterParams()" style="flex:1;padding:10px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Use filter</button>
-                <button onclick="cancelFilterParams()" style="flex:1;padding:10px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">Cancel</button>
+                <button onclick="submitFilterParams()" style="flex:1;padding:10px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">{{t .Lang "tabulator.useFilter"}}</button>
+                <button onclick="cancelFilterParams()" style="flex:1;padding:10px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">{{t .Lang "common.cancel"}}</button>
             </div>
         </div>
     </div>
@@ -274,30 +276,30 @@
     <div class="modal-overlay" id="advFilterModal">
         <div class="modal-content" style="max-width:680px;">
             <div class="modal-header">
-                <h3>Edit filters</h3>
+                <h3>{{t .Lang "tabulator.editFilters"}}</h3>
                 <button class="modal-close" onclick="closeAdvFilterModal()">&times;</button>
             </div>
             <div class="modal-body">
                 <div class="filter-section">
-                    <label class="filter-section-label">Saved filters</label>
+                    <label class="filter-section-label">{{t .Lang "tabulator.savedFilters"}}</label>
                     <div class="saved-filter-row">
                         <select id="savedFilterSelect"></select>
-                        <button id="deleteSavedBtn" class="btn-sm btn-danger">Delete filter</button>
+                        <button id="deleteSavedBtn" class="btn-sm btn-danger">{{t .Lang "tabulator.deleteFilter"}}</button>
                     </div>
                 </div>
                 <div class="filter-section">
-                    <label class="filter-section-label">Filter name</label>
+                    <label class="filter-section-label">{{t .Lang "tabulator.filterName"}}</label>
                     <input type="text" id="filterNameInput" placeholder="e.g. Price range">
                 </div>
                 <div class="filter-section">
-                    <label class="filter-section-label">Conditions</label>
+                    <label class="filter-section-label">{{t .Lang "tabulator.conditions"}}</label>
                     <div id="filterBuilder"></div>
-                    <button id="addCondBtn" class="btn-sm btn-primary">+ Add condition</button>
+                    <button id="addCondBtn" class="btn-sm btn-primary">{{t .Lang "tabulator.addCondition"}}</button>
                 </div>
                 <div id="filterBuilderNote" class="filter-note" style="display:none;"></div>
                 <div style="display:flex;gap:8px;margin-top:16px;flex-wrap:wrap;">
-                    <button id="filterSaveBtn" class="btn-sm btn-primary" style="flex:1;">Save</button>
-                    <button class="btn-sm btn-neutral" onclick="closeAdvFilterModal()" style="flex:1;">Close</button>
+                    <button id="filterSaveBtn" class="btn-sm btn-primary" style="flex:1;">{{t .Lang "common.save"}}</button>
+                    <button class="btn-sm btn-neutral" onclick="closeAdvFilterModal()" style="flex:1;">{{t .Lang "common.close"}}</button>
                 </div>
             </div>
         </div>
@@ -307,7 +309,7 @@
     <div class="modal-overlay" id="actionResultModal">
         <div class="modal-content">
             <div class="modal-header">
-                <h3>Action Result</h3>
+                <h3>{{t .Lang "tabulator.actionResult"}}</h3>
                 <button class="modal-close" onclick="closeActionResultModal()">&times;</button>
             </div>
             <div class="modal-body">
@@ -436,7 +438,7 @@
 
             var tbody = document.getElementById("tableBody");
             if (!pageRecords.length) {
-                tbody.innerHTML = '<tr><td class="empty" colspan="' + (fields.length + 2) + '">No records found</td></tr>';
+                tbody.innerHTML = '<tr><td class="empty" colspan="' + (fields.length + 2) + '">' + _t('common.noRecords') + '</td></tr>';
             } else {
                 var configName = "{{.ConfigName}}";
                 tbody.innerHTML = pageRecords.map(function(r) {
@@ -445,11 +447,11 @@
                         fields.map(function(f, i) { return "<td>" + renderCell(r[f], fieldTypes[i]) + "</td>"; }).join("") +
                         '<td style="white-space:nowrap">' +
                         '<a href="{{.BasePath}}/form/' + configName + '/' + r.id + '?view=1" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid var(--btn-neutral);border-radius:4px;margin-right:4px;line-height:0">' +
-                        '<img src="/assets/Binocular--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="View"></a>' +
+                        '<img src="/assets/Binocular--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="' + _t('common.view') + '"></a>' +
                         '<a href="{{.BasePath}}/form/' + configName + '/' + r.id + '" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid #007bff;border-radius:4px;margin-right:4px;line-height:0">' +
-                        '<img src="/assets/Arrange-List-Descending-1--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="Edit"></a>' +
+                        '<img src="/assets/Arrange-List-Descending-1--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="' + _t('common.edit') + '"></a>' +
                         '<button onclick="deleteRecord(\'' + configName + '\',\'' + r.id + '\')" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid var(--btn-danger);border-radius:4px;cursor:pointer;line-height:0">' +
-                        '<img src="/assets/Bin-1--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="Delete"></button>' +
+                        '<img src="/assets/Bin-1--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="' + _t('common.delete') + '"></button>' +
                         "</td></tr>";
                 }).join("");
             }
@@ -461,7 +463,7 @@
                 document.getElementById("nextBtn").disabled = currentPage >= totalPages;
                 document.getElementById("lastBtn").disabled = currentPage >= totalPages;
                 document.getElementById("pageInput").value = currentPage;
-                document.getElementById("pageInfo").textContent = "Page " + currentPage + " of " + totalPages + " (" + filtered.length + " records)";
+                document.getElementById("pageInfo").textContent = _t('common.page') + " " + currentPage + " " + _t('common.of') + " " + totalPages + " (" + filtered.length + " " + _t('common.recordsWord') + ")";
             }
         }
 
@@ -672,7 +674,7 @@
 
         function promptFilterParams(def) {
             var body = document.getElementById("filterModalBody");
-            document.getElementById("filterModalTitle").textContent = "Fill filter parameters" + (def.name ? " — " + def.name : "");
+            document.getElementById("filterModalTitle").textContent = _t('tabulator.fillParams') + (def.name ? " — " + def.name : "");
             var params = [];
             paramTypes = [];
             def.conditions.forEach(function(c) {
@@ -826,7 +828,7 @@
             var askCb = document.createElement("input");
             askCb.type = "checkbox";
             askLabel.appendChild(askCb);
-            askLabel.appendChild(document.createTextNode(" Ask?"));
+            askLabel.appendChild(document.createTextNode(_t('tabulator.askParam')));
             wrap.appendChild(askLabel);
 
             askCb.addEventListener("change", function() {
@@ -950,7 +952,7 @@
                     if (!savedFilters.length) {
                         var o = document.createElement("option");
                         o.value = "";
-                        o.textContent = "No saved filters";
+                        o.textContent = _t('tabulator.noSavedFilters');
                         sel.appendChild(o);
                     } else {
                         savedFilters.forEach(function(f) {
@@ -976,7 +978,7 @@
         function deleteSavedFilter() {
             var f = selectedSavedFilter();
             if (!f) return;
-            if (!confirm('Delete saved filter "' + f.name + '"?')) return;
+            if (!confirm(_t('tabulator.deleteFilterConfirm').replace('%s', f.name))) return;
             fetch("/api/filters/" + encodeURIComponent(f.id), { method: "DELETE", credentials: "same-origin" })
                 .then(function(r) { return r.json(); })
                 .then(function(res) {
@@ -988,16 +990,16 @@
                             if (tbSel) tbSel.selectedIndex = 0;
                         });
                     } else {
-                        alert(res.message || "Failed to delete filter.");
+                        alert(res.message || _t('tabulator.filterDeleteFailed'));
                     }
                 })
-                .catch(function() { alert("Failed to delete filter."); });
+                .catch(function() { alert(_t('tabulator.filterDeleteFailed')); });
         }
 
         function saveFilterAction() {
             var def = readBuilderDef();
-            if (!def.name) { alert("Please enter a filter name."); return; }
-            if (!def.conditions.length) { alert("Add at least one condition."); return; }
+            if (!def.name) { alert(_t('tabulator.filterNameRequired')); return; }
+            if (!def.conditions.length) { alert(_t('tabulator.conditionRequired')); return; }
             document.getElementById("filterSaveBtn").disabled = true;
             fetch("/api/filters/{{.ConfigName}}", {
                 method: "POST",
@@ -1008,13 +1010,13 @@
                 .then(function(r) { return r.json(); })
                 .then(function(res) {
                     document.getElementById("filterSaveBtn").disabled = false;
-                    if (!res.ok) { alert(res.message || "Failed to save filter."); return; }
+                    if (!res.ok) { alert(res.message || _t('tabulator.filterSaveFailed')); return; }
                     loadSavedFilters().then(function() {
                         activateFilterWithValues(def, filterValues);
                         closeAdvFilterModal();
                     });
                 })
-                .catch(function() { document.getElementById("filterSaveBtn").disabled = false; alert("Failed to save filter."); });
+                .catch(function() { document.getElementById("filterSaveBtn").disabled = false; alert(_t('tabulator.filterSaveFailed')); });
         }
 
         function openAdvFilterModal() {
@@ -1154,13 +1156,13 @@
 
         // delete record
         async function deleteRecord(collName, id) {
-            if (!confirm("Really delete selected record?")) return;
+            if (!confirm(_t('common.confirmDeleteRecord'))) return;
             var res = await fetch("{{.BasePath}}/form/" + collName + "/" + id + "/delete", { method: "POST" });
-            if (!res.ok) { alert("Failed to delete record."); return; }
+            if (!res.ok) { alert(_t('common.deleteFailed')); return; }
             var idx = allRecords.findIndex(function(r) { return r.id === id; });
             if (idx !== -1) allRecords.splice(idx, 1);
             render();
-            alert("Record deleted.");
+            alert(_t('common.recordDeleted'));
         }
 
         // relation modal
@@ -1170,10 +1172,10 @@
             var coll = btn.dataset.coll;
             var ids = JSON.parse(btn.dataset.ids);
             var title = document.getElementById("relModalTitle");
-            title.textContent = "Related: " + coll + " (" + ids.length + ")";
+            title.textContent = _t('common.relatedPrefix') + ": " + coll + " (" + ids.length + ")";
 
             var body = document.getElementById("relModalBody");
-            body.innerHTML = '<div style="text-align:center;padding:20px;color:#999;">Loading&hellip;</div>';
+            body.innerHTML = '<div style="text-align:center;padding:20px;color:#999;">' + _t('common.loading') + '</div>';
             document.getElementById("relModal").classList.add("open");
 
             if (cachedRelData[coll]) {
@@ -1188,7 +1190,7 @@
                     renderRelModal(coll, ids, data);
                 })
                 .catch(function() {
-                    body.innerHTML = '<div style="text-align:center;padding:20px;color:#dc3545;">Failed to load data.</div>';
+                    body.innerHTML = '<div style="text-align:center;padding:20px;color:#dc3545;">' + _t('common.loadFailed') + '</div>';
                 });
         }
 
@@ -1198,18 +1200,18 @@
             var related = data.records.filter(function(r) { return idSet[r.id]; });
             var body = document.getElementById("relModalBody");
             if (!related.length) {
-                body.innerHTML = '<div style="text-align:center;padding:20px;color:#999;">No related records found.</div>';
+                body.innerHTML = '<div style="text-align:center;padding:20px;color:#999;">' + _t('common.noRelated') + '</div>';
                 return;
             }
 
             var relFields = data.fields.filter(function(f) { return f !== "id"; });
             var html = '<table><thead><tr>';
             relFields.forEach(function(f) { html += "<th>" + esc(f) + "</th>"; });
-            html += '<th style="width:50px">View</th></tr></thead><tbody>';
+            html += '<th style="width:50px">' + _t('common.view') + '</th></tr></thead><tbody>';
             related.forEach(function(r) {
                 html += "<tr>";
                 relFields.forEach(function(f) { html += "<td>" + esc(r[f]) + "</td>"; });
-                html += '<td><a href="/tabulator/' + coll + '" target="_blank" style="padding:2px 8px;background:var(--btn-primary);border-radius:4px;color:#fff;text-decoration:none;font-size:.8rem;">Open</a></td>';
+                html += '<td><a href="/tabulator/' + coll + '" target="_blank" style="padding:2px 8px;background:var(--btn-primary);border-radius:4px;color:#fff;text-decoration:none;font-size:.8rem;">' + _t('common.open') + '</a></td>';
                 html += "</tr>";
             });
             html += "</tbody></table>";
@@ -1229,7 +1231,7 @@
 
         function openDatasourceModal(mode) {
             datasourceMode = mode;
-            document.getElementById("datasourceModalTitle").textContent = mode === "import" ? "Import from" : "Export to";
+            document.getElementById("datasourceModalTitle").textContent = mode === "import" ? _t('tabulator.importFrom') : _t('tabulator.exportTo');
             document.getElementById("datasourceModal").classList.add("open");
         }
 
@@ -1280,7 +1282,7 @@
             var sheetName = this.querySelector("[name=sheetName]").value.trim();
             if (!fileName || !sheetName) {
                 e.preventDefault();
-                alert("Please fill in both file name and sheet name.");
+                alert(_t('tabulator.fillBoth'));
                 return;
             }
         });
@@ -1306,7 +1308,7 @@
             var fileName = document.getElementById("exportFileName").value.trim();
             var sheetName = document.getElementById("exportSheetName").value.trim();
             if (!fileName || !sheetName) {
-                alert("Please fill in both file name and sheet name.");
+                alert(_t('tabulator.fillBoth'));
                 return;
             }
             window.location.href = "/export/{{.CollectionName}}?excelFileName=" + encodeURIComponent(fileName) + "&sheetName=" + encodeURIComponent(sheetName);
@@ -1326,9 +1328,9 @@
 
         function getMssqlParams() {
             return {
-                dsn: "{{.Mssql.DSN}}",
-                table: "{{.Mssql.Table}}",
-                mode: "{{.Mssql.Mode}}"
+                dsn: "{{if .Mssql}}{{.Mssql.DSN}}{{end}}",
+                table: "{{if .Mssql}}{{.Mssql.Table}}{{end}}",
+                mode: "{{if .Mssql}}{{.Mssql.Mode}}{{end}}"
             };
         }
 
@@ -1336,7 +1338,7 @@
         if (mssqlExportBtn) {
             mssqlExportBtn.addEventListener("click", function() {
                 var p = getMssqlParams();
-                if (!p.dsn || !p.table) { alert("MSSQL DSN and table not configured."); return; }
+                if (!p.dsn || !p.table) { alert(_t('tabulator.mssqlNotConfigured')); return; }
                 closeMssqlModal();
                 doMssqlExport(p, false);
             });
@@ -1352,25 +1354,25 @@
                 .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
                 .then(function(res) {
                     if (res.ok) {
-                        alert("MSSQL export successful: " + res.data.message);
+                        alert(_t('tabulator.mssqlExportOk').replace('%s', res.data.message));
                     } else if (res.data && res.data.tableMissing) {
-                        if (confirm("Table '" + res.data.table + "' does not exist on the MSSQL server.\n\nCreate it and export?")) {
+                        if (confirm(_t('tabulator.mssqlTableMissing').replace('%s', res.data.table))) {
                             doMssqlExport(p, true);
                         }
                     } else {
-                        alert("Export failed: " + (res.data.message || "unknown error"));
+                        alert(_t('tabulator.exportFailed').replace('%s', res.data.message || _t('common.unknownError')));
                     }
                 })
-                .catch(function() { alert("Export failed."); });
+                .catch(function() { alert(_t('tabulator.exportFailed').replace('%s', _t('common.unknownError'))); });
         }
 
         var mssqlImportBtn = document.getElementById("mssqlImportBtn");
         if (mssqlImportBtn) {
             mssqlImportBtn.addEventListener("click", function() {
                 var p = getMssqlParams();
-                if (!p.dsn || !p.table) { alert("MSSQL DSN and table not configured."); return; }
+                if (!p.dsn || !p.table) { alert(_t('tabulator.mssqlNotConfigured')); return; }
                 closeMssqlModal();
-                if (!confirm("Really import from MSSQL? Existing data may be modified.")) return;
+                if (!confirm(_t('tabulator.mssqlImportConfirm'))) return;
                 var fd = new FormData();
                 fd.append("dsn", p.dsn);
                 fd.append("table", p.table);
@@ -1378,10 +1380,10 @@
                 fetch("/mssql-import/{{.CollectionName}}", { method: "POST", body: fd })
                     .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
                     .then(function(res) {
-                        if (res.ok) alert("MSSQL import successful: " + res.data.message);
-                        else alert("Import failed: " + (res.data.message || "unknown error"));
+                        if (res.ok) alert(_t('tabulator.mssqlImportOk').replace('%s', res.data.message));
+                        else alert(_t('tabulator.importFailed').replace('%s', res.data.message || _t('common.unknownError')));
                     })
-                    .catch(function() { alert("Import failed."); });
+                    .catch(function() { alert(_t('tabulator.importFailed').replace('%s', _t('common.unknownError'))); });
             });
         }
 
@@ -1395,6 +1397,11 @@
             window.history.replaceState({}, "", url);
         }
 
+        function currentTheme() {
+            var t = localStorage.getItem('pbx-theme');
+            if (t === 'dark' || t === 'light') return t;
+            return document.body.getAttribute('data-theme') || 'light';
+        }
         function goBack(fallback) {
             if (window.history.length > 1) {
                 window.history.back();
@@ -1402,11 +1409,12 @@
                 window.location.href = fallback;
             }
         }
-
-        function currentTheme() {
-            var t = localStorage.getItem('pbx-theme');
-            if (t === 'dark' || t === 'light') return t;
-            return document.body.getAttribute('data-theme') || 'light';
+        function toggleLang() {
+            var next = document.documentElement.lang === 'cs' ? 'en' : 'cs';
+            var d = new Date(); d.setTime(d.getTime() + 365*24*3600*1000);
+            document.cookie = 'pb_lang=' + next + ';path=/;expires=' + d.toUTCString();
+            fetch('/api/lang/' + next, { method: 'POST' }).catch(function(){});
+            window.location.reload();
         }
         function applyTheme(mode) {
             document.body.setAttribute('data-theme', mode);
@@ -1468,13 +1476,13 @@
 
         document.getElementById('runActionBtn').addEventListener('click', function() {
             var actionId = document.getElementById('actionSelect').value;
-            if (!actionId) { alert('Select an action first.'); return; }
+            if (!actionId) { alert(_t('tabulator.selectActionFirst')); return; }
             var ids = selectedIds();
             var action = actionOptions[actionId];
             var confirmed = true;
             if (!ids.length && action && action.onList !== undefined) {
                 // no selection: run on all visible records
-                confirmed = confirm("No records selected. Run this action on all visible records?");
+                confirmed = confirm(_t('tabulator.runAllConfirm'));
             }
             if (!confirmed) return;
             runAction(actionId, ids);
@@ -1484,7 +1492,7 @@
             var btn = document.getElementById('runActionBtn');
             var prev = btn.textContent;
             btn.disabled = true;
-            btn.textContent = 'Running…';
+            btn.textContent = _t('common.running');
             fetch('/actions/execute', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1510,8 +1518,8 @@
             out.textContent = (res.output || []).join('\n');
             status.className = 'action-status ' + (res.ok !== false ? 'ok' : 'err');
             status.textContent = res.ok === false
-                ? ('Error: ' + (res.error || 'unknown error'))
-                : ('Success' + (res.affected ? ' — ' + res.affected + ' record(s) affected' : ''));
+                ? (_t('common.error') + ': ' + (res.error || _t('common.unknownError')))
+                : (_t('common.success') + (res.affected ? ' — ' + res.affected + ' ' + _t('common.affected') : ''));
             document.getElementById('actionResultModal').classList.add('open');
         }
 

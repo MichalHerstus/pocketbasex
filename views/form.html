@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{.Lang}}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -43,18 +43,20 @@
         .section-title { margin: 24px 0 12px 0; font-size: 1.1rem; font-weight: 600; color: #444; border-bottom: 2px solid #e0e0e0; padding-bottom: 6px; }
     </style>
     <link rel="stylesheet" href="/assets/theme.css">
+    <script src="/api/lang/{{.Lang}}/catalog.js"></script>
 </head>
 <body data-theme="{{.Theme}}">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">
-        <h1 style="margin:0">{{.Title}}{{if .ViewOnly}} — view{{else if .ID}} — edit{{end}}</h1>
+        <h1 style="margin:0">{{.Title}}{{if .ViewOnly}} — {{t .Lang "form.viewSuffix"}}{{else if .ID}} — {{t .Lang "form.editSuffix"}}{{end}}</h1>
         <button type="button" id="themeBtn" onclick="toggleTheme()" style="padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1.1rem;cursor:pointer;">🌙</button>
+        <button type="button" onclick="toggleLang()" style="padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">{{if eq .Lang "cs"}}EN{{else}}CS{{end}}</button>
         {{if .ID}}
         <select id="actionSelect" style="padding:8px 12px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;min-width:170px;">
-            <option value="">— Actions —</option>
+            <option value="">— {{t .Lang "common.actions"}} —</option>
         </select>
-        <button id="runActionBtn" style="padding:8px 16px;background:var(--btn-danger);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">Run</button>
+        <button id="runActionBtn" style="padding:8px 16px;background:var(--btn-danger);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">{{t .Lang "common.run"}}</button>
         {{end}}
-        <button type="button" onclick="goBack('{{.BasePath}}/app')" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;margin-left:auto;">Close</button>
+        <button type="button" onclick="goBack('{{.BasePath}}/app')" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;margin-left:auto;">{{t .Lang "common.close"}}</button>
     </div>
 
     {{if .Description}}<p>{{.Description}}</p>{{end}}
@@ -156,7 +158,7 @@
                         </div>
                     {{else}}
                         <select name="{{$field.Name}}">
-                            <option value="">{{if not $field.Data.count}}— none —{{end}}</option>
+                            <option value="">{{if not $field.Data.count}}{{t $.Lang "form.none"}}{{end}}</option>
                             {{range $opt := $field.Data.options}}
                             <option value="{{$opt.id}}"{{if $opt.sel}} selected{{end}}>{{$opt.label}}</option>
                             {{end}}
@@ -206,15 +208,15 @@
         {{if .Sections}}
             {{range .Sections}}
             <h3 class="section-title">{{.CollectionName}}</h3>
-            {{template "formRowLoop" (dict "Rows" .Rows "ViewOnly" $.ViewOnly)}}
+            {{template "formRowLoop" (dict "Rows" .Rows "ViewOnly" $.ViewOnly "Lang" $.Lang)}}
             {{end}}
         {{else}}
-            {{template "formRowLoop" (dict "Rows" .Rows "ViewOnly" .ViewOnly)}}
+            {{template "formRowLoop" (dict "Rows" .Rows "ViewOnly" .ViewOnly "Lang" .Lang)}}
         {{end}}
         {{if not $.ViewOnly}}
         <div class="form-actions">
-            <button type="submit">Submit</button>
-            <button type="button" onclick="goBack('{{.BasePath}}/app')">Cancel</button>
+            <button type="submit">{{t .Lang "form.submit"}}</button>
+            <button type="button" onclick="goBack('{{.BasePath}}/app')">{{t .Lang "common.cancel"}}</button>
         </div>
         {{end}}
     </form>
@@ -223,7 +225,7 @@
     <div class="modal-overlay" id="actionResultModal" style="display:none;position:fixed;z-index:1000;left:0;top:0;width:100%;height:100%;background:rgba(0,0,0,.4);align-items:center;justify-content:center;">
         <div style="background:#fff;border-radius:10px;max-width:80vw;max-height:80vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 4px 24px rgba(0,0,0,.2);">
             <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid #eee;">
-                <h3 style="margin:0;font-size:1.1rem;">Action Result</h3>
+                <h3 style="margin:0;font-size:1.1rem;">{{t .Lang "tabulator.actionResult"}}</h3>
                 <button onclick="closeActionResultModal()" style="background:none;border:none;font-size:1.4rem;cursor:pointer;color:#999;padding:0 6px;">&times;</button>
             </div>
             <div style="padding:16px 20px;overflow-y:auto;">
@@ -253,6 +255,13 @@
         var t = localStorage.getItem('pbx-theme');
         if (t === 'dark' || t === 'light') return t;
         return document.body.getAttribute('data-theme') || 'light';
+    }
+    function toggleLang() {
+        var next = document.documentElement.lang === 'cs' ? 'en' : 'cs';
+        var d = new Date(); d.setTime(d.getTime() + 365*24*3600*1000);
+        document.cookie = 'pb_lang=' + next + ';path=/;expires=' + d.toUTCString();
+        fetch('/api/lang/' + next, { method: 'POST' }).catch(function(){});
+        window.location.reload();
     }
     function applyTheme(mode) {
         document.body.setAttribute('data-theme', mode);
@@ -292,11 +301,11 @@
 
     document.getElementById('runActionBtn').addEventListener('click', function() {
         var actionId = document.getElementById('actionSelect').value;
-        if (!actionId) { alert('Select an action first.'); return; }
+        if (!actionId) { alert(_t('tabulator.selectActionFirst')); return; }
         var btn = this;
         var prev = btn.textContent;
         btn.disabled = true;
-        btn.textContent = 'Running…';
+        btn.textContent = _t('common.running');
         fetch('/actions/execute', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -311,15 +320,15 @@
             status.style.background = body.ok === false ? '#f8d7da' : '#d4edda';
             status.style.color = body.ok === false ? '#721c24' : '#155724';
             status.textContent = body.ok === false
-                ? ('Error: ' + (body.error || 'unknown error'))
-                : ('Success' + (body.affected ? ' — ' + body.affected + ' record(s) affected' : ''));
+                ? (_t('common.error') + ': ' + (body.error || _t('common.unknownError')))
+                : (_t('common.success') + (body.affected ? ' — ' + body.affected + ' ' + _t('common.affected') : ''));
             document.getElementById('actionResultModal').style.display = 'flex';
         })
         .catch(function(err) {
             var status = document.getElementById('actionResultStatus');
             status.style.background = '#f8d7da';
             status.style.color = '#721c24';
-            status.textContent = 'Error: ' + String(err);
+            status.textContent = _t('common.error') + ': ' + String(err);
             document.getElementById('actionResultModal').style.display = 'flex';
         })
         .finally(function() {

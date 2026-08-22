@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{.Lang}}">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Login</title>
+    <title>{{t .Lang "login.title"}} - PBX</title>
     <style>
       :root {
         --body-bg: #f8f9fb;
@@ -105,27 +105,35 @@
   </head>
   <body data-theme="{{.Theme}}">
     <button type="button" id="themeBtn" onclick="toggleTheme()" style="position:fixed;top:16px;right:16px;padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1.1rem;cursor:pointer;z-index:10;">🌙</button>
+    <button type="button" onclick="toggleLang()" style="position:fixed;top:16px;right:76px;padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;z-index:10;">{{if eq .Lang "cs"}}EN{{else}}CS{{end}}</button>
     <div class="login-card">
-      <h1>Sign In</h1>
-      <p class="subtitle">Enter your credentials to continue</p>
+      <h1>{{t .Lang "login.title"}}</h1>
+      <p class="subtitle">{{t .Lang "login.subtitle"}}</p>
       <form method="post" action="/login">
-        <label for="name">Name</label>
+        <label for="name">{{t .Lang "login.name"}}</label>
         <input id="name" name="name" type="text" placeholder="your@email.com" required autofocus />
 
-        <label for="password">Password</label>
-        <input id="password" name="password" type="password" placeholder="Enter your password" required />
+        <label for="password">{{t .Lang "login.password"}}</label>
+        <input id="password" name="password" type="password" placeholder="{{t .Lang "login.password"}}" required />
 
         {{if .Error}}
         <p class="error">{{.Error}}</p>
         {{end}}
 
         <div class="actions">
-          <button type="submit">Login</button>
-          <button type="reset">Cancel</button>
+          <button type="submit">{{t .Lang "login.submit"}}</button>
+          <button type="reset">{{t .Lang "common.cancel"}}</button>
         </div>
       </form>
     </div>
     <script>
+      function toggleLang() {
+        var next = document.documentElement.lang === 'cs' ? 'en' : 'cs';
+        var d = new Date(); d.setTime(d.getTime() + 365*24*3600*1000);
+        document.cookie = 'pb_lang=' + next + ';path=/;expires=' + d.toUTCString();
+        fetch('/api/lang/' + next, { method: 'POST' }).catch(function(){});
+        window.location.reload();
+      }
       function currentTheme() {
         var t = localStorage.getItem('pbx-theme');
         if (t === 'dark' || t === 'light') return t;

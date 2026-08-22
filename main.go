@@ -29,6 +29,7 @@ import (
 	"github.com/pocketbase/pocketbase/tools/search"
 	"github.com/pocketbase/pocketbase/tools/security"
 
+	"pbx/i18n"
 	"pbx/pbactions"
 	"pbx/pbai"
 	"pbx/pbexcel"
@@ -42,11 +43,18 @@ var viewsFS embed.FS
 
 var templates *template.Template
 
+// cliLangOverride is true when the --lang flag was explicitly provided on the
+// command line; cliLang holds its (validated) value. Both override the global
+// default persisted in pb_data/lang.json.
+var cliLangOverride bool
+var cliLang string
+
 func init() {
 	templates = template.Must(template.New("").
 		Funcs(template.FuncMap{
 			"add": func(a, b int) int { return a + b },
 			"sub": func(a, b int) int { return a - b },
+			"t":   func(lang, key string) string { return i18n.T(lang, key) },
 			"seq": func(n int) []int {
 				r := make([]int, n)
 				for i := range r {
@@ -72,6 +80,10 @@ func init() {
 func main() {
 	app := pocketbase.New()
 
+	// default UI language override (e.g. --lang=cs); uses the global default
+	// from pb_data/lang.json otherwise
+	langFlag := app.RootCmd.PersistentFlags().String("lang", "", "default UI language (en or cs)")
+
 	// load jsvm so pb_migrations/*.js migrations are auto-applied on serve
 	jsvm.MustRegister(app, jsvm.Config{
 		MigrationsDir: "pb_migrations",
@@ -82,11 +94,17 @@ func main() {
 	// all endpoints
 	app.OnServe().Bind(&hook.Handler[*core.ServeEvent]{
 		Func: func(se *core.ServeEvent) error {
+			// capture the --lang CLI override once flags are parsed
+			if langFlag != nil && *langFlag != "" {
+				cliLangOverride = true
+				cliLang = i18n.Normalize(*langFlag)
+			}
 			// login dialog
 			se.Router.GET("/login", func(e *core.RequestEvent) error {
 				e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
 				return templates.ExecuteTemplate(e.Response, "login.html", map[string]string{
 					"Theme": getThemeMode(e.App),
+					"Lang":  getLangCode(e.App, e.Request),
 				})
 			})
 			// login form submission
@@ -276,6 +294,33 @@ func main() {
 				}
 				return e.JSON(http.StatusOK, map[string]any{"ok": true, "mode": mode})
 			})
+			// set the global default UI language (en/cs), persisted in pb_data/lang.json
+			se.Router.POST("/api/lang/{code}", func(e *core.RequestEvent) error {
+				code := e.Request.PathValue("code")
+				code = i18n.Normalize(code)
+				if !i18n.IsValid(code) {
+					return e.BadRequestError("Unsupported language", nil)
+				}
+				if err := setLangCode(e.App, code); err != nil {
+					return e.InternalServerError("Failed to save language", err)
+				}
+				return e.JSON(http.StatusOK, map[string]any{"ok": true, "lang": code})
+			})
+			// client-side translation catalog for the current language:
+			// serves window._t() + the full key map as JavaScript
+			se.Router.GET("/api/lang/{code}/catalog.js", func(e *core.RequestEvent) error {
+				code := e.Request.PathValue("code")
+				code = i18n.Normalize(code)
+				if !i18n.IsValid(code) {
+					code = "en"
+				}
+				js := "window._tCatalog=" + i18n.CatalogJSON(code) + ";" +
+					"window._t=function(key){var c=window._tCatalog;return c&&c[key]?c[key]:key;};" +
+					"window._tLang=function(){return document.documentElement.lang||'en';};"
+				e.Response.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+				e.Response.Write([]byte(js))
+				return nil
+			})
 			// save the global default MSSQL DSN, persisted in pb_data/mssql.json
 			se.Router.POST("/api/mssql-dsn", func(e *core.RequestEvent) error {
 				dsn := e.Request.FormValue("dsn")
@@ -444,7 +489,7 @@ func buildAppData(e *core.RequestEvent, basePath string) (views.AppPageData, boo
 
 	appRecs, recErr := e.App.FindAllRecords("_app")
 	if recErr != nil {
-		return views.AppPageData{Theme: getThemeMode(e.App), BasePath: basePath}, signedIn, recErr
+		return views.AppPageData{LangData: langData(e), Theme: getThemeMode(e.App), BasePath: basePath}, signedIn, recErr
 	}
 
 	appColl, _ := e.App.FindCachedCollectionByNameOrId("_app")
@@ -509,11 +554,17 @@ func buildAppData(e *core.RequestEvent, basePath string) (views.AppPageData, boo
 	}
 
 	return views.AppPageData{
+		LangData: langData(e),
 		Theme:    getThemeMode(e.App),
 		BasePath: basePath,
 		Name:     userName,
 		Groups:   grouped,
 	}, signedIn, nil
+}
+
+// langData returns the embedded LangData carrying the active UI language.
+func langData(e *core.RequestEvent) views.LangData {
+	return views.LangData{Lang: getLangCode(e.App, e.Request)}
 }
 
 // --- Login ---
@@ -525,8 +576,9 @@ func handleLoginPost(e *core.RequestEvent) error {
 	if name == "" || password == "" {
 		e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		return templates.ExecuteTemplate(e.Response, "login.html", map[string]string{
-			"Error": "Name and password are required",
+			"Error": i18n.T(getLangCode(e.App, e.Request), "login.required"),
 			"Theme": getThemeMode(e.App),
+			"Lang":  getLangCode(e.App, e.Request),
 		})
 	}
 
@@ -577,8 +629,9 @@ func handleLoginPost(e *core.RequestEvent) error {
 
 	e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	return templates.ExecuteTemplate(e.Response, "login.html", map[string]string{
-		"Error": "Invalid name or password",
+		"Error": i18n.T(getLangCode(e.App, e.Request), "login.invalid"),
 		"Theme": getThemeMode(e.App),
+		"Lang":  getLangCode(e.App, e.Request),
 	})
 }
 
@@ -614,6 +667,56 @@ func setThemeMode(app core.App, mode string) error {
 		return err
 	}
 	return os.WriteFile(themeFilePath(app), data, 0o644)
+}
+
+// --- Language (i18n) ---
+
+// langFilePath returns the JSON file that stores the global default UI language.
+func langFilePath(app core.App) string {
+	return filepath.Join(app.DataDir(), "lang.json")
+}
+
+// getLangCode resolves the UI language for a page:
+//
+//  1. CLI --lang flag (if set and valid)
+//  2. the caller's pb_lang cookie (per-browser override)
+//  3. global default from pb_data/lang.json
+//  4. "en"
+func getLangCode(app core.App, r *http.Request) string {
+	if cliLangOverride {
+		if i18n.IsValid(cliLang) {
+			return cliLang
+		}
+	}
+	if r != nil {
+		if c, err := r.Cookie("pb_lang"); err == nil && i18n.IsValid(c.Value) {
+			return c.Value
+		}
+	}
+	data, err := os.ReadFile(langFilePath(app))
+	if err != nil {
+		return "en"
+	}
+	var cfg struct {
+		Lang string `json:"lang"`
+	}
+	if json.Unmarshal(data, &cfg) != nil || !i18n.IsValid(cfg.Lang) {
+		return "en"
+	}
+	return cfg.Lang
+}
+
+// setLangCode persists the global default UI language to pb_data/lang.json.
+func setLangCode(app core.App, code string) error {
+	code = i18n.Normalize(code)
+	if !i18n.IsValid(code) {
+		return fmt.Errorf("invalid language %q", code)
+	}
+	data, err := json.Marshal(map[string]string{"lang": code})
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(langFilePath(app), data, 0o644)
 }
 
 // --- MSSQL global DSN ---
@@ -1015,6 +1118,7 @@ func buildTabulatorData(e *core.RequestEvent, collName string, configRec *core.R
 	}
 
 	return &views.TabulatorPageData{
+		LangData:         langData(e),
 		Theme:            getThemeMode(e.App),
 		CollectionName:   collName,
 		TotalRecords:     len(records),
@@ -1109,6 +1213,7 @@ func handlePbxSetup(e *core.RequestEvent) error {
 	}
 
 	pageData := views.PbxSetupPageData{
+		LangData: langData(e),
 		Theme:    getThemeMode(e.App),
 		MssqlDSN: getMssqlDSN(e.App),
 		Agent:    getAgentConfig(e),
@@ -1326,6 +1431,7 @@ func handleSetupRecord(e *core.RequestEvent) error {
 	}
 
 	pageData := views.SetupRecordPageData{
+		LangData:    langData(e),
 		Theme:       getThemeMode(e.App),
 		CollName:    collName,
 		RecordID:    recordID,
@@ -2498,6 +2604,7 @@ func handleViewForm(e *core.RequestEvent, configName, recordID string, configRec
 	}
 
 	data := views.FormPageData{
+		LangData:       langData(e),
 		Theme:          getThemeMode(e.App),
 		BasePath:       basePath,
 		ConfigName:     configName,
@@ -2982,6 +3089,7 @@ func renderFormPage(e *core.RequestEvent, tmplName, basePath string) error {
 	}
 
 	data := views.FormPageData{
+		LangData:       langData(e),
 		Theme:          getThemeMode(e.App),
 		BasePath:       basePath,
 		ConfigName:     configName,
@@ -3096,9 +3204,9 @@ func handleFormPostBase(e *core.RequestEvent, basePath, listPrefix string) error
 		return e.InternalServerError("Failed to save record", err)
 	}
 
-	msg := "Record successfully added."
+	msg := i18n.T(getLangCode(e.App, e.Request), "form.msg.created")
 	if recordID != "" {
-		msg = "Record successfully updated."
+		msg = i18n.T(getLangCode(e.App, e.Request), "form.msg.updated")
 	}
 
 	return e.Redirect(http.StatusSeeOther, listPrefix+configName+"?msg="+url.QueryEscape(msg))
@@ -3115,7 +3223,7 @@ func handleExport(e *core.RequestEvent) error {
 		return e.InternalServerError("Export failed", err)
 	}
 
-	msg := url.QueryEscape("Export successful")
+	msg := url.QueryEscape(i18n.T(getLangCode(e.App, e.Request), "tabulator.exportOk"))
 	return e.Redirect(http.StatusSeeOther, "/tabular/"+collName+"?msg="+msg)
 }
 
@@ -3135,7 +3243,7 @@ func handleImport(e *core.RequestEvent) error {
 		return e.InternalServerError("Import failed", err)
 	}
 
-	msg := url.QueryEscape("Import successful")
+	msg := url.QueryEscape(i18n.T(getLangCode(e.App, e.Request), "tabulator.importOk"))
 	return e.Redirect(http.StatusSeeOther, "/tabular/"+collName+"?msg="+msg)
 }
 
@@ -3263,12 +3371,13 @@ func renderAgentPage(e *core.RequestEvent, basePath string) error {
 	}
 
 	cfg := getAgentConfig(e)
-	status := "Agent is not configured (set it up in /pbx-setup → AI agent)."
+	status := i18n.T(getLangCode(e.App, e.Request), "agent.notConfigured")
 	if cfg.Enabled && cfg.BaseURL != "" && cfg.Model != "" {
-		status = "Ready — " + cfg.Provider + " / " + cfg.Model
+		status = i18n.T(getLangCode(e.App, e.Request), "agent.ready") + " " + cfg.Provider + " / " + cfg.Model
 	}
 
 	data := views.AgentPageData{
+		LangData: langData(e),
 		Theme:    getThemeMode(e.App),
 		BasePath: basePath,
 		Name:     record.GetString("name"),
@@ -3624,7 +3733,8 @@ func handlePbxConfig(e *core.RequestEvent) error {
 	}
 
 	pageData := views.PbxConfigPageData{
-		Theme: getThemeMode(e.App),
+		LangData: langData(e),
+		Theme:    getThemeMode(e.App),
 	}
 
 	if recs, err := e.App.FindAllRecords("_views"); err == nil {
@@ -3658,6 +3768,7 @@ func handlePbxConfigEditor(e *core.RequestEvent) error {
 	isNew := name == "new"
 
 	pageData := views.ConfigEditorPageData{
+		LangData:    langData(e),
 		Theme:       getThemeMode(e.App),
 		Collections: listCollections(e),
 		IsNew:       isNew,
@@ -3695,6 +3806,7 @@ func handlePbxConfigSave(e *core.RequestEvent) error {
 	if name == "" || collName == "" {
 		e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		return templates.ExecuteTemplate(e.Response, "config.html", views.ConfigEditorPageData{
+			LangData:      langData(e),
 			Name:          name,
 			CollName:      collName,
 			TabulatorJSON: tabulatorJSON,
@@ -3759,8 +3871,9 @@ func handleImportWizard(e *core.RequestEvent, source string) error {
 	action := e.Request.FormValue("action")
 	step := 1
 	page := views.ImportWizardPageData{
-		Theme:  getThemeMode(e.App),
-		Source: source,
+		LangData: langData(e),
+		Theme:    getThemeMode(e.App),
+		Source:   source,
 	}
 
 	switch action {
@@ -3774,17 +3887,17 @@ func handleImportWizard(e *core.RequestEvent, source string) error {
 			page.Import = e.Request.FormValue("import") == "1"
 
 			if page.Name == "" {
-				page.Message = "Collection name is required."
+				page.Message = i18n.T(getLangCode(e.App, e.Request), "wizard.nameRequired")
 				return renderImportWizard(e, page)
 			}
 			cols, err := pbexcel.IntrospectSheet(fileName, sheet)
 			if err != nil {
-				page.Message = "Failed to read Excel: " + err.Error()
+				page.Message = i18n.T(getLangCode(e.App, e.Request), "wizard.readExcelFailed") + err.Error()
 				return renderImportWizard(e, page)
 			}
 			page.Columns = wizardColumnsToDetected(cols)
 			if len(page.Columns) == 0 {
-				page.Message = "No usable columns detected in sheet " + sheet
+				page.Message = i18n.T(getLangCode(e.App, e.Request), "wizard.noColumnsExcel") + sheet
 				return renderImportWizard(e, page)
 			}
 			step = 2
@@ -3797,16 +3910,16 @@ func handleImportWizard(e *core.RequestEvent, source string) error {
 			page.Import = e.Request.FormValue("import") == "1"
 
 			if page.Name == "" {
-				page.Message = "Collection name is required."
+				page.Message = i18n.T(getLangCode(e.App, e.Request), "wizard.nameRequired")
 				return renderImportWizard(e, page)
 			}
 			cols, err := pbmssql.IntrospectTable(dsn, table)
 			if err != nil {
-				page.Message = "Failed to introspect MSSQL table: " + err.Error()
+				page.Message = i18n.T(getLangCode(e.App, e.Request), "wizard.introspectFailed") + err.Error()
 				return renderImportWizard(e, page)
 			}
 			if len(cols) == 0 {
-				page.Message = "No columns found in table " + table
+				page.Message = i18n.T(getLangCode(e.App, e.Request), "wizard.noColumnsMssql") + table
 				return renderImportWizard(e, page)
 			}
 			for _, c := range cols {
@@ -3833,7 +3946,7 @@ func handleImportWizard(e *core.RequestEvent, source string) error {
 
 		page.Columns = parseWizardColumns(e)
 		if page.Name == "" {
-			page.Message = "Collection name is required."
+			page.Message = i18n.T(getLangCode(e.App, e.Request), "wizard.nameRequired")
 			return renderImportWizard(e, page)
 		}
 
@@ -3857,13 +3970,13 @@ func handleImportWizard(e *core.RequestEvent, source string) error {
 			anyField = true
 		}
 		if !anyField {
-			page.Message = "No usable columns selected."
+			page.Message = i18n.T(getLangCode(e.App, e.Request), "wizard.noColumnsSelected")
 			return renderImportWizard(e, page)
 		}
 
 		created, err := createCollectionFromWizard(e, page)
 		if err != nil {
-			page.Message = "Failed to create collection: " + err.Error()
+			page.Message = i18n.T(getLangCode(e.App, e.Request), "wizard.createFailed") + err.Error()
 			return renderImportWizard(e, page)
 		}
 
@@ -3876,7 +3989,7 @@ func handleImportWizard(e *core.RequestEvent, source string) error {
 					}
 				}
 				if ierr := pbexcel.ImportFromExcel(e.App, page.FileName, page.Sheet, page.Name, "insert", headerMap); ierr != nil {
-					page.Message = "Collection created, but data import failed: " + ierr.Error()
+					page.Message = i18n.T(getLangCode(e.App, e.Request), "wizard.importFailed") + ierr.Error()
 					page.Created = created
 					return renderImportWizard(e, page)
 				}
@@ -3894,7 +4007,7 @@ func handleImportWizard(e *core.RequestEvent, source string) error {
 					}
 				}
 				if ierr := pbmssql.ImportFromMSSQL(e.App, page.Name, page.DSN, page.Table, "insert", mapping); ierr != nil {
-					page.Message = "Collection created, but data import failed: " + ierr.Error()
+					page.Message = i18n.T(getLangCode(e.App, e.Request), "wizard.importFailed") + ierr.Error()
 					page.Created = created
 					return renderImportWizard(e, page)
 				}

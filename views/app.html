@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{.Lang}}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -29,20 +29,21 @@
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">
         <h1 style="margin:0">PBX - Pocketbase Extended</h1>
         <button type="button" id="themeBtn" onclick="toggleTheme()" style="padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1.1rem;cursor:pointer;">🌙</button>
-        <a href="/logout" style="padding:8px 16px;background:var(--btn-danger);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;margin-left:auto;">Logout</a>
+        <button type="button" onclick="toggleLang()" style="padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">{{if eq .Lang "cs"}}EN{{else}}CS{{end}}</button>
+        <a href="/logout" style="padding:8px 16px;background:var(--btn-danger);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;margin-left:auto;">{{t .Lang "app.logout"}}</a>
     </div>
-    <p class="subtitle">configurable application to view and manage PB data collections</p>
+    <p class="subtitle">{{t .Lang "app.subtitle"}}</p>
 
     {{if .Error}}
     <div class="user-bar">
-        <span class="signin">Please sign in</span>
-        <a href="/login">Sign in</a>
+        <span class="signin">{{t .Lang "app.pleaseSignIn"}}</span>
+        <a href="/login">{{t .Lang "app.signIn"}}</a>
     </div>
     {{else}}
     <div class="user-bar">
-        <span>Signed in as <span class="name">{{.Name}}</span></span>
+        <span>{{t .Lang "app.signedInAs"}} <span class="name">{{.Name}}</span></span>
         <span style="display:flex;gap:12px;align-items:center;">
-            <a href="{{.BasePath}}/ai">AI agent</a>
+            <a href="{{.BasePath}}/ai">{{t .Lang "app.aiAgent"}}</a>
         </span>
     </div>
     {{end}}
@@ -58,9 +59,16 @@
     </div>
     {{end}}
 
-    <p class="copyright"><i>(c)POINT.X 2026, MH</i></p>
+    <p class="copyright"><i>(c)White Dog Software, MH - version 0.10.0</i></p>
 
     <script>
+        function toggleLang() {
+            var next = document.documentElement.lang === 'cs' ? 'en' : 'cs';
+            var d = new Date(); d.setTime(d.getTime() + 365*24*3600*1000);
+            document.cookie = 'pb_lang=' + next + ';path=/;expires=' + d.toUTCString();
+            fetch('/api/lang/' + next, { method: 'POST' }).catch(function(){});
+            window.location.reload();
+        }
         function currentTheme() {
             var t = localStorage.getItem('pbx-theme');
             if (t === 'dark' || t === 'light') return t;

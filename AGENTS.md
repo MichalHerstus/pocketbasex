@@ -48,6 +48,8 @@ No CI, no test runner. `pbai/agent_test.go` has unit tests (run with `go test ./
 | `POST /form/{configName}/{id}/delete` | delete record | Delete record, returns JSON |
 | `POST /api/theme/{mode}` | set theme | Persist global default theme (`light`/`dark`) to `pb_data/theme.json` |
 | `POST /api/mssql-dsn` | set MSSQL DSN | Persist global default MSSQL DSN to `pb_data/mssql.json` |
+| `POST /api/lang/{code}` | set UI language | Persist global default UI language (`en`/`cs`) to `pb_data/lang.json` |
+| `GET /api/lang/{code}/catalog.js` | i18n catalog | JavaScript exposing `window._t(key)` + merged translations for client-side strings |
 | `GET /api/tabulator-data/{collectionName}` | JSON API | Raw JSON for relation modal |
 | `GET /export/{collectionName}` | export | Export to Excel via `pbexcel` |
 | `POST /import/{collectionName}` | import | Import from Excel via `pbexcel` |
@@ -92,6 +94,15 @@ Defined in `main.go` (used in `views/*.html`): `add`, `sub`, `seq`, `safeJS`, `s
 - Every page data struct has a `Theme` field; templates render `<body data-theme="{{.Theme}}">` and link `/assets/theme.css` (light + `[data-theme="dark"]` variable sets).
 - The topbar switch also stores a per-browser override in `localStorage` key `pbx-theme`; on load the override wins, otherwise the server default applies.
 - `login.html` uses its own `:root` variables plus the shared `theme.css`.
+
+## Language (i18n)
+
+- Two supported UI languages: English (`en`) and Czech (`cs`). Catalogs live in `i18n/en.json` / `i18n/cs.json` (embedded into the binary, ~230 keys each, dot-notation grouped by section).
+- **Resolution order** (server-side, `getLangCode` in main.go): `--lang` CLI flag > caller's `pb_lang` cookie (per-browser override) > global default in `pb_data/lang.json` > `en`.
+- Global default is persisted via `POST /api/lang/{code}` (mirrors `POST /api/theme/{mode}`); the topbar switcher button shows the target language (`CS`/`EN`), sets the `pb_lang` cookie, POSTs the global default, and reloads.
+- **Server-side strings**: templates call `{{t .Lang "key"}}` (template func registered in main.go's `init()`); every page data struct embeds `views.LangData` (`Lang` field), and `login.html` gets a `Lang` map key.
+- **Client-side strings**: each page loads `<script src="/api/lang/{{.Lang}}/catalog.js">`, which defines `window._tCatalog`, `window._t(key)` and `window._tLang()`. JS alerts/confirms/status text use `_t('key')`; strings with placeholders use `.replace('%s', ...)`.
+- Server-rendered flash messages (`?msg=` after form/export/import/delete) are translated in the Go handlers via `i18n.T(getLangCode(e.App, e.Request), "key")`.
 
 ## `_views` collection (unified config)
 

@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{.Lang}}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Import wizard - PBX</title>
+    <title>{{t .Lang "wizard.title"}} - PBX</title>
     <style>
         * { box-sizing: border-box; }
         body { font-family: sans-serif; margin: 0; padding: 20px; background: var(--body-bg, #f5f5f5); color: #333; }
@@ -34,20 +34,22 @@
         .checkbox-row input { width: auto; }
     </style>
     <link rel="stylesheet" href="/assets/theme.css">
+    <script src="/api/lang/{{.Lang}}/catalog.js"></script>
 </head>
 <body data-theme="{{.Theme}}">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">
-        <h1 style="margin:0">Import wizard</h1>
-        <button type="button" onclick="goBack('/pbx-config')" class="btn btn-gray" style="font-size:.9rem;cursor:pointer;margin-left:auto;">Close</button>
+        <h1 style="margin:0">{{t .Lang "wizard.title"}}</h1>
+        <button type="button" onclick="goBack('/pbx-config')" class="btn btn-gray" style="font-size:.9rem;cursor:pointer;margin-left:auto;">{{t .Lang "common.close"}}</button>
         <button type="button" id="themeBtn" onclick="toggleTheme()" class="btn btn-gray" style="font-size:1.1rem;cursor:pointer;">🌙</button>
-        <a href="/pbx-config" class="btn btn-gray" style="font-size:.9rem;">Back to Config</a>
+        <button type="button" onclick="toggleLang()" class="btn btn-gray" style="font-size:.9rem;cursor:pointer;">{{if eq .Lang "cs"}}EN{{else}}CS{{end}}</button>
+        <a href="/pbx-config" class="btn btn-gray" style="font-size:.9rem;">{{t .Lang "editor.backToConfig"}}</a>
     </div>
-    <p class="subtitle">Create a new collection from {{if eq .Source "excel"}}an Excel file{{else}}an MSSQL table{{end}}</p>
+    <p class="subtitle">{{if eq .Source "excel"}}{{t .Lang "wizard.subtitleExcel"}}{{else}}{{t .Lang "wizard.subtitleMssql"}}{{end}}</p>
 
     <div class="stepbar">
-        <span class="step {{if eq .Step 1}}active{{end}}">1. Source</span>
-        <span class="step {{if eq .Step 2}}active{{end}}">2. Preview &amp; edit</span>
-        <span class="step {{if eq .Step 3}}active{{end}}">3. Create</span>
+        <span class="step {{if eq .Step 1}}active{{end}}">1. {{t .Lang "wizard.source"}}</span>
+        <span class="step {{if eq .Step 2}}active{{end}}">2. {{t .Lang "wizard.preview"}}</span>
+        <span class="step {{if eq .Step 3}}active{{end}}">3. {{t .Lang "wizard.createStep"}}</span>
     </div>
 
     {{if .Message}}
@@ -57,12 +59,12 @@
     {{if eq .Step 3}}
     <div style="background:#fff;border-radius:8px;padding:20px;max-width:900px;box-shadow:0 1px 3px rgba(0,0,0,.1);">
         <p style="font-size:1rem;">
-            Collection <strong>{{.Created}}</strong> was created successfully.
-            {{if .Import}}Data records were imported immediately.{{else}}No data was imported yet.{{end}}
+            {{t .Lang "wizard.collection"}} <strong>{{.Created}}</strong> {{t .Lang "wizard.wasCreated"}}
+            {{if .Import}}{{t .Lang "wizard.imported"}}{{else}}{{t .Lang "wizard.notImported"}}{{end}}
         </p>
         <div class="actions" style="display:flex;gap:12px;margin-top:16px;">
-            <a href="/pbx-config/view/new" class="btn btn-green">Create view config</a>
-            <a href="/pbx-config" class="btn btn-gray">Back to Config</a>
+            <a href="/pbx-config/view/new" class="btn btn-green">{{t .Lang "wizard.createViewConfig"}}</a>
+            <a href="/pbx-config" class="btn btn-gray">{{t .Lang "wizard.backToConfig"}}</a>
         </div>
     </div>
     {{end}}
@@ -81,16 +83,16 @@
         <input type="hidden" name="import" value="{{if .Import}}1{{else}}0{{end}}">
         <input type="hidden" name="colCount" value="{{len .Columns}}">
 
-        <label>Collection name: <strong>{{.Name}}</strong></label>
-        <p class="hint">Column headers below map to PocketBase fields. Edit the field names and types, uncheck columns to skip.</p>
+        <label>{{t .Lang "wizard.collectionName"}}: <strong>{{.Name}}</strong></label>
+        <p class="hint">{{t .Lang "wizard.headersHint"}}</p>
 
         <table>
             <tr>
-                <th style="width:36px">Use</th>
-                <th>Header</th>
-                <th style="width:200px">PB field name</th>
-                <th style="width:120px">Type</th>
-                <th>Sample values</th>
+                <th style="width:36px">{{t .Lang "wizard.colUse"}}</th>
+                <th>{{t .Lang "wizard.colHeader"}}</th>
+                <th style="width:200px">{{t .Lang "wizard.colPbField"}}</th>
+                <th style="width:120px">{{t .Lang "wizard.colType"}}</th>
+                <th>{{t .Lang "wizard.colSamples"}}</th>
             </tr>
             {{range $i, $c := .Columns}}
             <tr>
@@ -114,8 +116,8 @@
         </table>
 
         <div class="actions">
-            <button type="submit" class="btn btn-green">Create collection</button>
-            <a class="btn btn-gray" href="/pbx-config/import-{{if eq .Source "excel"}}excel{{else}}mssql{{end}}">Back</a>
+            <button type="submit" class="btn btn-green">{{t .Lang "wizard.createCollection"}}</button>
+            <a class="btn btn-gray" href="/pbx-config/import-{{if eq .Source "excel"}}excel{{else}}mssql{{end}}">{{t .Lang "wizard.back"}}</a>
         </div>
     </form>
     {{end}}
@@ -124,33 +126,33 @@
     <form method="POST" action="/pbx-config/import-{{if eq .Source "excel"}}excel{{else}}mssql{{end}}">
         <input type="hidden" name="action" value="preview">
 
-        <label for="name">Collection name</label>
+        <label for="name">{{t .Lang "wizard.collectionName"}}</label>
         <input type="text" id="name" name="name" value="{{.Name}}" placeholder="e.g. novy_majetek">
-        <p class="hint">Lowercase letters, digits and underscores. Used as the collection and table name.</p>
+        <p class="hint">{{t .Lang "wizard.nameHint"}}</p>
 
         {{if eq .Source "excel"}}
-        <label for="fileName">Excel file name</label>
+        <label for="fileName">{{t .Lang "wizard.excelFileName"}}</label>
         <input type="text" id="fileName" name="fileName" value="{{.FileName}}" placeholder="./pb_data or relative name, e.g. produkty">
-        <p class="hint">File must be in the pb_data folder (or full path). .xlsx appended automatically.</p>
+        <p class="hint">{{t .Lang "wizard.fileNameHint"}}</p>
 
-        <label for="sheet">Sheet name</label>
+        <label for="sheet">{{t .Lang "wizard.sheet"}}</label>
         <input type="text" id="sheet" name="sheet" value="{{.Sheet}}" placeholder="Sheet1">
         {{else}}
-        <label for="dsn">MSSQL DSN</label>
+        <label for="dsn">{{t .Lang "wizard.dsn"}}</label>
         <input type="text" id="dsn" name="dsn" value="{{.DSN}}" placeholder="sqlserver://user:pass@host:1433?database=db&encrypt=disable">
-        <p class="hint">Empty DSN falls back to the global DSN from /pbx-setup.</p>
+        <p class="hint">{{t .Lang "wizard.dsnHint"}}</p>
 
-        <label for="table">Table</label>
+        <label for="table">{{t .Lang "wizard.table"}}</label>
         <input type="text" id="table" name="table" value="{{.Table}}" placeholder="dbo.MyTable">
         {{end}}
 
         <div class="checkbox-row">
             <input type="checkbox" id="import" name="import" value="1" {{if .Import}}checked{{end}}>
-            <label for="import" style="margin:0;">Import data immediately after creating the collection</label>
+            <label for="import" style="margin:0;">{{t .Lang "wizard.importDataNow"}}</label>
         </div>
 
         <div class="actions">
-            <button type="submit" class="btn btn-blue">Detect schema</button>
+            <button type="submit" class="btn btn-blue">{{t .Lang "wizard.detectSchema"}}</button>
         </div>
     </form>
     {{end}}
@@ -168,6 +170,13 @@
             var t = localStorage.getItem('pbx-theme');
             if (t === 'dark' || t === 'light') return t;
             return document.body.getAttribute('data-theme') || 'light';
+        }
+        function toggleLang() {
+            var next = document.documentElement.lang === 'cs' ? 'en' : 'cs';
+            var d = new Date(); d.setTime(d.getTime() + 365*24*3600*1000);
+            document.cookie = 'pb_lang=' + next + ';path=/;expires=' + d.toUTCString();
+            fetch('/api/lang/' + next, { method: 'POST' }).catch(function(){});
+            window.location.reload();
         }
         function applyTheme(mode) {
             document.body.setAttribute('data-theme', mode);

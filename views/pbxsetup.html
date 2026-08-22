@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{.Lang}}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -50,73 +50,75 @@
         .modal-body td, .modal-body th { padding: 6px 10px; }
     </style>
     <link rel="stylesheet" href="/assets/theme.css">
+    <script src="/api/lang/{{.Lang}}/catalog.js"></script>
 </head>
 <body data-theme="{{.Theme}}">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">
-        <h1 style="margin:0">PBX Setup</h1>
-        <button type="button" onclick="goBack('/app')" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;margin-left:auto;">Close</button>
+        <h1 style="margin:0">{{t .Lang "setup.title"}}</h1>
+        <button type="button" onclick="goBack('/app')" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;margin-left:auto;">{{t .Lang "common.close"}}</button>
         <button type="button" id="themeBtn" onclick="toggleTheme()" style="padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1.1rem;cursor:pointer;">🌙</button>
-        <a href="/app" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">Applications</a>
-        <a href="/pbx-config" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">Config editor</a>
-        <a href="/_/" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">Administration</a>
+        <button type="button" onclick="toggleLang()" style="padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">{{if eq .Lang "cs"}}EN{{else}}CS{{end}}</button>
+        <a href="/app" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">{{t .Lang "setup.applications"}}</a>
+        <a href="/pbx-config" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">{{t .Lang "setup.configEditor"}}</a>
+        <a href="/_/" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">{{t .Lang "setup.administration"}}</a>
     </div>
-    <p class="subtitle">Configuration collections overview</p>
+    <p class="subtitle">{{t .Lang "setup.subtitle"}}</p>
 
     <div class="section">
-        <h2>Theme</h2>
-        <div class="subtitle">Default theme used across the whole application</div>
+        <h2>{{t .Lang "setup.theme"}}</h2>
+        <div class="subtitle">{{t .Lang "setup.themeSubtitle"}}</div>
         <div class="toolbar" style="margin-bottom:0;">
-            <button type="button" onclick="setTheme('light')" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">☀️ Light</button>
-            <button type="button" onclick="setTheme('dark')" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">🌙 Dark</button>
-            <span id="themeStatus" style="font-size:.9rem;color:#666;">Current: {{.Theme}}</span>
+            <button type="button" onclick="setTheme('light')" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">☀️ {{t .Lang "setup.light"}}</button>
+            <button type="button" onclick="setTheme('dark')" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">🌙 {{t .Lang "setup.dark"}}</button>
+            <span id="themeStatus" style="font-size:.9rem;color:#666;">{{t .Lang "setup.current"}} {{.Theme}}</span>
         </div>
     </div>
 
     <div class="section">
-        <h2>MSSQL</h2>
-        <div class="subtitle">Global default DSN used by the MSSQL Sync feature</div>
+        <h2>{{t .Lang "setup.mssql"}}</h2>
+        <div class="subtitle">{{t .Lang "setup.mssqlSubtitle"}}</div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
             <input type="text" id="mssqlDsn" value="{{.MssqlDSN}}" placeholder="sqlserver://user:pass@host:1433?database=db&amp;encrypt=disable" style="flex:1;min-width:300px;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;outline:none;font-family:monospace;">
-            <button type="button" onclick="saveMssqlDsn()" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">Save DSN</button>
+            <button type="button" onclick="saveMssqlDsn()" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">{{t .Lang "setup.saveDsn"}}</button>
             <span id="mssqlDsnStatus" style="font-size:.9rem;color:#666;"></span>
         </div>
     </div>
 
     <div class="section">
-        <h2>AI agent</h2>
-        <div class="subtitle">LLM provider settings used by the built-in AI agent (/ai)</div>
+        <h2>{{t .Lang "setup.aiAgent"}}</h2>
+        <div class="subtitle">{{t .Lang "setup.aiSubtitle"}}</div>
         <div style="display:flex;flex-direction:column;gap:10px;max-width:700px;">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                <label style="font-size:.9rem;font-weight:600;width:130px;">Provider</label>
+                <label style="font-size:.9rem;font-weight:600;width:130px;">{{t .Lang "setup.provider"}}</label>
                 <select id="aiProvider" onchange="aiProviderChanged()" style="flex:1;min-width:200px;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;outline:none;">
                     <option value="openrouter" {{if eq .Agent.Provider "openrouter"}}selected{{end}}>OpenRouter</option>
-                    <option value="lmstudio" {{if eq .Agent.Provider "lmstudio"}}selected{{end}}>LM Studio (local)</option>
+                    <option value="lmstudio" {{if eq .Agent.Provider "lmstudio"}}selected{{end}}>{{t .Lang "setup.lmstudioLocal"}}</option>
                 </select>
             </div>
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                <label style="font-size:.9rem;font-weight:600;width:130px;">Base URL</label>
+                <label style="font-size:.9rem;font-weight:600;width:130px;">{{t .Lang "setup.baseUrl"}}</label>
                 <input type="text" id="aiBaseURL" value="{{.Agent.BaseURL}}" placeholder="http://127.0.0.1:1234/v1 or https://openrouter.ai/api/v1" style="flex:1;min-width:300px;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;outline:none;font-family:monospace;">
             </div>
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                <label style="font-size:.9rem;font-weight:600;width:130px;">API key</label>
+                <label style="font-size:.9rem;font-weight:600;width:130px;">{{t .Lang "setup.apiKey"}}</label>
                 <input type="password" id="aiApiKey" value="{{.Agent.APIKey}}" placeholder="sk-…" style="flex:1;min-width:300px;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;outline:none;font-family:monospace;">
             </div>
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                <label style="font-size:.9rem;font-weight:600;width:130px;">Model</label>
+                <label style="font-size:.9rem;font-weight:600;width:130px;">{{t .Lang "setup.model"}}</label>
                 <input type="text" id="aiModel" value="{{.Agent.Model}}" placeholder="openai/gpt-4o-mini" style="flex:1;min-width:300px;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;outline:none;font-family:monospace;">
             </div>
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                <label style="font-size:.9rem;font-weight:600;width:130px;">Timeout (s)</label>
+                <label style="font-size:.9rem;font-weight:600;width:130px;">{{t .Lang "setup.timeout"}}</label>
                 <input type="number" id="aiTimeout" value="{{if .Agent.TimeoutSeconds}}{{.Agent.TimeoutSeconds}}{{else}}90{{end}}" min="5" max="600" style="width:120px;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;outline:none;">
             </div>
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                 <label style="display:inline-flex;align-items:center;gap:6px;font-size:.9rem;cursor:pointer;">
-                    <input type="checkbox" id="aiEnabled" {{if .Agent.Enabled}}checked{{end}}> Enabled
+                    <input type="checkbox" id="aiEnabled" {{if .Agent.Enabled}}checked{{end}}> {{t .Lang "setup.enabled"}}
                 </label>
                 <span id="aiConfigStatus" style="font-size:.9rem;color:#666;"></span>
             </div>
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                <button type="button" onclick="saveAiConfig()" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">Save config</button>
+                <button type="button" onclick="saveAiConfig()" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">{{t .Lang "setup.saveConfig"}}</button>
             </div>
         </div>
     </div>
@@ -124,11 +126,11 @@
     {{range $sid, $s := .Sections}}
     <div class="section">
         <h2>{{if $s.Config.PageTitle}}{{$s.Config.PageTitle}}{{else}}{{$s.CollectionName}}{{end}}</h2>
-        <div class="subtitle">{{$s.TotalRecords}} record{{if ne $s.TotalRecords 1}}s{{end}}</div>
+        <div class="subtitle">{{$s.TotalRecords}} {{if eq $s.TotalRecords 1}}{{t $.Lang "common.recordWord"}}{{else}}{{t $.Lang "common.recordsWord"}}{{end}}</div>
         {{if $s.Config.CollectionDescr}}<div class="descr">{{$s.Config.CollectionDescr}}</div>{{end}}
 
         <div class="toolbar">
-            <a href="{{if $s.SetupLinks}}/pbx-setup/record/{{$s.CollectionName}}/new{{else}}/form/{{$s.CollectionName}}{{end}}" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">+ Add new</a>
+            <a href="{{if $s.SetupLinks}}/pbx-setup/record/{{$s.CollectionName}}/new{{else}}/form/{{$s.CollectionName}}{{end}}" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">{{t $.Lang "tabulator.addNew"}}</a>
         </div>
 
         <div class="table-wrap">
@@ -141,7 +143,7 @@
                             {{if $s.Config.ColumnSorting}}<span class="sort-icon">↕</span>{{end}}
                         </th>
                         {{end}}
-                        <th style="width:130px">Actions</th>
+                        <th style="width:130px">{{t $.Lang "common.actions"}}</th>
                     </tr>
                 </thead>
                 <tbody id="tableBody{{$sid}}"></tbody>
@@ -162,19 +164,19 @@
     {{end}}
 
     <div class="section">
-        <h2>Collection API rules</h2>
-        <div class="subtitle">Access rules for the collection API (applied to the PocketBase REST API and enforced on these pages). Blank = public, "Superusers only" = restricted to administrators.</div>
+        <h2>{{t .Lang "setup.rules"}}</h2>
+        <div class="subtitle">{{t .Lang "setup.rulesSubtitle"}}</div>
         <form method="POST" action="/pbx-setup/rules">
             <div class="table-wrap">
                 <table>
                     <thead>
                         <tr>
-                            <th>Collection</th>
-                            <th>List</th>
-                            <th>View</th>
-                            <th>Create</th>
-                            <th>Update</th>
-                            <th>Delete</th>
+                            <th>{{t .Lang "setup.colCollection"}}</th>
+                            <th>{{t .Lang "setup.colList"}}</th>
+                            <th>{{t .Lang "setup.colView"}}</th>
+                            <th>{{t .Lang "setup.colCreate"}}</th>
+                            <th>{{t .Lang "setup.colUpdate"}}</th>
+                            <th>{{t .Lang "setup.colDelete"}}</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -187,11 +189,11 @@
                                 {{$type := .Type}}
                                 {{$rule := .Rule}}
                                 <select name="rules_{{$c}}_{{$type}}_mode" onchange="ruleModeChanged(this)">
-                                    <option value="public" {{if eq $rule.Mode "public"}}selected{{end}}>Public</option>
-                                    <option value="signedin" {{if eq $rule.Mode "signedin"}}selected{{end}}>Signed in</option>
-                                    <option value="selected" {{if eq $rule.Mode "selected"}}selected{{end}}>Selected users</option>
-                                    <option value="super" {{if eq $rule.Mode "super"}}selected{{end}}>Superusers only</option>
-                                    <option value="custom" {{if eq $rule.Mode "custom"}}selected{{end}}>Custom</option>
+                                    <option value="public" {{if eq $rule.Mode "public"}}selected{{end}}>{{t $.Lang "setup.rulePublic"}}</option>
+                                    <option value="signedin" {{if eq $rule.Mode "signedin"}}selected{{end}}>{{t $.Lang "setup.ruleSignedIn"}}</option>
+                                    <option value="selected" {{if eq $rule.Mode "selected"}}selected{{end}}>{{t $.Lang "setup.ruleSelected"}}</option>
+                                    <option value="super" {{if eq $rule.Mode "super"}}selected{{end}}>{{t $.Lang "setup.ruleSuper"}}</option>
+                                    <option value="custom" {{if eq $rule.Mode "custom"}}selected{{end}}>{{t $.Lang "setup.ruleCustom"}}</option>
                                 </select>
                                 <div class="rule-users" style="margin-top:6px;{{if ne $rule.Mode "selected"}}display:none;{{end}}">
                                     {{range $u := $.Users}}
@@ -213,7 +215,7 @@
                 </table>
             </div>
             <div style="margin-top:12px;">
-                <button type="submit" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">Save rules</button>
+                <button type="submit" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">{{t .Lang "setup.saveRules"}}</button>
                 <span id="rulesStatus" style="font-size:.9rem;color:#666;margin-left:10px;"></span>
             </div>
         </form>
@@ -223,7 +225,7 @@
     <div class="modal-overlay" id="relModal">
         <div class="modal-content">
             <div class="modal-header">
-                <h3 id="relModalTitle">Related records</h3>
+                <h3 id="relModalTitle">{{t .Lang "common.relatedRecords"}}</h3>
                 <button class="modal-close" onclick="closeRelModal()">&times;</button>
             </div>
             <div class="modal-body" id="relModalBody"></div>
@@ -345,7 +347,7 @@
 
             var tbody = document.getElementById("tableBody" + sid);
             if (!pageRecords.length) {
-                tbody.innerHTML = '<tr><td class="empty" colspan="' + (sec.fields.length + 1) + '">No records found</td></tr>';
+                tbody.innerHTML = '<tr><td class="empty" colspan="' + (sec.fields.length + 1) + '">' + _t('common.noRecords') + '</td></tr>';
             } else {
                 var collName = sec.collName;
                 var baseUrl = sec.setupLinks ? "/pbx-setup/record/" + collName + "/" : "/form/" + collName + "/";
@@ -354,11 +356,11 @@
                         sec.fields.map(function(f, i) { return "<td>" + renderCell(r[f], sec.fieldTypes[i]) + "</td>"; }).join("") +
                         '<td style="white-space:nowrap">' +
                         '<a href="' + baseUrl + r.id + '?view=1" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid var(--btn-neutral);border-radius:4px;margin-right:4px;line-height:0">' +
-                        '<img src="/assets/Binocular--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="View"></a>' +
+                        '<img src="/assets/Binocular--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="' + _t('common.view') + '"></a>' +
                         '<a href="' + baseUrl + r.id + '" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid var(--btn-primary);border-radius:4px;margin-right:4px;line-height:0">' +
-                        '<img src="/assets/Arrange-List-Descending-1--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="Edit"></a>' +
+                        '<img src="/assets/Arrange-List-Descending-1--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="' + _t('common.edit') + '"></a>' +
                         '<button onclick="deleteRecord(' + sid + ',\'' + collName + '\',' + sec.setupLinks + ',\'' + r.id + '\')" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid var(--btn-danger);border-radius:4px;cursor:pointer;line-height:0">' +
-                        '<img src="/assets/Bin-1--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="Delete"></button>' +
+                        '<img src="/assets/Bin-1--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="' + _t('common.delete') + '"></button>' +
                         "</td></tr>";
                 }).join("");
             }
@@ -369,7 +371,7 @@
                 document.getElementById("nextBtn" + sid).disabled = st.currentPage >= totalPages;
                 document.getElementById("lastBtn" + sid).disabled = st.currentPage >= totalPages;
                 document.getElementById("pageInput" + sid).value = st.currentPage;
-                document.getElementById("pageInfo" + sid).textContent = "Page " + st.currentPage + " of " + totalPages + " (" + filtered.length + " records)";
+                document.getElementById("pageInfo" + sid).textContent = _t('common.page') + " " + st.currentPage + " " + _t('common.of') + " " + totalPages + " (" + filtered.length + " " + _t('common.recordsWord') + ")";
             }
         }
 
@@ -435,14 +437,14 @@
 
         // delete record
         async function deleteRecord(sid, collName, setupLinks, id) {
-            if (!confirm("Really delete selected record?")) return;
+            if (!confirm(_t('common.confirmDeleteRecord'))) return;
             var url = setupLinks ? "/pbx-setup/record/" + collName + "/" + id + "/delete" : "/form/" + collName + "/" + id + "/delete";
             var res = await fetch(url, { method: "POST" });
-            if (!res.ok) { alert("Failed to delete record."); return; }
+            if (!res.ok) { alert(_t('common.deleteFailed')); return; }
             var idx = sections[sid].allRecords.findIndex(function(r) { return r.id === id; });
             if (idx !== -1) sections[sid].allRecords.splice(idx, 1);
             render(sid);
-            alert("Record deleted.");
+            alert(_t('common.recordDeleted'));
         }
 
         // relation modal
@@ -452,10 +454,10 @@
             var coll = btn.dataset.coll;
             var ids = JSON.parse(btn.dataset.ids);
             var title = document.getElementById("relModalTitle");
-            title.textContent = "Related: " + coll + " (" + ids.length + ")";
+            title.textContent = _t('common.relatedPrefix') + ": " + coll + " (" + ids.length + ")";
 
             var body = document.getElementById("relModalBody");
-            body.innerHTML = '<div style="text-align:center;padding:20px;color:#999;">Loading&hellip;</div>';
+            body.innerHTML = '<div style="text-align:center;padding:20px;color:#999;">' + _t('common.loading') + '</div>';
             document.getElementById("relModal").classList.add("open");
 
             if (cachedRelData[coll]) {
@@ -470,7 +472,7 @@
                     renderRelModal(coll, ids, data);
                 })
                 .catch(function() {
-                    body.innerHTML = '<div style="text-align:center;padding:20px;color:#dc3545;">Failed to load data.</div>';
+                    body.innerHTML = '<div style="text-align:center;padding:20px;color:#dc3545;">' + _t('common.loadFailed') + '</div>';
                 });
         }
 
@@ -480,18 +482,18 @@
             var related = data.records.filter(function(r) { return idSet[r.id]; });
             var body = document.getElementById("relModalBody");
             if (!related.length) {
-                body.innerHTML = '<div style="text-align:center;padding:20px;color:#999;">No related records found.</div>';
+                body.innerHTML = '<div style="text-align:center;padding:20px;color:#999;">' + _t('common.noRelated') + '</div>';
                 return;
             }
 
             var relFields = data.fields.filter(function(f) { return f !== "id"; });
             var html = '<table><thead><tr>';
             relFields.forEach(function(f) { html += "<th>" + esc(f) + "</th>"; });
-            html += '<th style="width:50px">View</th></tr></thead><tbody>';
+            html += '<th style="width:50px">' + _t('common.view') + '</th></tr></thead><tbody>';
             related.forEach(function(r) {
                 html += "<tr>";
                 relFields.forEach(function(f) { html += "<td>" + esc(r[f]) + "</td>"; });
-                html += '<td><a href="/tabulator/' + coll + '" target="_blank" style="padding:2px 8px;background:var(--btn-primary);border-radius:4px;color:#fff;text-decoration:none;font-size:.8rem;">Open</a></td>';
+                html += '<td><a href="/tabulator/' + coll + '" target="_blank" style="padding:2px 8px;background:var(--btn-primary);border-radius:4px;color:#fff;text-decoration:none;font-size:.8rem;">' + _t('common.open') + '</a></td>';
                 html += "</tr>";
             });
             html += "</tbody></table>";
@@ -530,20 +532,27 @@
             applyTheme(next);
             fetch('/api/theme/' + next, { method: 'POST' }).catch(function(){});
         }
+        function toggleLang() {
+            var next = document.documentElement.lang === 'cs' ? 'en' : 'cs';
+            var d = new Date(); d.setTime(d.getTime() + 365*24*3600*1000);
+            document.cookie = 'pb_lang=' + next + ';path=/;expires=' + d.toUTCString();
+            fetch('/api/lang/' + next, { method: 'POST' }).catch(function(){});
+            window.location.reload();
+        }
         function setTheme(mode) {
             localStorage.setItem('pbx-theme', mode);
             applyTheme(mode);
             fetch('/api/theme/' + mode, { method: 'POST' })
                 .then(function() {
                     var s = document.getElementById('themeStatus');
-                    if (s) s.textContent = 'Current: ' + mode;
+                    if (s) s.textContent = _t('setup.current') + ' ' + mode;
                 })
                 .catch(function(){});
         }
         function saveMssqlDsn() {
             var dsn = document.getElementById('mssqlDsn').value.trim();
             if (!dsn) {
-                alert('Please enter a DSN.');
+                alert(_t('setup.dsnRequired'));
                 return;
             }
             var fd = new FormData();
@@ -553,16 +562,16 @@
                 .then(function(res) {
                     var s = document.getElementById('mssqlDsnStatus');
                     if (res.ok) {
-                        s.textContent = 'Saved.';
+                        s.textContent = _t('common.saved');
                         s.style.color = '#28a745';
                     } else {
-                        s.textContent = 'Save failed: ' + (res.data.message || 'unknown error');
+                        s.textContent = _t('common.saveFailed') + ': ' + (res.data.message || _t('common.unknownError'));
                         s.style.color = '#dc3545';
                     }
                 })
                 .catch(function() {
                     var s = document.getElementById('mssqlDsnStatus');
-                    s.textContent = 'Save failed.';
+                    s.textContent = _t('common.saveFailed');
                     s.style.color = '#dc3545';
                 });
         }
@@ -593,16 +602,16 @@
                 .then(function(res) {
                     var s = document.getElementById('aiConfigStatus');
                     if (res.ok) {
-                        s.textContent = 'Saved.';
+                        s.textContent = _t('common.saved');
                         s.style.color = '#28a745';
                     } else {
-                        s.textContent = 'Save failed: ' + (res.data.message || 'unknown error');
+                        s.textContent = _t('common.saveFailed') + ': ' + (res.data.message || _t('common.unknownError'));
                         s.style.color = '#dc3545';
                     }
                 })
                 .catch(function() {
                     var s = document.getElementById('aiConfigStatus');
-                    s.textContent = 'Save failed.';
+                    s.textContent = _t('common.saveFailed');
                     s.style.color = '#dc3545';
                 });
         }

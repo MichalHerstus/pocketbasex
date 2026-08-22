@@ -585,6 +585,7 @@ Total: ~400 new lines, ~130 modified lines.
 - Independent of Phases 1-7.
 
 ## Phase 11 — AI agent action management tools
+### done!
 
 Context: Phase 10 adds custom actions (Goja scripts in `_actions` collection). Phase 11 extends the AI agent (`pbai/`) with tools to create, update, and list actions via natural language. Superuser-only.
 
@@ -678,6 +679,18 @@ Tools operate on `_actions` collection directly (same pattern as `set_view_confi
 - Non-superuser → both tools return permission error
 
 ## Phase 12 — Multilanguage UI (i18n)
+### done!
+
+Implemented (see git history for the Phase 12 commit).
+
+**Deviation from spec**: the per-browser language override uses a `pb_lang` cookie instead of `localStorage`. Unlike themes (pure CSS that applies post-render), language must be server-rendered — a cookie lets `getLangCode(app, r)` resolve the caller's language before emitting the HTML. Resolution order: `--lang` CLI flag > `pb_lang` cookie > `pb_data/lang.json` > `en`.
+
+- New `i18n/` package: embedded `en.json`/`cs.json` (231 keys each), `i18n.T(lang, key)`, `i18n.CatalogJSON(lang)`.
+- Template func `{{t .Lang "key"}}`; every page data struct embeds `views.LangData` (`Lang`).
+- Routes: `POST /api/lang/{code}` (persists global default), `GET /api/lang/{code}/catalog.js` (serves `window._t` + catalog).
+- All 10 in-scope templates translated; mobile templates untouched.
+- Also fixed a latent nil-pointer in `tabulator.html` (`getMssqlParams` referenced `.Mssql.DSN` even when `.Mssql` was nil).
+- Added `templates_test.go` (root package) asserting every template renders under `cs`.
 
 Context: All UI strings are hardcoded in English across 10 HTML templates and ~15 locations in `main.go`. Users need Czech + English support with a per-user language switcher. The theme toggle pattern (localStorage + server JSON + topbar button) provides the exact template to mirror.
 
@@ -971,6 +984,7 @@ Total: ~420 new lines (translations + loader), ~100 modified lines (handlers + t
 - No new Go dependencies (plain `encoding/json` + `fmt.Sprintf`)
 
 ## Phase 7 — Superadmin `/pbx-setup` management hub
+### done!
 
 Context: `/pbx-setup` (main.go:947) is currently NOT superadmin-gated and renders `_app`/`_views` as read-only tables whose edit links target `/form/{collName}` — those 404 because `resolveFormConfig` needs a `_views` config named after the collection (none exists for `_app`/`_views`/`_agent`). All data collections have `NULL` rules (superuser-only); `users` uses `id = @request.auth.id`. App routes ignore PB rules; `handleFormPost` has no file-upload support.
 
@@ -1027,6 +1041,7 @@ Decisions confirmed with user:
 - Update `AGENTS.md` (new routes, rules editor, enforcement, setup-record page).
 
 ## Phase 13 — Agent AI enhancements
+### done!
 
 Context: two issues surfaced while using `/ai` with a local LM Studio model (`google/gemma-4-e4b`):
 1. Prompt "list all records in collection produkty" got an answer about a nonexistent "produkti" collection — the LLM mistyped the name inside its tool-call arguments and relayed the terse `collection "produkti" not found` error instead of retrying.

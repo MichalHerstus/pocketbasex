@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{.Lang}}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{if .IsNew}}New{{else}}Edit{{end}} record · {{.CollName}}</title>
+    <title>{{if .IsNew}}{{t .Lang "sr.newRecord"}}{{else}}{{t .Lang "sr.editRecord"}}{{end}} · {{.CollName}}</title>
     <style>
         * { box-sizing: border-box; }
         body { font-family: sans-serif; margin: 0; padding: 20px; background: var(--body-bg, #f5f5f5); color: #333; }
@@ -38,15 +38,17 @@
         .raw-box.open { display: block; }
     </style>
     <link rel="stylesheet" href="/assets/theme.css">
+    <script src="/api/lang/{{.Lang}}/catalog.js"></script>
 </head>
 <body data-theme="{{.Theme}}">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">
-        <h1 style="margin:0">{{if .IsNew}}New{{else}}Edit{{end}} record</h1>
+        <h1 style="margin:0">{{if .IsNew}}{{t .Lang "sr.newRecord"}}{{else}}{{t .Lang "sr.editRecord"}}{{end}}</h1>
         <span style="color:#666;font-size:.95rem;">{{.CollName}}</span>
         <button type="button" id="themeBtn" onclick="toggleTheme()" style="padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1.1rem;cursor:pointer;margin-left:auto;">🌙</button>
-        <a href="/pbx-setup" class="btn btn-neutral" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">Back to Setup</a>
+        <button type="button" onclick="toggleLang()" style="padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">{{if eq .Lang "cs"}}EN{{else}}CS{{end}}</button>
+        <a href="/pbx-setup" class="btn btn-neutral" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">{{t .Lang "sr.backToSetup"}}</a>
     </div>
-    <p class="subtitle">{{if .IsNew}}Create a new record in {{.CollName}}{{else}}Editing record {{.RecordID}} in {{.CollName}}{{end}}</p>
+    <p class="subtitle">{{if .IsNew}}{{t .Lang "sr.subtitleNew"}} {{.CollName}}{{else}}{{t .Lang "sr.subtitleEditPrefix"}} {{.RecordID}} {{t .Lang "sr.subtitleEditIn"}} {{.CollName}}{{end}}</p>
 
     {{if .Error}}<div class="err">{{.Error}}</div>{{end}}
 
@@ -67,12 +69,12 @@
             </select>
             {{else if eq .Type "file"}}
             {{if .Data.has}}
-            <div class="file-info">Current file: <a href="{{.Data.url}}" target="_blank">{{.Value}}</a></div>
+            <div class="file-info">{{t $.Lang "sr.currentFile"}} <a href="{{.Data.url}}" target="_blank">{{.Value}}</a></div>
             {{end}}
             <input type="file" id="f-{{.Name}}" name="{{.Name}}">
             {{if .Data.has}}
             <label class="checkbox-row" style="margin-top:6px;">
-                <input type="checkbox" name="{{.Name}}_remove"> Remove existing file
+                <input type="checkbox" name="{{.Name}}_remove"> {{t $.Lang "sr.removeFile"}}
             </label>
             {{end}}
             {{else if eq .Type "editor"}}
@@ -111,7 +113,7 @@
             {{range $fld.FieldOptions}}
             <div class="mapping-row">
                 <span style="flex:1;font-size:.88rem;color:#555;">{{.Name}}</span>
-                <input type="text" name="json_{{$sec.Key}}_{{$fld.Key}}_{{.Index}}" value="{{.Value}}" placeholder="Label for {{.Name}}">
+                <input type="text" name="json_{{$sec.Key}}_{{$fld.Key}}_{{.Index}}" value="{{.Value}}" placeholder="{{t $.Lang "sr.labelFor"}} {{.Name}}">
             </div>
             {{end}}
             {{else if eq $fld.Type "columns"}}
@@ -124,12 +126,12 @@
                         <option value="{{$t}}" {{if eq $t .Name}}selected{{end}}>{{$t}}</option>
                         {{end}}
                     </select>
-                    <input type="text" name="json_{{$sec.Key}}_{{$fld.Key}}_title" value="{{.Label}}" placeholder="Column title">
+                    <input type="text" name="json_{{$sec.Key}}_{{$fld.Key}}_title" value="{{.Label}}" placeholder="{{t $.Lang "sr.columnTitle"}}">
                     <button type="button" class="rm" onclick="this.parentNode.remove()">&times;</button>
                 </div>
                 {{end}}
             </div>
-            <button type="button" class="raw-toggle" onclick="addColRow('{{$sec.Key}}','{{$fld.Key}}','{{$sec.TargetColl}}')">+ Add column</button>
+            <button type="button" class="raw-toggle" onclick="addColRow('{{$sec.Key}}','{{$fld.Key}}','{{$sec.TargetColl}}')">{{t $.Lang "sr.addColumn"}}</button>
             {{else if eq $fld.Type "mapping"}}
             <div id="map-{{$sec.Key}}-{{$fld.Key}}">
                 {{range $fld.FieldOptions}}
@@ -140,12 +142,12 @@
                         <option value="{{$t}}" {{if eq $t .Name}}selected{{end}}>{{$t}}</option>
                         {{end}}
                     </select>
-                    <input type="text" name="json_{{$sec.Key}}_{{$fld.Key}}_db" value="{{.Label}}" placeholder="MSSQL column">
+                    <input type="text" name="json_{{$sec.Key}}_{{$fld.Key}}_db" value="{{.Label}}" placeholder="{{t $.Lang "sr.mssqlColumn"}}">
                     <button type="button" class="rm" onclick="this.parentNode.remove()">&times;</button>
                 </div>
                 {{end}}
             </div>
-            <button type="button" class="raw-toggle" onclick="addMapRow('{{$sec.Key}}','{{$fld.Key}}','{{$sec.TargetColl}}')">+ Add mapping</button>
+            <button type="button" class="raw-toggle" onclick="addMapRow('{{$sec.Key}}','{{$fld.Key}}','{{$sec.TargetColl}}')">{{t $.Lang "sr.addMapping"}}</button>
             {{else if eq $fld.Type "number"}}
             <input type="number" id="j-{{$sec.Key}}-{{$fld.Key}}" name="json_{{$sec.Key}}_{{$fld.Key}}" value="{{$fld.Value}}">
             {{else}}
@@ -154,29 +156,29 @@
         </div>
         {{end}}
         <div class="field">
-            <button type="button" class="raw-toggle" onclick="this.nextElementSibling.classList.toggle('open')">Toggle raw JSON</button>
+            <button type="button" class="raw-toggle" onclick="this.nextElementSibling.classList.toggle('open')">{{t $.Lang "sr.toggleRawJson"}}</button>
             <div class="raw-box"><textarea name="json_{{$sec.Key}}_raw" rows="8" placeholder="{{$sec.Raw}}">{{$sec.Raw}}</textarea></div>
         </div>
         {{end}}
 
         <div class="toolbar">
-            <button type="submit" class="btn btn-primary">Save</button>
+            <button type="submit" class="btn btn-primary">{{t .Lang "common.save"}}</button>
             {{if not .IsNew}}
-            <button type="button" class="btn btn-danger" onclick="deleteRecord()">Delete</button>
+            <button type="button" class="btn btn-danger" onclick="deleteRecord()">{{t .Lang "common.delete"}}</button>
             {{end}}
-            <a href="/pbx-setup" class="btn btn-neutral" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">Cancel</a>
+            <a href="/pbx-setup" class="btn btn-neutral" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">{{t .Lang "common.cancel"}}</a>
         </div>
     </form>
 
     <script>
         {{if not .IsNew}}
         async function deleteRecord() {
-            if (!confirm("Really delete this record?")) return;
+            if (!confirm(_t('sr.confirmDelete'))) return;
             var res = await fetch("/pbx-setup/record/{{.CollName}}/{{.RecordID}}/delete", { method: "POST" });
             if (res.ok) {
                 window.location.href = "/pbx-setup";
             } else {
-                alert("Failed to delete record.");
+                alert(_t('sr.deleteFailed'));
             }
         }
         {{end}}
@@ -195,7 +197,7 @@
             }
             row.innerHTML =
                 '<select name="json_' + secKey + '_' + fKey + '_field">' + opts + '</select>' +
-                '<input type="text" name="json_' + secKey + '_' + fKey + '_title" placeholder="Column title">' +
+                '<input type="text" name="json_' + secKey + '_' + fKey + '_title" placeholder="' + escAttr(_t('sr.columnTitle')) + '">' +
                 '<button type="button" class="rm" onclick="this.parentNode.remove()">&times;</button>';
             box.appendChild(row);
         }
@@ -205,8 +207,8 @@
             var row = document.createElement("div");
             row.className = "mapping-row";
             row.innerHTML =
-                '<input type="text" name="json_' + secKey + '_' + fKey + '_pb" placeholder="PB field" list="target-fields-' + escAttr(target) + '">' +
-                '<input type="text" name="json_' + secKey + '_' + fKey + '_db" placeholder="MSSQL column">' +
+                '<input type="text" name="json_' + secKey + '_' + fKey + '_pb" placeholder="' + escAttr(_t('sr.pbField')) + '" list="target-fields-' + escAttr(target) + '">' +
+                '<input type="text" name="json_' + secKey + '_' + fKey + '_db" placeholder="' + escAttr(_t('sr.mssqlColumn')) + '">' +
                 '<button type="button" class="rm" onclick="this.parentNode.remove()">&times;</button>';
             box.appendChild(row);
         }
@@ -215,6 +217,13 @@
             var t = localStorage.getItem('pbx-theme');
             if (t === 'dark' || t === 'light') return t;
             return document.body.getAttribute('data-theme') || 'light';
+        }
+        function toggleLang() {
+            var next = document.documentElement.lang === 'cs' ? 'en' : 'cs';
+            var d = new Date(); d.setTime(d.getTime() + 365*24*3600*1000);
+            document.cookie = 'pb_lang=' + next + ';path=/;expires=' + d.toUTCString();
+            fetch('/api/lang/' + next, { method: 'POST' }).catch(function(){});
+            window.location.reload();
         }
         function applyTheme(mode) {
             document.body.setAttribute('data-theme', mode);

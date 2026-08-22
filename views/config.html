@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{.Lang}}">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{if .IsNew}}New{{else}}Edit{{end}} view config - PBX</title>
+    <title>{{if .IsNew}}{{t .Lang "editor.titleNew"}}{{else}}{{t .Lang "editor.titleEdit"}}{{end}} - PBX</title>
     <style>
         * { box-sizing: border-box; }
         body { font-family: sans-serif; margin: 0; padding: 20px; background: var(--body-bg, #f5f5f5); color: #333; }
@@ -22,43 +22,45 @@
         .actions { margin-top: 20px; display: flex; gap: 12px; }
     </style>
     <link rel="stylesheet" href="/assets/theme.css">
+    <script src="/api/lang/{{.Lang}}/catalog.js"></script>
 </head>
 <body data-theme="{{.Theme}}">
     <div class="toolbar">
-        <h1 style="margin:0">{{if .IsNew}}New{{else}}Edit{{end}} view config</h1>
-        <button type="button" onclick="goBack('/pbx-config')" class="btn btn-gray" style="font-size:.9rem;cursor:pointer;margin-left:auto;">Close</button>
+<h1 style="margin:0">{{if .IsNew}}{{t .Lang "editor.titleNew"}}{{else}}{{t .Lang "editor.titleEdit"}}{{end}}</h1>
+        <button type="button" onclick="goBack('/pbx-config')" class="btn btn-gray" style="font-size:.9rem;cursor:pointer;margin-left:auto;">{{t .Lang "common.close"}}</button>
         <button type="button" id="themeBtn" onclick="toggleTheme()" class="btn btn-gray" style="font-size:1.1rem;cursor:pointer;">🌙</button>
-        <a href="/pbx-config" class="btn btn-gray" style="font-size:.9rem;">Back to Config</a>
+        <button type="button" onclick="toggleLang()" class="btn btn-gray" style="font-size:.9rem;cursor:pointer;">{{if eq .Lang "cs"}}EN{{else}}CS{{end}}</button>
+        <a href="/pbx-config" class="btn btn-gray" style="font-size:.9rem;">{{t .Lang "editor.backToConfig"}}</a>
     </div>
-    <p class="subtitle">Configuration name is used in URLs: /tabular/&#123;name&#125; or /form/&#123;name&#125;</p>
+    <p class="subtitle">{{t .Lang "editor.subtitle"}}</p>
 
     <form method="POST" action="/pbx-config/save">
-        <label for="name">Name</label>
+        <label for="name">{{t .Lang "editor.nameLabel"}}</label>
         <input type="text" id="name" name="name" value="{{.Name}}" placeholder="e.g. produkty" {{if not .IsNew}}readonly{{end}}>
-        <p class="hint">Unique identifier used in the URL. Letters, digits, dashes and underscores.</p>
+        <p class="hint">{{t .Lang "editor.nameHint"}}</p>
 
-        <label for="collName">Collection</label>
+        <label for="collName">{{t .Lang "editor.collection"}}</label>
         <select id="collName" name="collName">
-            <option value="">-- choose collection --</option>
+            <option value="">{{t .Lang "editor.chooseCollection"}}</option>
             {{range .Collections}}
             <option value="{{.}}" {{if eq . $.CollName}}selected{{end}}>{{.}}</option>
             {{end}}
         </select>
 
-        <label for="tabulator">Tabulator (list) config JSON</label>
+        <label for="tabulator">{{t .Lang "editor.tabulator"}}</label>
         <textarea id="tabulator" name="tabulator" placeholder='{"pageTitle":"Produkty","collectionDescr":"databáze produktů","columnTitles":"Kód,Název,Cena","columnOrder":"2,3,6","pagination":true,"searchBox":true}'>{{.TabulatorJSON}}</textarea>
         <p class="hint">Keys: pageTitle, collectionDescr, columnTitles, columnOrder, columnSorting, pagination, searchBox, displaySystemCol, filter, columns (field, title).</p>
 
-        <label for="form">Form config JSON</label>
+        <label for="form">{{t .Lang "editor.form"}}</label>
         <textarea id="form" name="form" placeholder='{"formTitle":"Produkty","formDescr":"Popis","formLabels":"productCode=Kód","formLayout":"row:(2,3),(4,5)","displaySystemCol":false,"layout":[[0,1]],"labels":{"name":"Label"}}'>{{.FormJSON}}</textarea>
         <p class="hint">Keys: formTitle, formDescr, formLabels, formLayout, columnOrder, displaySystemCol, layout (0-based field indices), labels (field=Label), collections (name, joinField).</p>
 
-        <label for="mssql">MSSQL config (JSON)</label>
+        <label for="mssql">{{t .Lang "editor.mssql"}}</label>
         <textarea id="mssql" name="mssql" placeholder='{"dsn":"sqlserver://user:pass@host:1433?database=db&amp;encrypt=disable","table":"dbo.MyTable","mode":"insert","mapping":[{"pbField":"name","dbField":"name"}]}'>{{.MssqlJSON}}</textarea>
         <p class="hint">Optional. Enables the MSSQL Sync button on the tabular view. Keys: dsn, table, mode (insert/update/replace), mapping (pbField &harr; dbField pairs). Leave empty to disable.</p>
 
         <div class="actions">
-            <button type="submit" class="btn btn-green">Save</button>
+            <button type="submit" class="btn btn-green">{{t .Lang "common.save"}}</button>
         </div>
     </form>
 
@@ -75,6 +77,13 @@
             var t = localStorage.getItem('pbx-theme');
             if (t === 'dark' || t === 'light') return t;
             return document.body.getAttribute('data-theme') || 'light';
+        }
+        function toggleLang() {
+            var next = document.documentElement.lang === 'cs' ? 'en' : 'cs';
+            var d = new Date(); d.setTime(d.getTime() + 365*24*3600*1000);
+            document.cookie = 'pb_lang=' + next + ';path=/;expires=' + d.toUTCString();
+            fetch('/api/lang/' + next, { method: 'POST' }).catch(function(){});
+            window.location.reload();
         }
         function applyTheme(mode) {
             document.body.setAttribute('data-theme', mode);
