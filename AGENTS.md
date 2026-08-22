@@ -91,7 +91,8 @@ Defined in `main.go` (used in `views/*.html`): `add`, `sub`, `seq`, `safeJS`, `s
 ## Theme
 
 - Global default stored in `pb_data/theme.json` (`{"mode":"light"|"dark"}`); set via `POST /api/theme/{mode}` (also from the `/pbx-setup` Theme section or the topbar switch on any page).
-- Every page data struct has a `Theme` field; templates render `<body data-theme="{{.Theme}}">` and link `/assets/theme.css` (light + `[data-theme="dark"]` variable sets).
+- Every page data struct has a `Theme` field; templates render `<body data-theme="{{.Theme}}">` and link `/assets/theme.css`.
+- `theme.css` uses a 4-base-color system per theme (`--bg`, `--surface`, `--text`, `--accent` in `:root` for light; `[data-theme="dark"]` overrides only those 4) plus shared semantic tokens (`--success`/`--warning`/`--danger` + soft/strong variants). All other tokens (`--btn-primary`, `--muted`, `--border`, …) are derived via `color-mix()` and keep their names, so re-skinning = editing ~8 numbers. Requires `color-mix` (2023+ browsers).
 - The topbar switch also stores a per-browser override in `localStorage` key `pbx-theme`; on load the override wins, otherwise the server default applies.
 - `login.html` uses its own `:root` variables plus the shared `theme.css`.
 
