@@ -61,7 +61,7 @@ No CI, no test runner. `pbai/agent_test.go` has unit tests (run with `go test ./
 | `POST /api/ai-config` | agent config (super-admin) | Save `_agent` config (JSON) |
 | `GET /api/ai/status` | agent status | `{configured, provider, model, enabled}` |
 | `GET /ai` | AI agent chat | Chat UI (`agent.html`), linked from `/app` |
-| `POST /ai/chat` | AI agent chat | Run agent loop; returns `{transcript, finalText, pendingAction?, records?}` — `records` is the last `query_records` dataset, rendered as a table (tabulator.html styling) by the chat UI. Tabular fast path: when `query_records` is the first and only executed tool call of the turn and returns ≥1 record, the response returns immediately without a follow-up LLM call (`finalText` empty) |
+| `POST /ai/chat` | AI agent chat | Run agent loop; returns `{transcript, finalText, pendingAction?, records?, render?}` — `records` is the last `query_records` dataset; `render` is the server-rendered HTML fragment the chat UI injects for the turn. Tabular fast path: when `query_records` is the first and only executed tool call of the turn and returns ≥1 record, the response returns immediately without a follow-up LLM call (`finalText` empty) |
 | `POST /ai/chat/stream` | AI agent chat (SSE) | Streaming variant of `/ai/chat`: emits `text` deltas live, `status` notices per tool execution, then one final `done` event whose `result` payload equals the non-streaming response (`error` event on failure). Internally the agent always talks to the LLM via `Client.Stream` (`pbai/llm.go`) — even `/ai/chat` |
 | `POST /ai/confirm` | AI agent confirm | Approve/reject a pending write action (`{actionID, approved}`) |
 | `GET /api/actions/{collectionName}` | list actions | Actions for a collection (all for superusers, `_public` only otherwise) |
@@ -151,13 +151,20 @@ User-defined Goja (JavaScript) scripts that run from the tabular and form views 
 
 ## AI agent (`pbai` package)
 
-Built-in chat agent at `/ai` (linked from `/app`). Package `pbai/` (`llm.go`, `agent.go`, `tools.go`, `ingest.go`).
+Built-in chat agent at `/ai` (linked from `/app`). Package `pbai/` (`llm.go`, `agent.go`, `tools.go`, `ingest.go`, `render.go`).
 
 - **LLM**: single OpenAI-compatible client via `github.com/sashabaranov/go-openai` (covers both OpenRouter and LM Studio). Config lives in the `_agent` collection. LM Studio `baseURL` should be the `/v1` endpoint (e.g. `http://127.0.0.1:1234/v1`); when `provider=lmstudio` a missing `/v1` suffix is appended automatically (`resolveBaseURL` in `llm.go`) — a bare host URL makes LM Studio answer HTTP 200 with an error body and zero choices ("empty response from model"). LM Studio intermittently ends a stream immediately with an empty delta + `finish_reason:"stop"`; `Client.Stream` retries such empty completions twice before surfacing the error (`maxEmptyStreamRetries`).
 - **`_agent` collection**: system collection with `_name` (text, required), `_description` (text), `_config` (json). One record named `default` holds `{"provider":"lmstudio"|"openrouter","baseURL","apiKey","model","timeoutSeconds","enabled"}`. Edited from the `/pbx-setup` "AI agent" section (super-admin). The API key is stored in the record's `_config` JSON — never in env vars or git.
 - **Tools** (`tools.go`): `list_collections`, `get_collection_schema`, `query_records`, `insert_records` (write), `create_collection` (write), `set_view_config` (write), `create_action` (write, upserts an `_actions` record by name; validates the target collection exists and the script compiles), `list_actions` (read). Write tools return a `PendingAction` instead of executing; the loop stops and the UI shows an approve/reject modal, then calls `POST /ai/confirm`.
 - **Permissions**: create_collection/set_view_config/create_action/list_actions are super-admin only; record ops enforce each collection's PB rules (`listRule`/`viewRule`/`createRule`/`updateRule`/`deleteRule`) via `app.CanAccessRecord` with the caller's `RequestInfo`. `nil` rule = super-user only; `""` = everyone. Permission is re-checked at confirm time.
 - **Files** (`ingest.go`): text/md/csv read inline, PDF via `github.com/ledongthuc/pdf` (max 20 pages, 300 KB extracted text), images sent as base64 multimodal (8 MB cap). Uploaded files are marked as untrusted data.
+- **System prompt** (`agent.go`): reminds the model to answer in the user's language, use tools rather than invent facts, copy collection names exactly, keep prose brief after `query_records` (the UI renders the data), and — for "show/find a specific record" requests — to call `query_records` using the exact field name from the schema (check the schema first if unsure about spelling/casing).
+- **Response rendering** (`pbai/render.go`, Go-side; `views/agent.html`, client-side): every terminal `ChatResult` carries `render`, a server-rendered, sanitized HTML fragment the chat page shows in the final bubble — no `<iframe>`:
+  - *many records* → markdown lead-in (if `finalText`) + tabulator-style table (`ai-table`)
+  - *one record* → markdown lead-in (if `finalText`) + read-only detail card (`ai-detail`, `<dl>`; labels/title pulled from the matching `_views` record `_form.formLabels`/`labels` and `_tabulator.pageTitle`, else the collection name); explicit "show/find a record" prompts make the model typically land here via the tabular fast path
+  - *no records* → markdown only; *pending action* → markdown summary (the confirm modal handles approve/reject)
+  - Markdown is rendered with `github.com/yuin/goldmark` (GFM) and sanitized with `github.com/microcosm-cc/bluemonday` (`UGCPolicy` + `AllowStandardURLs`, nofollow/no-referrer); `<img>` elements are stripped so a prompt-injected record value can never trigger an external fetch. Tables/cards use `html/template` auto-escaping.
+  - Client contract: the streamed text bubble is replaced by the `render` fragment on `done`. **Fallback**: if a response carries `records` but no/empty `render` (e.g. stale server binary), `agent.html` renders the records table client-side (`addRecordsTable`) so an answer is never silently dropped.
 - **Auth note**: handlers use `agentRequestInfo(e)` (main.go) to inject the `pb_auth` cookie auth into the RequestInfo; without it `isSuper()` is always false.
 - **Conversation memory**: stateless server-side — the UI (`views/agent.html`) accumulates the visible turns in a JS array and sends the last 16 with each request; `Run` clamps incoming history to 40 messages. Assistant turns (incl. "Awaiting confirmation" summaries, fast-path table notes and confirm outcomes) are appended to that history client-side; the topbar "New chat" button resets it.
 
@@ -175,7 +182,7 @@ Add/modify collection fields via **JS SDK** in `pb_migrations/`. See `.opencode/
 - `views/assets/` — icons (PNG) and `theme.css`; served via embedded FS
 - `pbexcel/` — Excel import/export logic (`pb-excel.go`); also `IntrospectSheet` (header/type detection) for the collection wizard
 - `pbmssql/` — MSSQL import/export/introspection logic (`pb-mssql.go`)
-- `pbai/` — AI agent (`llm.go`, `agent.go`, `tools.go`, `ingest.go`)
+- `pbai/` — AI agent (`llm.go`, `agent.go`, `tools.go`, `ingest.go`, `render.go`)
 - `pbactions/` — custom action engine (`types.go`, `runner.go`, `builtins.go`)
 - `views/import-wizard.html` — shared 3-step wizard: Source → Preview/Edit → Create (used by both Excel and MSSQL collection import)
 - `views/pages.go` — Go structs for template data (`TabulatorPageData`, `FormPageData`, `AppPageData`, `ImportWizardPageData`, etc.)
