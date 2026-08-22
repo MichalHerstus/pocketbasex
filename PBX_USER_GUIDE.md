@@ -6,10 +6,12 @@ PocketBase capabilities (data storage, the stock admin UI at `/_/`, CLI) and ext
 them with ready-made list (tabular) and form pages, a dashboard, Excel and MSSQL
 import/export, an AI agent, mobile views, and a superadmin setup area.
 
-This guide covers everything implemented up to **Phase 10** of `PBX_plan.md`
+This guide covers everything implemented up to **Phase 13** of `PBX_plan.md`
 (configuration model, config-name routing, superadmin config editor, view-collection
 editing, Excel/MSSQL import+sync, collection-creation wizard, mobile views, the
-per-user landing-page `_view` field, and custom actions).
+per-user landing-page `_view` field, custom actions, AI-agent action-management tools,
+multilingual UI (English/Czech), and the AI agent enhancements: conversation memory,
+streaming responses, self-correcting collection lookup, and server-rendered chat replies).
 
 ---
 
@@ -22,14 +24,16 @@ per-user landing-page `_view` field, and custom actions).
 | Web UI | Generic admin at `/_/` (technical, schema-focused) | An app-style UI: dashboard, tables, forms, setup |
 | List/Form views | Manual per-collection | Configurable via `_views` JSON (one config drives both) |
 | Data import/export | — | Excel import/export, MSSQL sync, "create collection from source" wizard |
-| Built-in agent | None | Chat AI agent with read + confirmed write tools |
+| Built-in agent | None | Chat AI agent with read + confirmed write tools, streaming replies, action-management tools |
+| Language | English only | English **and Czech**, per-user switcher |
 
 ### 1.2 Technologies
 
 - **Runtime**: PocketBase v0.39 (custom Go build, the `pbx` binary).
 - **Server**: Go HTTP server, listens on `127.0.0.1:8090` by default (configurable).
 - **Database**: SQLite at `pb_data/data.db` (the SQLite file is not tracked in git).
-- **Frontend**: Go server-rendered HTML templates (`views/*.html`) with light/dark theme.
+- **Frontend**: Go server-rendered HTML templates (`views/*.html`) with light/dark theme
+  and English/Czech localization (`i18n/` catalogs embedded in the binary).
 - **Migrations**: applied automatically on every `serve` from `pb_migrations/*.js`.
 
 ### 1.3 Who uses it (two account tiers)
@@ -37,8 +41,9 @@ per-user landing-page `_view` field, and custom actions).
 - **Regular users** — records live in the `users` collection; they sign in with email +
   password, land on the dashboard (`/app`) and use tables, forms, and the AI agent.
 - **Superusers** — records live in the `_superusers` collection; after login they land
-  on `/pbx-setup` and get full system administration (themes, DSN, AI config, collection
-  rules, config editor, record editors) **plus** the standard PocketBase admin UI.
+  on `/pbx-setup` and get full system administration (themes, default language, DSN, AI
+  config, collection rules, config editor, record editors) **plus** the standard PocketBase
+  admin UI.
 
 All access is cookie-based (`pb_auth`). Logout is at `/logout`.
 
@@ -113,6 +118,7 @@ help.
 | `--http <addr>` | HTTP TCP address. If you give domain arguments, defaults to `0.0.0.0:80`; otherwise `127.0.0.1:8090`. |
 | `--https <addr>` | HTTPS TCP address. If domains given, default `0.0.0.0:443`; otherwise empty (= no TLS). HTTP is auto-redirected to HTTPS. |
 | `--origins` | CORS allowed origins (default `*`). |
+| `--lang <en\|cs>` | Force the UI language for the whole server, overriding the per-browser and persistent defaults. |
 
 **Examples**
 
@@ -230,14 +236,43 @@ A chat page. You can:
 
 - Ask natural-language questions about your data ("how many products cost less than 100").
 - The agent has tools: `list_collections`, `get_collection_schema`, `query_records`,
-  `insert_records`, `create_collection`, and `set_view_config`.
-- **Read-only tools** (list/schema/query) run immediately.
-- **Write tools** (insert/create/set config) never run straight away — they produce a
-  **Pending Action**, shown in a confirm modal with an *Approve & execute* / *Reject*
-  button. Only after your explicit confirmation does the action execute.
+  `insert_records`, `create_collection`, `set_view_config`, `create_action`, and
+  `list_actions`.
+- **Read-only tools** (list/schema/query, list actions) run immediately.
+- **Write tools** (insert/create/set config/create action) never run straight away — they
+  produce a **Pending Action**, shown in a confirm modal with an *Approve & execute* /
+  *Reject* button. Only after your explicit confirmation does the action execute.
+- **Streaming replies** — the assistant's answer streams in live, with a status line
+  beneath each tool the agent calls; the final answer (a table, a detail card, or plain
+  text) replaces the streamed text when it is ready.
+- **Rich, server-rendered answers** — record data is rendered as a proper table (or a
+  detail card for a single record), not raw markdown, and is sanitized server-side.
+- **Tabular fast path** — "list records in …" style questions answer from a **single**
+  model call: you get the table without a second, slower generation step.
+- **Self-correcting collection names** — if the model types a collection name wrong, the
+  agent detects it, suggests the closest real name, and retries in the same turn.
+- **Conversation memory** — the chat keeps your last 16 turns in context, so follow-up
+  questions ("and now give me the most expensive one") work without repeating yourself.
 - **Attach files** — you can attach a file to a message. Text / Markdown / CSV are read
   inline, PDFs (max 20 pages / 300 KB) are extracted, and images are sent to the model.
+
 If the agent is unconfigured, it says so — a superuser must fill in `/pbx-setup` → **AI agent** first.
+
+### 4.5 Language (Czech / English)
+
+Every page — including the login screen — has a **language button** in the top bar (shows
+`CS` when the page is in English, `EN` when it is in Czech). Clicking it switches the whole
+site. The language is resolved (highest priority first):
+
+1. the `--lang` CLI flag when the server was started with one,
+2. your **per-browser** choice (remembered in a `pb_lang` cookie),
+3. the **global default** stored by a superuser (persisted to `pb_data/lang.json`),
+4. English.
+
+A superuser can change the **global default** the same way: on any page the topbar switch
+both sets your per-browser choice and persists the new global default
+(`pb_data/lang.json`). The checkbox-free approach keeps every page consistent because the
+language is chosen server-side before the page is rendered.
 
 ---
 
@@ -278,6 +313,11 @@ Actions live in the `_actions` collection, edited from **`/pbx-setup`** (the Set
 | `_onList` | Show the action in the tabular (list) view dropdown. |
 | `_onForm` | Show the action in the form view dropdown. |
 | `_public` | Let non-superusers see and run the action. |
+
+You can also ask the **AI agent** to create or update an action: e.g. *"create an action
+'Bulk +10% price' on collection produkty that raises produkty.price by 10%"*. The result
+appears in `/pbx-setup` as a normal `_actions` record and works exactly like a hand-written
+one. The write is always shown for confirmation before it is saved.
 
 ### 5.4 Available built-in functions
 
@@ -546,12 +586,14 @@ wizards — they are superuser tools.
 | `GET /mssql-introspect` | List columns of a SQL Server table. |
 | `GET /mobile/app` · `/mobile/tabular/...` · `/mobile/form/...` · `/mobile/ai` | Mobile views. |
 | `POST /mobile/form/...` · `/mobile/form/.../{id}/delete` | Mobile form create / update / delete. |
-| `GET /ai` · `POST /ai/chat` · `POST /ai/confirm` | AI agent chat + confirm modal. |
+| `GET /ai` · `POST /ai/chat` · `POST /ai/chat/stream` · `POST /ai/confirm` | AI agent chat (plain + streaming) and confirm modal. |
 | `GET /api/actions/{collectionName}` | List custom actions for a collection. |
 | `POST /actions/execute` | Run a custom action (`{actionId, recordIds}`). |
 | `GET /api/ai/status` · `/api/ai-config` | AI status / config. |
 | `POST /api/theme/{mode}` | Persist global default theme. |
 | `POST /api/mssql-dsn` | Persist global DSN. |
+| `POST /api/lang/{code}` | Persist global default UI language. |
+| `GET /api/lang/{code}/catalog.js` | Client-side translation catalog (`window._t`). |
 | `GET /pbx-setup` (superuser landing) + record editors + collection rules editor | Superuser setup hub. |
 | `GET /pbx-setup/record/{coll}/{id}` | Record editor for `_app` / `_views` / `_agent` / `_actions`. |
 | `POST /pbx-setup/record/{coll}` · `/{id}` · `/{id}/delete` | Save/delete system records. |
@@ -596,7 +638,9 @@ create/extend the underscore collections and the `users._view` landing field.
 
 ---
 
-*This document describes PBX as of **Phase 10** — the named feature set above is complete
+*This document describes PBX as of **Phase 13** — the named feature set above is complete
 up to the config model & routing, superuser setup/config editing, view-collection editing,
 Excel/MSSQL sync, the collection-from-wizard, mobile views, the per-user `_view` landing,
-and custom actions.*
+custom actions, AI-agent action-management tools, multilingual UI (English/Czech), and the
+AI agent enhancements (conversation memory, streaming, self-correcting collection lookup,
+server-rendered chat answers).*
