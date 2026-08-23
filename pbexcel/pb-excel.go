@@ -23,11 +23,24 @@ var skipFieldTypes = map[string]bool{
 }
 
 func resolveExcelPath(fileName string) string {
+	// Sanitize path to prevent directory traversal
+	fileName = filepath.Clean(fileName)
+	if strings.HasPrefix(fileName, "..") || strings.Contains(fileName, ".."+string(filepath.Separator)) {
+		fileName = filepath.Base(fileName)
+	}
 	if !strings.Contains(fileName, "/") && !strings.Contains(fileName, "\\") {
 		fileName = filepath.Join("pb_data", fileName)
 	}
 	if !strings.HasSuffix(fileName, ".xlsx") {
 		fileName += ".xlsx"
+	}
+	// Ensure the resolved path is still under pb_data
+	absPath, err := filepath.Abs(fileName)
+	if err == nil {
+		pbDataAbs, _ := filepath.Abs("pb_data")
+		if !strings.HasPrefix(absPath, pbDataAbs+string(filepath.Separator)) && absPath != pbDataAbs {
+			fileName = filepath.Join("pb_data", filepath.Base(fileName))
+		}
 	}
 	return fileName
 }

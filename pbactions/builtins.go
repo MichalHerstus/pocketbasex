@@ -7,7 +7,8 @@ import (
 	"github.com/dop251/goja"
 	"github.com/pocketbase/pocketbase/core"
 	"github.com/pocketbase/pocketbase/tools/search"
-	"github.com/pocketbase/pocketbase/tools/security"
+
+	"pbx/pbrules"
 )
 
 // canAccessRecord reports whether the caller may read the given record under
@@ -40,34 +41,13 @@ func (r *Runner) requestInfo() *core.RequestInfo {
 }
 
 // checkCreateRule enforces the collection createRule for a non-superuser.
-// Mirrors pbai/main.checkCreateRule (kept decoupled).
+// Uses the shared pbrules package.
 func (r *Runner) checkCreateRule(coll *core.Collection, data map[string]any) error {
-	if r.isSuper() {
-		return nil
-	}
-	if coll.CreateRule == nil {
-		return fmt.Errorf("only superusers can create records in %q", coll.Name)
-	}
-	rule := *coll.CreateRule
-	if rule == "" {
-		return nil
-	}
-	rec := core.NewRecord(coll)
-	for k, v := range data {
-		rec.Set(k, v)
-	}
-	if rec.Id == "" {
-		rec.Id = "__pb_create__" + security.PseudorandomString(6)
-	}
-	rec.SetVerified(false)
-	ok, err := r.App.CanAccessRecord(rec, r.requestInfo(), &rule)
-	if err != nil {
-		return fmt.Errorf("failed to evaluate create rule: %w", err)
-	}
-	if !ok {
-		return fmt.Errorf("the create rule for %q forbids this record", coll.Name)
-	}
-	return nil
+	return pbrules.CheckCreateRule(pbrules.CheckCreateRuleContext{
+		App:         r.App,
+		RequestInfo: r.requestInfo(),
+		IsSuperuser: r.isSuper(),
+	}, coll, data)
 }
 
 // registerBuiltins installs the action builtin functions onto the VM.

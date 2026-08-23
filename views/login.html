@@ -110,6 +110,7 @@
       <h1>{{t .Lang "login.title"}}</h1>
       <p class="subtitle">{{t .Lang "login.subtitle"}}</p>
       <form method="post" action="/login">
+        <input type="hidden" name="csrf_token" value="{{.CSRFToken}}" />
         <label for="name">{{t .Lang "login.name"}}</label>
         <input id="name" name="name" type="text" placeholder="your@email.com" required autofocus />
 

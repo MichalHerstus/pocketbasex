@@ -96,12 +96,36 @@ func (a *Agent) isSuper() bool {
 var (
 	pendingMu   sync.Mutex
 	pendingActs = map[string]*PendingAction{}
+	pendingOnce sync.Once
 )
 
 const pendingTTL = 15 * time.Minute
 
+// startPendingCleanup launches a background goroutine that periodically drops
+// expired pending actions. Without it the map would only be trimmed lazily on
+// loadPending, allowing memory to grow under sustained generation.
+func startPendingCleanup() {
+	pendingOnce.Do(func() {
+		go func() {
+			ticker := time.NewTicker(pendingTTL)
+			defer ticker.Stop()
+			for range ticker.C {
+				now := time.Now()
+				pendingMu.Lock()
+				for k, v := range pendingActs {
+					if now.After(v.ExpiresAt) {
+						delete(pendingActs, k)
+					}
+				}
+				pendingMu.Unlock()
+			}
+		}()
+	})
+}
+
 // storePending saves a pending action and returns it.
 func storePending(a *PendingAction) *PendingAction {
+	startPendingCleanup()
 	a.ID = randomID(12)
 	a.ExpiresAt = time.Now().Add(pendingTTL)
 	pendingMu.Lock()

@@ -12,10 +12,10 @@ import (
 	"github.com/dop251/goja"
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
-	"github.com/pocketbase/pocketbase/tools/inflector"
-	"github.com/pocketbase/pocketbase/tools/security"
-	"github.com/pocketbase/pocketbase/tools/search"
+
 	openai "github.com/sashabaranov/go-openai"
+
+	"pbx/pbrules"
 )
 
 // tool is a single agent tool definition.
@@ -163,63 +163,13 @@ func levenshtein(a, b string) int {
 }
 
 // checkCreateRule enforces the collection createRule for a non-superuser.
-// It reuses the same dummy-record evaluation the PB create API performs.
+// Uses the shared pbrules package.
 func (a *Agent) checkCreateRule(coll *core.Collection, data map[string]any) error {
-	if a.isSuper() {
-		return nil
-	}
-	if coll.CreateRule == nil {
-		return fmt.Errorf("only superusers can create records in %q", coll.Name)
-	}
-	rule := *coll.CreateRule
-	if rule == "" {
-		return nil
-	}
-
-	record := core.NewRecord(coll)
-	for k, v := range data {
-		record.Set(k, v)
-	}
-	if record.Id == "" {
-		record.Id = "__pb_create__" + security.PseudorandomString(6)
-	}
-	record.SetVerified(false)
-
-	dummyExport, err := record.DBExport(a.App)
-	if err != nil {
-		return fmt.Errorf("failed to evaluate create rule: %w", err)
-	}
-	dummyParams := make(dbx.Params, len(dummyExport))
-	selects := make([]string, 0, len(dummyExport))
-	for k, v := range dummyExport {
-		k = inflector.Columnify(k)
-		param := "__pb_create__" + k
-		dummyParams[param] = v
-		selects = append(selects, "{:"+param+"} AS [["+k+"]]")
-	}
-
-	dummyCollection := *coll
-	dummyCollection.Id += "__pb_create__" + security.PseudorandomString(6)
-	dummyCollection.Name += inflector.Columnify("__pb_create__" + security.PseudorandomString(6))
-
-	withFrom := fmt.Sprintf("WITH {{%s}} as (SELECT %s)", dummyCollection.Name, strings.Join(selects, ","))
-
-	ruleQuery := a.App.ConcurrentDB().Select("(1)").PreFragment(withFrom).From(dummyCollection.Name).AndBind(dummyParams)
-	resolver := core.NewRecordFieldResolver(a.App, &dummyCollection, a.Info, true)
-	expr, err := search.FilterData(rule).BuildExpr(resolver)
-	if err != nil {
-		return fmt.Errorf("invalid create rule: %w", err)
-	}
-	ruleQuery.AndWhere(expr)
-	if err := resolver.UpdateQuery(ruleQuery); err != nil {
-		return fmt.Errorf("failed to evaluate create rule: %w", err)
-	}
-
-	var exists int
-	if err := ruleQuery.Limit(1).Row(&exists); err != nil || exists == 0 {
-		return fmt.Errorf("the create rule for %q forbids this record", coll.Name)
-	}
-	return nil
+	return pbrules.CheckCreateRule(pbrules.CheckCreateRuleContext{
+		App:         a.App,
+		RequestInfo: a.Info,
+		IsSuperuser: a.isSuper(),
+	}, coll, data)
 }
 
 // --- collection listing ---

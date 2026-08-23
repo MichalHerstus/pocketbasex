@@ -20,6 +20,18 @@ var (
 	poolSize = 5
 )
 
+// CloseAll closes every cached connection pool and clears the registry.
+// It is safe to call multiple times and from multiple goroutines; new
+// getPool calls after CloseAll will simply open fresh pools.
+func CloseAll() {
+	dbMutex.Lock()
+	defer dbMutex.Unlock()
+	for dsn, db := range dbPool {
+		_ = db.Close()
+		delete(dbPool, dsn)
+	}
+}
+
 func getPool(dsn string) (*sql.DB, error) {
 	dbMutex.RLock()
 	if db, ok := dbPool[dsn]; ok {

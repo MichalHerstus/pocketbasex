@@ -24,25 +24,6 @@ type TabulatorConfig struct {
 	Filter           string
 }
 
-// ListColumn is a single column definition in the JSON list config (_tabulator.config).
-type ListColumn struct {
-	Field      string `json:"field"`
-	Title      string `json:"title"`
-	Sortable   bool   `json:"sortable"`
-	Searchable bool   `json:"searchable"`
-}
-
-// ListConfig is the JSON config (_tabulator.config) for a list/tabulator view.
-type ListConfig struct {
-	Title            string       `json:"title"`
-	Description      string       `json:"description"`
-	DisplaySystemCol bool         `json:"displaySystemCol"`
-	SearchBox        bool         `json:"searchBox"`
-	Pagination       bool         `json:"pagination"`
-	Filter           string       `json:"filter"`
-	Columns          []ListColumn `json:"columns"`
-}
-
 // MssqlMapping maps a PocketBase field to a database table column.
 type MssqlMapping struct {
 	PBField string `json:"pbField"`
@@ -95,7 +76,15 @@ type ViewTabulatorConfig struct {
 	Pagination       bool         `json:"pagination"`
 	DisplaySystemCol bool         `json:"displaySystemCol"`
 	Filter           string       `json:"filter"`
-	Columns          []ListColumn `json:"columns,omitempty"`
+	Columns          []ViewColumn `json:"columns,omitempty"`
+}
+
+// ViewColumn is a single column definition in the JSON list config (_tabulator.config).
+type ViewColumn struct {
+	Field      string `json:"field"`
+	Title      string `json:"title"`
+	Sortable   bool   `json:"sortable"`
+	Searchable bool   `json:"searchable"`
 }
 
 // ViewFormConfig is the JSON stored in a _views record's _form field. It holds
@@ -159,29 +148,10 @@ type FormSection struct {
 	Rows           []FormRow
 }
 
-type FormConfig struct {
-	FormTitle        string
-	FormDescr        string
-	DisplaySystemCol bool
-	FormLayout       string
-	FormLabels       string
-	ColumnOrder      string
-}
-
 // FormCollectionRef references a base collection edited through a view-only form.
 type FormCollectionRef struct {
 	Name      string `json:"name"`
 	JoinField string `json:"joinField"`
-}
-
-// FormConfigJSON is the JSON config (_form.config) for a form view.
-type FormConfigJSON struct {
-	Title            string              `json:"title"`
-	Description      string              `json:"description"`
-	DisplaySystemCol bool                `json:"displaySystemCol"`
-	Layout           [][][]int           `json:"layout"`
-	Labels           map[string]string   `json:"labels"`
-	Collections      []FormCollectionRef `json:"collections"`
 }
 
 type FormPageData struct {

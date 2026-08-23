@@ -1085,3 +1085,90 @@ Decisions confirmed with user:
 ### 13.6 Still deferred
 
 - Truncate long field values in the LLM-facing `query_records` result (UI table keeps full data via side-channel); compress system prompt/tool descriptions; document LM Studio performance checklist in `AGENTS.md`.
+
+## Phase 14 — Security audit, code quality & performance optimizations
+### done!
+
+Context: Full codebase audit performed after Phases 1–13. Found critical vulnerabilities, duplicated logic, dead code, and architectural debt.
+
+**Implemented (all sub-phases):**
+- **14a — Security hotfixes**: path traversal blocked in `/assets` (`filepath.Clean` + `..` rejection) and `pbexcel.resolveExcelPath`; HMAC-SHA256 CSRF middleware + token in all form POSTs (login + setup + config + data); `Secure: r.TLS != nil` on auth cookies; `_view` redirect sanitized via `sanitizeConfigName`; `isValidCollectionName` defense-in-depth in all three `checkCreateRule` copies; per-IP rate limiters on `/login` (5/15min), `/ai/chat` (30/min), `/ai/chat/stream` (20/min).
+- **14b — Shared rule evaluation**: new `pbrules` package (`CheckCreateRuleContext` + `CheckCreateRule`); `main.go`, `pbai/tools.go`, `pbactions/builtins.go` all delegate to it (3× duplication eliminated).
+- **14c — DB-level pagination**: `/tabular` and `/api/tabulator-data` use `FindRecordsByFilter` + limit/offset (`?page=`, `?perPage=`); `TotalRecords`/`TotalPages` computed from a count query, no more `FindAllRecords` on the hot path.
+- **14d — Dead code removed**: `parseListConfig`, `parseFormConfigJSON`, `formConfigFromView` (main.go) and legacy types `ListConfig`, `ListColumn`, `FormConfig`, `FormConfigJSON` (views/pages.go, `ListColumn` → `ViewColumn`).
+- **14e — Route registration split**: new `routes.go` (package main) with `registerAuth/App/Setup/Config/Data/AssetsAndAPI/AI/ActionRoutes`; the 300-line `OnServe` closure shrinks to ~28 lines. Handler functions stay in `main.go` (they depend on package globals like `templates`).
+- **14e — Bubble sort** in form field ordering replaced with `sort.SliceStable`.
+- **14f — Resource & logging hygiene**: `pbmssql.CloseAll()` registered on `app.OnTerminate()`; `pbai` pending-action store gets a `sync.Once` background TTL cleanup goroutine; `requestLogger` middleware wraps the PB mux (installed after `se.Next()`) and emits one structured `log.Printf` line per request (method/path/status/duration/remote).
+
+**Deviations / deferred:**
+- `_filters` compound index `(_config, _name, _user)` — not yet added via migration; needs a JS migration in `pb_migrations/`.
+- In-memory pending action store — kept (not DB-backed); now bounded by the TTL cleanup goroutine.
+- **14g — Template consolidation**: evaluated and intentionally NOT done. Phase 8 explicitly chose separate mobile templates; the shared `formRowLoop` block already covers the core field rendering. Full consolidation contradicts the established design and adds regression risk.
+- Client-side AI history clamp left to `agent.html` (already sends 16; server clamps at 40).
+
+### 14.1 Critical vulnerabilities (fix immediately)
+
+| Issue | Location | Fix |
+|-------|----------|-----|
+| Path traversal in static assets | `main.go:267-285` | Sanitize `path` with `filepath.Clean`, reject `..` prefix |
+| Missing CSRF protection | All POST endpoints | Add CSRF middleware (gorilla/csrf or custom); inject token in all forms |
+| Insecure cookie flags | `main.go:597,624` | Set `Secure: r.TLS != nil` on auth cookie |
+| Unvalidated redirect via user data | `main.go:599-605` | Validate `_view` config exists before redirect; whitelist routes |
+| SQL injection surface in `checkCreateRule` | `main.go:3649-3710`, `pbai/tools.go:167-223` | Parameterized CTE; validate table/column names from collection metadata |
+| Missing rate limiting | `/ai/chat`, `/ai/chat/stream`, `/login` | Add per-IP + per-user rate limiter (token bucket) |
+| Path traversal in Excel import | `pbexcel/pb-excel.go:26` | Sanitize `fileName`; reject `..`; resolve absolute path under `pb_data/` |
+
+### 14.2 Ineffective / duplicated code (refactor)
+
+| Issue | Location | Action |
+|-------|----------|--------|
+| N+1 / full-load in tabulator | `main.go:929-1100` | Replace `FindAllRecords` with `FindRecordsByFilter` + limit/offset; DB-level pagination & filtering |
+| `checkCreateRule` duplicated 3× | `main.go:3649`, `pbactions/builtins.go:44`, `pbai/tools.go:167` | Extract to shared `pbrules` package; import in all three |
+| Duplicate rule parsing | `main.go:1273-1335` | Unify `parseRuleToSetup` / `ruleFromSetup` via shared core |
+| Repeated `configRaw` + unmarshal | `main.go:807,811,823,839,845` | Add generic `parseJSONField(rec, field, target)` helper |
+| O(n²) bubble sort | `main.go:3068-3074` | Replace with `sort.Slice` |
+| Inefficient Levenshtein alloc | `pbai/tools.go:144-163` | Reuse slice buffers; memoize or use stdlib |
+| Missing DB index on `_filters` | `main.go:1971` | Add compound index `(_config, _name, _user)` |
+
+### 14.3 Dead / legacy code (remove)
+
+| Item | Location | Notes |
+|------|----------|-------|
+| `parseListConfig` | `main.go:798-808` | Legacy `_tabulator.config` reader — superseded by `_views._tabulator` |
+| `parseFormConfigJSON` | `main.go:896-905` | Legacy `_form.config` reader |
+| `formConfigFromView` | `main.go:883-894` | Legacy converter — only used in view editing fallback |
+| `views.ListConfig`, `ListColumn` | `views/pages.go:35-44` | Legacy types — replaced by `ViewTabulatorConfig` |
+| `views.FormConfig`, `FormConfigJSON` | `views/pages.go:162-185` | Legacy types — replaced by `ViewFormConfig` |
+| `handleTabulatorDataJSON` string-only | `main.go:1873-1910` | Returns all fields as strings; loses type info — re-fetches anyway |
+| `mobile-*` templates | `views/mobile-*.html` | 80% duplication with desktop — consolidate using `BasePath` |
+
+### 14.4 Architectural improvements
+
+| # | Task | Effort |
+|---|------|--------|
+| 1 | Split `main.go` (4160 lines) into route groups: `routes_app.go`, `routes_ai.go`, `routes_setup.go`, `routes_form.go`, `routes_actions.go`, `routes_mssql.go` | Medium |
+| 2 | Add middleware layer for auth, mobile detection, superadmin, CSRF, rate limiting | Medium |
+| 3 | Replace in-memory pending action store with DB-backed `_pending_actions` collection | Medium |
+| 4 | Add structured logging (replace `log.Printf`); error context propagation | Low |
+| 5 | MSSQL pool cleanup on app shutdown (`app.OnTerminate`) | Low |
+| 6 | Client-side AI history clamp (server: 40, client: 16) — enforce on client | Low |
+| 7 | Consolidate mobile/desktop templates using `BasePath` | Medium |
+
+### 14.5 Implementation order (Phase 14)
+
+1. **Phase 14a** — Security hotfixes (14.1): path traversal, CSRF, cookie flags, redirects, rate limiting
+2. **Phase 14b** — Extract `checkCreateRule` to shared `pbrules` package (eliminates 3× duplication)
+3. **Phase 14c** — DB-level pagination/filtering for `/tabular` + `/api/tabulator-data`
+4. **Phase 14d** — Remove dead code (14.3); add `_filters` compound index
+5. **Phase 14e** — Refactor `main.go` into route files + middleware layer
+6. **Phase 14f** — DB-backed pending actions; MSSQL pool cleanup; logging
+7. **Phase 14g** — Template consolidation (mobile/desktop)
+
+### 14.6 Verification checklist
+
+- `go build ./... && go vet ./...` after each sub-phase
+- `go test ./pbai/` — all tests pass
+- Manual pen-test: path traversal attempts blocked, CSRF tokens required, rate limits trigger
+- Load test: `/tabular` with 10k+ records renders in <200ms (paginated)
+- Login flow works; redirects validated; cookies secure in HTTPS
+- AI agent streaming works; history persisted across prompts

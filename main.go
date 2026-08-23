@@ -1,7 +1,10 @@
 package main
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +20,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pocketbase/dbx"
@@ -25,13 +29,11 @@ import (
 	"github.com/pocketbase/pocketbase/plugins/jsvm"
 	"github.com/pocketbase/pocketbase/tools/filesystem"
 	"github.com/pocketbase/pocketbase/tools/hook"
-	"github.com/pocketbase/pocketbase/tools/inflector"
-	"github.com/pocketbase/pocketbase/tools/search"
-	"github.com/pocketbase/pocketbase/tools/security"
 
 	"pbx/i18n"
 	"pbx/pbactions"
 	"pbx/pbai"
+	"pbx/pbrules"
 	"pbx/pbexcel"
 	"pbx/pbmssql"
 	"pbx/views"
@@ -48,6 +50,128 @@ var templates *template.Template
 // default persisted in pb_data/lang.json.
 var cliLangOverride bool
 var cliLang string
+
+// CSRF protection
+var csrfSecret = []byte("pb-csrf-secret-change-in-production")
+
+// generateCSRFToken creates a CSRF token for the given session/user
+func generateCSRFToken(r *http.Request) string {
+	// Use HMAC-SHA256 based token
+	mac := hmac.New(sha256.New, csrfSecret)
+	mac.Write([]byte(r.UserAgent() + "|" + r.RemoteAddr))
+	return hex.EncodeToString(mac.Sum(nil))
+}
+
+// validateCSRFToken checks if the provided token is valid
+func validateCSRFToken(r *http.Request, token string) bool {
+	expected := generateCSRFToken(r)
+	return hmac.Equal([]byte(token), []byte(expected))
+}
+
+// csrfMiddleware returns a middleware that validates CSRF tokens on state-changing requests
+func csrfMiddleware(next func(e *core.RequestEvent) error) func(e *core.RequestEvent) error {
+	return func(e *core.RequestEvent) error {
+		if e.Request.Method == "POST" || e.Request.Method == "PUT" || e.Request.Method == "DELETE" || e.Request.Method == "PATCH" {
+			// Skip CSRF check for API endpoints that use JSON (they should use auth headers)
+			contentType := e.Request.Header.Get("Content-Type")
+			if strings.HasPrefix(contentType, "application/json") {
+				return next(e)
+			}
+			// Check for CSRF token in form data or header
+			token := e.Request.FormValue("csrf_token")
+			if token == "" {
+				token = e.Request.Header.Get("X-CSRF-Token")
+			}
+			if token == "" || !validateCSRFToken(e.Request, token) {
+				return e.BadRequestError("Invalid CSRF token", nil)
+			}
+		}
+		return next(e)
+	}
+}
+
+// rateLimiter provides simple in-memory rate limiting by IP
+type rateLimiter struct {
+	mu       sync.Mutex
+	requests map[string][]time.Time
+	limit    int
+	window   time.Duration
+}
+
+func newRateLimiter(limit int, window time.Duration) *rateLimiter {
+	rl := &rateLimiter{
+		requests: make(map[string][]time.Time),
+		limit:    limit,
+		window:   window,
+	}
+	// Start cleanup goroutine
+	go rl.cleanup()
+	return rl
+}
+
+func (rl *rateLimiter) cleanup() {
+	ticker := time.NewTicker(rl.window)
+	defer ticker.Stop()
+	for range ticker.C {
+		rl.mu.Lock()
+		now := time.Now()
+		for ip, times := range rl.requests {
+			var valid []time.Time
+			for _, t := range times {
+				if now.Sub(t) < rl.window {
+					valid = append(valid, t)
+				}
+			}
+			if len(valid) == 0 {
+				delete(rl.requests, ip)
+			} else {
+				rl.requests[ip] = valid
+			}
+		}
+		rl.mu.Unlock()
+	}
+}
+
+func (rl *rateLimiter) allow(ip string) bool {
+	rl.mu.Lock()
+	defer rl.mu.Unlock()
+	now := time.Now()
+	var valid []time.Time
+	for _, t := range rl.requests[ip] {
+		if now.Sub(t) < rl.window {
+			valid = append(valid, t)
+		}
+	}
+	if len(valid) >= rl.limit {
+		rl.requests[ip] = valid
+		return false
+	}
+	valid = append(valid, now)
+	rl.requests[ip] = valid
+	return true
+}
+
+// rateLimitMiddleware returns a middleware that enforces rate limits
+func rateLimitMiddleware(rl *rateLimiter) func(func(e *core.RequestEvent) error) func(e *core.RequestEvent) error {
+	return func(next func(e *core.RequestEvent) error) func(e *core.RequestEvent) error {
+		return func(e *core.RequestEvent) error {
+			ip := e.Request.RemoteAddr
+			if forwarded := e.Request.Header.Get("X-Forwarded-For"); forwarded != "" {
+				ip = strings.Split(forwarded, ",")[0]
+			}
+			if !rl.allow(ip) {
+				return e.TooManyRequestsError("Rate limit exceeded. Please try again later.", nil)
+			}
+			return next(e)
+		}
+	}
+}
+
+var (
+	loginRateLimiter   = newRateLimiter(5, 15*time.Minute)    // 5 requests per 15 min
+	aiChatRateLimiter  = newRateLimiter(30, 1*time.Minute)    // 30 requests per minute
+	aiStreamRateLimiter = newRateLimiter(20, 1*time.Minute)   // 20 requests per minute
+)
 
 func init() {
 	templates = template.Must(template.New("").
@@ -99,303 +223,33 @@ func main() {
 				cliLangOverride = true
 				cliLang = i18n.Normalize(*langFlag)
 			}
-			// login dialog
-			se.Router.GET("/login", func(e *core.RequestEvent) error {
-				e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
-				return templates.ExecuteTemplate(e.Response, "login.html", map[string]string{
-					"Theme": getThemeMode(e.App),
-					"Lang":  getLangCode(e.App, e.Request),
-				})
-			})
-			// login form submission
-			se.Router.POST("/login", func(e *core.RequestEvent) error {
-				return handleLoginPost(e)
-			})
-			// logout: clear the auth cookie and redirect to the login page
-			se.Router.GET("/logout", func(e *core.RequestEvent) error {
-				e.SetCookie(&http.Cookie{
-					Name:     "pb_auth",
-					Value:    "",
-					Path:     "/",
-					HttpOnly: true,
-					MaxAge:   -1,
-				})
-				return e.Redirect(http.StatusSeeOther, "/login")
-			})
-			// main app page: list of collections, export/import, etc.
-			se.Router.GET("/app", func(e *core.RequestEvent) error {
-				return handleApp(e)
-			})
-			// pbx setup: tables for _app, _tabulator, _form
-			se.Router.GET("/pbx-setup", func(e *core.RequestEvent) error {
-				return handlePbxSetup(e)
-			})
-			// pbx setup: system record editors (_app, _views, _agent) — super admin
-			se.Router.GET("/pbx-setup/record/{coll}/new", func(e *core.RequestEvent) error {
-				return handleSetupRecord(e)
-			})
-			se.Router.GET("/pbx-setup/record/{coll}/{id}", func(e *core.RequestEvent) error {
-				return handleSetupRecord(e)
-			})
-			se.Router.POST("/pbx-setup/record/{coll}", func(e *core.RequestEvent) error {
-				return handleSetupRecordPost(e)
-			})
-			se.Router.POST("/pbx-setup/record/{coll}/{id}", func(e *core.RequestEvent) error {
-				return handleSetupRecordPost(e)
-			})
-			se.Router.POST("/pbx-setup/record/{coll}/{id}/delete", func(e *core.RequestEvent) error {
-				return handleSetupRecordDelete(e)
-			})
-			// pbx setup: collection API rules — super admin
-			se.Router.POST("/pbx-setup/rules", func(e *core.RequestEvent) error {
-				return handleSetupRulesPost(e)
-			})
-			// pbx config editor (super admin)
-			se.Router.GET("/pbx-config", func(e *core.RequestEvent) error {
-				return handlePbxConfig(e)
-			})
-			se.Router.GET("/pbx-config/view/new", func(e *core.RequestEvent) error {
-				e.Request.SetPathValue("name", "new")
-				return handlePbxConfigEditor(e)
-			})
-			se.Router.GET("/pbx-config/view/{name}", func(e *core.RequestEvent) error {
-				return handlePbxConfigEditor(e)
-			})
-			se.Router.POST("/pbx-config/save", func(e *core.RequestEvent) error {
-				return handlePbxConfigSave(e)
-			})
-			se.Router.POST("/pbx-config/delete", func(e *core.RequestEvent) error {
-				return handlePbxConfigDelete(e)
-			})
-			// collection creation wizard from Excel / MSSQL
-			se.Router.GET("/pbx-config/import-excel", func(e *core.RequestEvent) error {
-				return handleImportWizard(e, "excel")
-			})
-			se.Router.POST("/pbx-config/import-excel", func(e *core.RequestEvent) error {
-				return handleImportWizard(e, "excel")
-			})
-			se.Router.GET("/pbx-config/import-mssql", func(e *core.RequestEvent) error {
-				return handleImportWizard(e, "mssql")
-			})
-			se.Router.POST("/pbx-config/import-mssql", func(e *core.RequestEvent) error {
-				return handleImportWizard(e, "mssql")
-			})
-			// collection tableform view by configuration name
-			se.Router.GET("/tabular/{configName}", func(e *core.RequestEvent) error {
-				return handleTabulator(e)
-			})
-			// collection form view (new or edit) by configuration name
-			se.Router.GET("/form/{configName}", func(e *core.RequestEvent) error {
-				return handleForm(e)
-			})
 
-			se.Router.GET("/form/{configName}/{id}", func(e *core.RequestEvent) error {
-				return handleForm(e)
-			})
+			registerAuthRoutes(se)
+			registerAppRoutes(se)
+			registerSetupRoutes(se)
+			registerConfigRoutes(se)
+			registerDataRoutes(se)
+			registerAssetsAndAPIRoutes(se)
+			registerAIRoutes(se)
+			registerActionRoutes(se)
 
-			se.Router.POST("/form/{configName}", func(e *core.RequestEvent) error {
-				return handleFormPost(e)
-			})
-
-			se.Router.POST("/form/{configName}/{id}", func(e *core.RequestEvent) error {
-				return handleFormPost(e)
-			})
-			// delete record
-			se.Router.POST("/form/{configName}/{id}/delete", func(e *core.RequestEvent) error {
-				return handleDeleteRecord(e)
-			})
-			// mobile views (phone/tablet)
-			se.Router.GET("/mobile/app", func(e *core.RequestEvent) error {
-				return handleMobileApp(e)
-			})
-			se.Router.GET("/mobile/tabular/{configName}", func(e *core.RequestEvent) error {
-				return handleMobileTabulator(e)
-			})
-			se.Router.GET("/mobile/form/{configName}", func(e *core.RequestEvent) error {
-				return handleMobileForm(e)
-			})
-			se.Router.GET("/mobile/form/{configName}/{id}", func(e *core.RequestEvent) error {
-				return handleMobileForm(e)
-			})
-			se.Router.POST("/mobile/form/{configName}", func(e *core.RequestEvent) error {
-				return handleMobileFormPost(e)
-			})
-			se.Router.POST("/mobile/form/{configName}/{id}", func(e *core.RequestEvent) error {
-				return handleMobileFormPost(e)
-			})
-			se.Router.POST("/mobile/form/{configName}/{id}/delete", func(e *core.RequestEvent) error {
-				return handleDeleteRecord(e)
-			})
-			se.Router.GET("/mobile/ai", func(e *core.RequestEvent) error {
-				return handleMobileAi(e)
-			})
-			// JSON data for relation modal
-			se.Router.GET("/api/tabulator-data/{collectionName}", func(e *core.RequestEvent) error {
-				return handleTabulatorDataJSON(e)
-			})
-			// named (saved) advanced filters for a /tabular view
-			se.Router.GET("/api/filters/{configName}", func(e *core.RequestEvent) error {
-				return handleFiltersList(e)
-			})
-			se.Router.POST("/api/filters/{configName}", func(e *core.RequestEvent) error {
-				return handleFilterSave(e)
-			})
-			se.Router.DELETE("/api/filters/{id}", func(e *core.RequestEvent) error {
-				return handleFilterDelete(e)
-			})
-			// export collection to Excel
-			se.Router.GET("/export/{collectionName}", func(e *core.RequestEvent) error {
-				return handleExport(e)
-			})
-			// import collection from Excel
-			se.Router.POST("/import/{collectionName}", func(e *core.RequestEvent) error {
-				return handleImport(e)
-			})
-			// MSSQL export
-			se.Router.POST("/mssql-export/{collectionName}", func(e *core.RequestEvent) error {
-				return handleMssqlExport(e)
-			})
-			// MSSQL import
-			se.Router.POST("/mssql-import/{collectionName}", func(e *core.RequestEvent) error {
-				return handleMssqlImport(e)
-			})
-			// MSSQL introspect table
-			se.Router.GET("/mssql-introspect", func(e *core.RequestEvent) error {
-				return handleMssqlIntrospect(e)
-			})
-			// serve static assets
-			se.Router.GET("/assets/{path...}", func(e *core.RequestEvent) error {
-				path := e.Request.PathValue("path")
-				if path == "" {
-					return e.NotFoundError("Missing path", nil)
-				}
-				data, err := viewsFS.ReadFile("views/assets/" + path)
-				if err != nil {
-					return e.NotFoundError("Asset not found", err)
-				}
-				ct := "application/octet-stream"
-				if strings.HasSuffix(path, ".png") {
-					ct = "image/png"
-				} else if strings.HasSuffix(path, ".css") {
-					ct = "text/css; charset=utf-8"
-				}
-				e.Response.Header().Set("Content-Type", ct)
-				e.Response.Write(data)
-				return nil
-			})
-			// set the global default theme (light/dark), persisted in pb_data/theme.json
-			se.Router.POST("/api/theme/{mode}", func(e *core.RequestEvent) error {
-				mode := e.Request.PathValue("mode")
-				if mode != "light" && mode != "dark" {
-					return e.BadRequestError("Invalid theme mode", nil)
-				}
-				if err := setThemeMode(e.App, mode); err != nil {
-					return e.InternalServerError("Failed to save theme", err)
-				}
-				return e.JSON(http.StatusOK, map[string]any{"ok": true, "mode": mode})
-			})
-			// set the global default UI language (en/cs), persisted in pb_data/lang.json
-			se.Router.POST("/api/lang/{code}", func(e *core.RequestEvent) error {
-				code := e.Request.PathValue("code")
-				code = i18n.Normalize(code)
-				if !i18n.IsValid(code) {
-					return e.BadRequestError("Unsupported language", nil)
-				}
-				if err := setLangCode(e.App, code); err != nil {
-					return e.InternalServerError("Failed to save language", err)
-				}
-				return e.JSON(http.StatusOK, map[string]any{"ok": true, "lang": code})
-			})
-			// client-side translation catalog for the current language:
-			// serves window._t() + the full key map as JavaScript
-			se.Router.GET("/api/lang/{code}/catalog.js", func(e *core.RequestEvent) error {
-				code := e.Request.PathValue("code")
-				code = i18n.Normalize(code)
-				if !i18n.IsValid(code) {
-					code = "en"
-				}
-				js := "window._tCatalog=" + i18n.CatalogJSON(code) + ";" +
-					"window._t=function(key){var c=window._tCatalog;return c&&c[key]?c[key]:key;};" +
-					"window._tLang=function(){return document.documentElement.lang||'en';};"
-				e.Response.Header().Set("Content-Type", "application/javascript; charset=utf-8")
-				e.Response.Write([]byte(js))
-				return nil
-			})
-			// save the global default MSSQL DSN, persisted in pb_data/mssql.json
-			se.Router.POST("/api/mssql-dsn", func(e *core.RequestEvent) error {
-				dsn := e.Request.FormValue("dsn")
-				if strings.TrimSpace(dsn) == "" {
-					return e.BadRequestError("DSN cannot be empty", nil)
-				}
-				if err := setMssqlDSN(e.App, dsn); err != nil {
-					return e.InternalServerError("Failed to save MSSQL DSN", err)
-				}
-				return e.JSON(http.StatusOK, map[string]any{"ok": true, "dsn": dsn})
-			})
-			// read the active AI agent configuration (super admin)
-			se.Router.GET("/api/ai-config", func(e *core.RequestEvent) error {
-				if err := requireSuperAdmin(e); err != nil {
-					return err
-				}
-				return e.JSON(http.StatusOK, getAgentConfig(e))
-			})
-			// save the active AI agent configuration (super admin)
-			se.Router.POST("/api/ai-config", func(e *core.RequestEvent) error {
-				if err := requireSuperAdmin(e); err != nil {
-					return err
-				}
-				var cfg views.AgentConfig
-				if err := json.NewDecoder(e.Request.Body).Decode(&cfg); err != nil {
-					return e.BadRequestError("Invalid agent config JSON", err)
-				}
-				if err := setAgentConfig(e, cfg); err != nil {
-					return e.InternalServerError("Failed to save agent config", err)
-				}
-				return e.JSON(http.StatusOK, map[string]any{"ok": true})
-			})
-			// AI agent status used by the /ai page and setup section
-			se.Router.GET("/api/ai/status", func(e *core.RequestEvent) error {
-				cfg := getAgentConfig(e)
-				status := "not_configured"
-				if cfg.Enabled && cfg.BaseURL != "" && cfg.Model != "" {
-					status = "configured"
-				}
-				return e.JSON(http.StatusOK, map[string]any{
-					"configured": status == "configured",
-					"enabled":    cfg.Enabled,
-					"provider":   cfg.Provider,
-					"model":      cfg.Model,
-					"status":     status,
-				})
-			})
-			// AI agent chat page
-			se.Router.GET("/ai", func(e *core.RequestEvent) error {
-				return handleAgent(e)
-			})
-			// AI agent chat request
-			se.Router.POST("/ai/chat", func(e *core.RequestEvent) error {
-				return handleAgentChat(e)
-			})
-			// AI agent chat request (SSE streaming variant)
-			se.Router.POST("/ai/chat/stream", func(e *core.RequestEvent) error {
-				return handleAgentChatStream(e)
-			})
-			// AI agent write-op confirmation
-			se.Router.POST("/ai/confirm", func(e *core.RequestEvent) error {
-				return handleAgentConfirm(e)
-			})
-			// custom actions (Phase 10): list actions for a collection
-			se.Router.GET("/api/actions/{collectionName}", func(e *core.RequestEvent) error {
-				return handleActionsList(e)
-			})
-			// custom actions (Phase 10): execute an action
-			se.Router.POST("/actions/execute", func(e *core.RequestEvent) error {
-				return handleActionExecute(e)
-			})
-
-			err := se.Next()
+						err := se.Next()
+			// se.Next() builds the PB mux and assigns it to Server.Handler;
+			// wrap it here so every request is logged once.
+			if se.Server.Handler != nil {
+				se.Server.Handler = requestLogger(se.Server.Handler)
+			}
 			printPbxEndpoints(se)
 			return err
+		},
+	})
+
+	// close the MSSQL connection pools on graceful shutdown so the OS
+	// sockets are released instead of being leaked until process exit
+	app.OnTerminate().Bind(&hook.Handler[*core.TerminateEvent]{
+		Func: func(te *core.TerminateEvent) error {
+			pbmssql.CloseAll()
+			return nil
 		},
 	})
 
@@ -576,9 +430,10 @@ func handleLoginPost(e *core.RequestEvent) error {
 	if name == "" || password == "" {
 		e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
 		return templates.ExecuteTemplate(e.Response, "login.html", map[string]string{
-			"Error": i18n.T(getLangCode(e.App, e.Request), "login.required"),
-			"Theme": getThemeMode(e.App),
-			"Lang":  getLangCode(e.App, e.Request),
+			"Error":     i18n.T(getLangCode(e.App, e.Request), "login.required"),
+			"Theme":     getThemeMode(e.App),
+			"Lang":      getLangCode(e.App, e.Request),
+			"CSRFToken": generateCSRFToken(e.Request),
 		})
 	}
 
@@ -594,9 +449,9 @@ func handleLoginPost(e *core.RequestEvent) error {
 				Value:    token,
 				Path:     "/",
 				HttpOnly: true,
-				Secure:   false,
+				Secure:   e.Request.TLS != nil,
 			})
-			viewName := record.GetString("_view")
+			viewName := sanitizeConfigName(record.GetString("_view"))
 			if viewName != "" {
 				if _, _, err := resolveListConfig(e, viewName); err == nil {
 					if isMobile(e.Request) {
@@ -621,7 +476,7 @@ func handleLoginPost(e *core.RequestEvent) error {
 				Value:    token,
 				Path:     "/",
 				HttpOnly: true,
-				Secure:   false,
+				Secure:   e.Request.TLS != nil,
 			})
 			return e.Redirect(http.StatusSeeOther, "/pbx-setup")
 		}
@@ -629,9 +484,10 @@ func handleLoginPost(e *core.RequestEvent) error {
 
 	e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	return templates.ExecuteTemplate(e.Response, "login.html", map[string]string{
-		"Error": i18n.T(getLangCode(e.App, e.Request), "login.invalid"),
-		"Theme": getThemeMode(e.App),
-		"Lang":  getLangCode(e.App, e.Request),
+		"Error":     i18n.T(getLangCode(e.App, e.Request), "login.invalid"),
+		"Theme":     getThemeMode(e.App),
+		"Lang":      getLangCode(e.App, e.Request),
+		"CSRFToken": generateCSRFToken(e.Request),
 	})
 }
 
@@ -795,18 +651,6 @@ func defaultListConfig(e *core.RequestEvent, collName string) *core.Record {
 	return recs[0]
 }
 
-// parseListConfig is retained for legacy reading of a raw list config JSON blob.
-func parseListConfig(rec *core.Record) views.ListConfig {
-	var lc views.ListConfig
-	if rec == nil {
-		return lc
-	}
-	if raw := configRaw(rec, "config"); raw != "" {
-		_ = json.Unmarshal([]byte(raw), &lc)
-	}
-	return lc
-}
-
 // parseViewTabulator parses the _views record _tabulator JSON field.
 func parseViewTabulator(rec *core.Record) views.ViewTabulatorConfig {
 	var vc views.ViewTabulatorConfig
@@ -881,29 +725,6 @@ func setAgentConfig(e *core.RequestEvent, cfg views.AgentConfig) error {
 }
 
 // formConfigFromView converts the unified _views._form config to the legacy
-// FormConfigJSON shape used by the view-editing model.
-func formConfigFromView(fc views.ViewFormConfig) views.FormConfigJSON {
-	return views.FormConfigJSON{
-		Title:            fc.FormTitle,
-		Description:      fc.FormDescr,
-		DisplaySystemCol: fc.DisplaySystemCol,
-		Layout:           fc.Layout,
-		Labels:           fc.Labels,
-		Collections:      fc.Collections,
-	}
-}
-
-func parseFormConfigJSON(rec *core.Record) views.FormConfigJSON {
-	var fc views.FormConfigJSON
-	if rec == nil {
-		return fc
-	}
-	if raw := configRaw(rec, "config"); raw != "" {
-		_ = json.Unmarshal([]byte(raw), &fc)
-	}
-	return fc
-}
-
 // configRaw returns the normalized raw JSON stored in a record field, or "" when the
 // field holds an empty/absent value ("", "null", "\"\"" are all treated as empty).
 func configRaw(rec *core.Record, field string) string {
@@ -918,21 +739,31 @@ func configRaw(rec *core.Record, field string) string {
 	return raw
 }
 
+// sanitizeConfigName validates a config name for safe use in URLs.
+// Only allows alphanumeric, underscore, and hyphen.
+func sanitizeConfigName(name string) string {
+	name = strings.TrimSpace(name)
+	var b strings.Builder
+	for _, r := range name {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 // --- Tabulator ---
 
 func buildTabulatorData(e *core.RequestEvent, collName string, configRec *core.Record) (*views.TabulatorPageData, error) {
+	return buildTabulatorDataWithPagination(e, collName, configRec, 1, 20)
+}
+
+// buildTabulatorDataWithPagination builds tabulator data with DB-level pagination
+func buildTabulatorDataWithPagination(e *core.RequestEvent, collName string, configRec *core.Record, page, perPage int) (*views.TabulatorPageData, error) {
 	collection, err := e.App.FindCachedCollectionByNameOrId(collName)
 	if err != nil {
 		return nil, err
-	}
-
-	records, err := e.App.FindAllRecords(collName)
-	if err != nil {
-		return nil, err
-	}
-
-	if !collection.IsView() {
-		records = filterListedRecords(e, collection, records)
 	}
 
 	vc := parseViewTabulator(configRec)
@@ -1030,6 +861,29 @@ func buildTabulatorData(e *core.RequestEvent, collName string, configRec *core.R
 		}
 	}
 
+	// The _tabulator.config `filter` is a CLIENT-side expression (it may use
+	// "?" placeholders that the JS saved-filter UI fills in and operators not
+	// understood by the server-side FilterData parser). It is NOT pushed to the
+	// DB: records are paginated/populated here and the client applies the
+	// filter (and search box) on the returned page.
+	// Get total count for pagination
+	totalRecords, err := getTotalRecords(e, collName)
+	if err != nil {
+		return nil, err
+	}
+
+	// Fetch paginated records
+	offset := (page - 1) * perPage
+	records, err := fetchPaginatedRecords(e, collName, perPage, offset, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	// Apply listRule filtering for non-superusers (in-memory for now)
+	if !collection.IsView() {
+		records = filterListedRecords(e, collection, records)
+	}
+
 	allData := make([]map[string]any, 0, len(records))
 	for _, rec := range records {
 		rm := map[string]any{}
@@ -1112,7 +966,7 @@ func buildTabulatorData(e *core.RequestEvent, collName string, configRec *core.R
 	}
 	fieldOptionsJSON, _ := json.Marshal(selectOpts)
 
-	totalPages := int(math.Ceil(float64(len(records)) / 20))
+	totalPages := int(math.Ceil(float64(totalRecords) / float64(perPage)))
 	if totalPages < 1 {
 		totalPages = 1
 	}
@@ -1121,7 +975,7 @@ func buildTabulatorData(e *core.RequestEvent, collName string, configRec *core.R
 		LangData:         langData(e),
 		Theme:            getThemeMode(e.App),
 		CollectionName:   collName,
-		TotalRecords:     len(records),
+		TotalRecords:     totalRecords,
 		Fields:           fieldNames,
 		FieldTypes:       fieldTypes,
 		ColumnHeaders:    visibleHeaders,
@@ -1130,12 +984,47 @@ func buildTabulatorData(e *core.RequestEvent, collName string, configRec *core.R
 		HeadersJSON:      string(headersJSON),
 		RecordsJSON:      string(recordsJSON),
 		FieldOptionsJSON: string(fieldOptionsJSON),
-		PerPage:          20,
-		Page:             1,
+		PerPage:          perPage,
+		Page:             page,
 		TotalPages:       totalPages,
 		Config:           cfg,
 		Mssql:            effectiveMssqlConfig(parseMssqlConfig(configRec), getMssqlDSN(e.App)),
 	}, nil
+}
+
+// getTotalRecords returns the total number of records in a collection.
+// The client-side config filter is intentionally NOT applied here (see the
+// note in buildTabulatorDataWithPagination).
+func getTotalRecords(e *core.RequestEvent, collName string) (int, error) {
+	collection, err := e.App.FindCachedCollectionByNameOrId(collName)
+	if err != nil {
+		return 0, err
+	}
+
+	count, err := e.App.CountRecords(collection)
+	return int(count), err
+}
+
+// fetchPaginatedRecords fetches records with DB-level pagination. The
+// client-side config filter is intentionally NOT passed to the query.
+func fetchPaginatedRecords(e *core.RequestEvent, collName string, limit, offset int, cfg views.TabulatorConfig) ([]*core.Record, error) {
+	collection, err := e.App.FindCachedCollectionByNameOrId(collName)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build sort expression
+	sortExpr := ""
+	if cfg.ColumnSorting {
+		// Default sort by id desc for consistent pagination
+		sortExpr = "-id"
+	}
+
+	records, err := e.App.FindRecordsByFilter(collection, "", sortExpr, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return records, nil
 }
 
 // effectiveMssqlConfig returns the MSSQL config for a tabular view, falling back
@@ -1163,7 +1052,21 @@ func handleTabulator(e *core.RequestEvent) error {
 		return e.NotFoundError("Configuration not found", err)
 	}
 
-	data, err := buildTabulatorData(e, collName, configRec)
+	// Parse pagination parameters
+	page := 1
+	perPage := 20
+	if p := e.Request.URL.Query().Get("page"); p != "" {
+		if v, err := strconv.Atoi(p); err == nil && v > 0 {
+			page = v
+		}
+	}
+	if pp := e.Request.URL.Query().Get("perPage"); pp != "" {
+		if v, err := strconv.Atoi(pp); err == nil && v > 0 && v <= 100 {
+			perPage = v
+		}
+	}
+
+	data, err := buildTabulatorDataWithPagination(e, collName, configRec, page, perPage)
 	if err != nil {
 		return e.NotFoundError("Collection not found", err)
 	}
@@ -1182,7 +1085,21 @@ func handleMobileTabulator(e *core.RequestEvent) error {
 		return e.NotFoundError("Configuration not found", err)
 	}
 
-	data, err := buildTabulatorData(e, collName, configRec)
+	// Parse pagination parameters
+	page := 1
+	perPage := 20
+	if p := e.Request.URL.Query().Get("page"); p != "" {
+		if v, err := strconv.Atoi(p); err == nil && v > 0 {
+			page = v
+		}
+	}
+	if pp := e.Request.URL.Query().Get("perPage"); pp != "" {
+		if v, err := strconv.Atoi(pp); err == nil && v > 0 && v <= 100 {
+			perPage = v
+		}
+	}
+
+	data, err := buildTabulatorDataWithPagination(e, collName, configRec, page, perPage)
 	if err != nil {
 		return e.NotFoundError("Collection not found", err)
 	}
@@ -1709,7 +1626,7 @@ func fieldLabelsFromConfig(fields []string, formLabels string) []views.FieldOpt 
 }
 
 // columnsFromConfig converts the columns JSON list into dynamic column rows.
-func columnsFromConfig(cols []views.ListColumn) []views.FieldOpt {
+func columnsFromConfig(cols []views.ViewColumn) []views.FieldOpt {
 	opts := make([]views.FieldOpt, 0, len(cols))
 	for i, c := range cols {
 		opts = append(opts, views.FieldOpt{Index: i + 1, Name: c.Field, Label: c.Title})
@@ -1820,7 +1737,7 @@ func jsonValueFromSetupForm(e *core.RequestEvent, collection *core.Collection, f
 				existing[ff.Key] = strings.Join(pairs, ",")
 			}
 		case "columns":
-			cols := make([]views.ListColumn, 0)
+			cols := make([]views.ViewColumn, 0)
 			names := e.Request.Form[key+"_field"]
 			titles := e.Request.Form[key+"_title"]
 			for i, name := range names {
@@ -1829,7 +1746,7 @@ func jsonValueFromSetupForm(e *core.RequestEvent, collection *core.Collection, f
 					title = titles[i]
 				}
 				if name != "" {
-					cols = append(cols, views.ListColumn{Field: name, Title: title})
+					cols = append(cols, views.ViewColumn{Field: name, Title: title})
 				}
 			}
 			if len(cols) == 0 {
@@ -1878,7 +1795,22 @@ func handleTabulatorDataJSON(e *core.RequestEvent) error {
 		return e.NotFoundError("Collection not found", err)
 	}
 
-	records, err := e.App.FindAllRecords(collName)
+	// Parse pagination parameters
+	page := 1
+	perPage := 50
+	if p := e.Request.URL.Query().Get("page"); p != "" {
+		if v, err := strconv.Atoi(p); err == nil && v > 0 {
+			page = v
+		}
+	}
+	if pp := e.Request.URL.Query().Get("perPage"); pp != "" {
+		if v, err := strconv.Atoi(pp); err == nil && v > 0 && v <= 200 {
+			perPage = v
+		}
+	}
+
+	offset := (page - 1) * perPage
+	records, err := e.App.FindRecordsByFilter(collection, "", "-created", perPage, offset)
 	if err != nil {
 		return e.InternalServerError("Failed to fetch records", err)
 	}
@@ -1906,6 +1838,8 @@ func handleTabulatorDataJSON(e *core.RequestEvent) error {
 	return e.JSON(http.StatusOK, map[string]any{
 		"fields":  fieldNames,
 		"records": allData,
+		"page":    page,
+		"perPage": perPage,
 	})
 }
 
@@ -2367,7 +2301,7 @@ type viewEditModel struct {
 
 // buildViewEditModel resolves which base collections to edit for a view.
 // Uses config override from _form.config.collections, or falls back to query parsing.
-func buildViewEditModel(app core.App, viewColl *core.Collection, fc views.FormConfigJSON, labelsOverride map[string]string) (*viewEditModel, error) {
+func buildViewEditModel(app core.App, viewColl *core.Collection, fc views.ViewFormConfig, labelsOverride map[string]string) (*viewEditModel, error) {
 	if !viewColl.IsView() {
 		return nil, fmt.Errorf("collection %s is not a view", viewColl.Name)
 	}
@@ -2496,7 +2430,7 @@ func handleViewForm(e *core.RequestEvent, configName, recordID string, configRec
 
 	labelsOverride := buildFormLabels(fc.FormLabels, nil)
 
-	model, err := buildViewEditModel(e.App, viewColl, formConfigFromView(fc), labelsOverride)
+	model, err := buildViewEditModel(e.App, viewColl, fc, labelsOverride)
 	if err != nil {
 		return e.InternalServerError("Failed to build view model", err)
 	}
@@ -2636,7 +2570,7 @@ func handleViewFormPost(e *core.RequestEvent, configName, recordID string, confi
 	fc := parseViewForm(configRec)
 	labelsOverride := buildFormLabels(fc.FormLabels, nil)
 
-	model, err := buildViewEditModel(e.App, viewColl, formConfigFromView(fc), labelsOverride)
+	model, err := buildViewEditModel(e.App, viewColl, fc, labelsOverride)
 	if err != nil {
 		return e.InternalServerError("Failed to build view model", err)
 	}
@@ -3065,13 +2999,7 @@ func renderFormPage(e *core.RequestEvent, tmplName, basePath string) error {
 			}
 			sorted = append(sorted, sf{order: o, idx: i, f: f})
 		}
-		for i := 0; i < len(sorted); i++ {
-			for j := i + 1; j < len(sorted); j++ {
-				if sorted[i].order > sorted[j].order {
-					sorted[i], sorted[j] = sorted[j], sorted[i]
-				}
-			}
-		}
+		sort.SliceStable(sorted, func(a, b int) bool { return sorted[a].order < sorted[b].order })
 
 		rowFields := make([]views.FormFieldItem, 0)
 		for _, s := range sorted {
@@ -3645,68 +3573,17 @@ func canViewCollection(e *core.RequestEvent, coll *core.Collection) bool {
 }
 
 // checkCreateRule enforces the collection createRule for a non-superuser.
-// It mirrors pbai.checkCreateRule (kept decoupled from the pbai package).
+// Uses the shared pbrules package.
 func checkCreateRule(e *core.RequestEvent, coll *core.Collection, data map[string]any) error {
 	info, err := authRequestInfo(e)
 	if err != nil {
 		return err
 	}
-	if info.HasSuperuserAuth() {
-		return nil
-	}
-	if coll.CreateRule == nil {
-		return fmt.Errorf("only superusers can create records in %q", coll.Name)
-	}
-	rule := *coll.CreateRule
-	if rule == "" {
-		return nil
-	}
-
-	record := core.NewRecord(coll)
-	for k, v := range data {
-		record.Set(k, v)
-	}
-	if record.Id == "" {
-		record.Id = "__pb_create__" + security.PseudorandomString(6)
-	}
-	record.SetVerified(false)
-
-	dummyExport, err := record.DBExport(e.App)
-	if err != nil {
-		return fmt.Errorf("failed to evaluate create rule: %w", err)
-	}
-	dummyParams := make(dbx.Params, len(dummyExport))
-	selects := make([]string, 0, len(dummyExport))
-	for k, v := range dummyExport {
-		k = inflector.Columnify(k)
-		param := "__pb_create__" + k
-		dummyParams[param] = v
-		selects = append(selects, "{:"+param+"} AS [["+k+"]]")
-	}
-
-	dummyCollection := *coll
-	dummyCollection.Id += "__pb_create__" + security.PseudorandomString(6)
-	dummyCollection.Name += inflector.Columnify("__pb_create__" + security.PseudorandomString(6))
-
-	withFrom := fmt.Sprintf("WITH {{%s}} as (SELECT %s)", dummyCollection.Name, strings.Join(selects, ","))
-
-	ruleQuery := e.App.ConcurrentDB().Select("(1)").PreFragment(withFrom).From(dummyCollection.Name).AndBind(dummyParams)
-	resolver := core.NewRecordFieldResolver(e.App, &dummyCollection, info, true)
-	expr, err := search.FilterData(rule).BuildExpr(resolver)
-	if err != nil {
-		return fmt.Errorf("invalid create rule: %w", err)
-	}
-	ruleQuery.AndWhere(expr)
-	if err := resolver.UpdateQuery(ruleQuery); err != nil {
-		return fmt.Errorf("failed to evaluate create rule: %w", err)
-	}
-
-	var exists int
-	if err := ruleQuery.Limit(1).Row(&exists); err != nil || exists == 0 {
-		return fmt.Errorf("the create rule for %q forbids this record", coll.Name)
-	}
-
-	return nil
+	return pbrules.CheckCreateRule(pbrules.CheckCreateRuleContext{
+		App:         e.App,
+		RequestInfo: info,
+		IsSuperuser: info.HasSuperuserAuth(),
+	}, coll, data)
 }
 
 // listCollections returns all non-system collection names, ordered by name.
