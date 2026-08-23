@@ -54,11 +54,21 @@ var cliLang string
 // CSRF protection
 var csrfSecret = []byte("pb-csrf-secret-change-in-production")
 
+// clientHost extracts the IP from RemoteAddr, stripping the ephemeral port —
+// the port changes between requests, so it must not be part of the HMAC.
+func clientHost(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
 // generateCSRFToken creates a CSRF token for the given session/user
 func generateCSRFToken(r *http.Request) string {
 	// Use HMAC-SHA256 based token
 	mac := hmac.New(sha256.New, csrfSecret)
-	mac.Write([]byte(r.UserAgent() + "|" + r.RemoteAddr))
+	mac.Write([]byte(r.UserAgent() + "|" + clientHost(r)))
 	return hex.EncodeToString(mac.Sum(nil))
 }
 

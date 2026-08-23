@@ -155,6 +155,9 @@ func registerAssetsAndAPIRoutes(se *core.ServeEvent) {
 			ct = "image/png"
 		} else if strings.HasSuffix(path, ".css") {
 			ct = "text/css; charset=utf-8"
+			// CSS is embedded at build time and iterates on frequently — forbid
+			// heuristic browser caching so theme changes always reach the client.
+			e.Response.Header().Set("Cache-Control", "no-cache")
 		}
 		e.Response.Header().Set("Content-Type", ct)
 		e.Response.Write(data)

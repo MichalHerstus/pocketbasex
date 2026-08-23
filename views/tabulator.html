@@ -6,56 +6,56 @@
     <title>{{.CollectionName}} - Tabulator</title>
     <style>
         * { box-sizing: border-box; }
-        body { font-family: sans-serif; margin: 0; padding: 20px; background: var(--body-bg, #f5f5f5); color: #333; }
+        body { font-family: sans-serif; margin: 0; padding: 20px; background: var(--body-bg); color:var(--text); }
         h1 { margin: 0 0 4px 0; font-size: 1.8rem; }
-        .subtitle { margin: 0 0 12px 0; font-size: .95rem; color: #666; }
-        .descr { margin: 0 0 16px 0; font-size: .9rem; color: #555; font-style: italic; }
+        .subtitle { margin: 0 0 12px 0; font-size: .95rem; color:var(--muted); }
+        .descr { margin: 0 0 16px 0; font-size: .9rem; color:var(--muted); font-style: italic; }
         .search-box { margin-bottom: 12px; }
-        .search-box input { width: 260px; padding: 8px 12px; border: 1px solid #ccc; border-radius: 6px; font-size: .9rem; outline: none; }
-        .search-box input:focus { border-color: #007bff; }
+        .search-box input { width: 260px; padding: 8px 12px; border: 1px solid var(--input-border); border-radius: 6px; font-size: .9rem; outline: none; }
+        .search-box input:focus { border-color:var(--accent); }
         .table-wrap { overflow-x: auto; }
-        table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
-        th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #eee; white-space: nowrap; }
-        th { background: #fafafa; font-weight: 600; font-size: .85rem; text-transform: uppercase; letter-spacing: .03em; color: #555; user-select: none; position: relative; }
+        table { width: 100%; border-collapse: collapse; background:var(--card-bg); border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+        th, td { padding: 10px 12px; text-align: left; border-bottom:1px solid var(--border); white-space: nowrap; }
+        th { background:var(--card2-bg); font-weight: 600; font-size: .85rem; text-transform: uppercase; letter-spacing: .03em; color:var(--muted); user-select: none; position: relative; }
         th.sortable { cursor: pointer; padding-right: 28px; }
-        th.sortable:hover { background: #f0f0f0; }
-        .sort-icon { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); font-size: .8rem; color: #999; }
-        .sort-icon.active { color: #007bff; }
-        tr:hover td { background: #f0f7ff; }
-        .empty { text-align: center; padding: 40px; color: #999; }
+        th.sortable:hover { background:var(--th-hover); }
+        .sort-icon { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); font-size: .8rem; color:var(--disabled-text); }
+        .sort-icon.active { color:var(--accent); }
+        tr:hover td { background:var(--row-hover); }
+        .empty { text-align: center; padding: 40px; color:var(--disabled-text); }
         .pagination { display: flex; align-items: center; gap: 6px; margin-top: 16px; flex-wrap: wrap; }
-        .pagination button { padding: 6px 12px; border: 1px solid #ddd; border-radius: 6px; background: #fff; color: #333; cursor: pointer; font-size: .9rem; }
-        .pagination button:hover:not(:disabled) { background: #e9ecef; }
-        .pagination button:disabled { color: #aaa; border-color: #eee; cursor: default; }
-        .pagination button.active { background: #007bff; color: #fff; border-color: #007bff; }
-        .pagination .page-input { width: 50px; padding: 6px; text-align: center; border: 1px solid #ddd; border-radius: 6px; font-size: .9rem; outline: none; }
-        .pagination .page-input:focus { border-color: #007bff; }
-        .pagination .info { margin-left: auto; color: #666; font-size: .85rem; }
-        .bool-true { color: #28a745; font-weight: bold; }
-        .bool-false { color: #dc3545; }
+        .pagination button { padding: 6px 12px; border: 1px solid var(--input-border); border-radius: 6px; background:var(--card-bg); color:var(--text); cursor: pointer; font-size: .9rem; }
+        .pagination button:hover:not(:disabled) { background:var(--th-hover); }
+        .pagination button:disabled { color:var(--disabled-text); border-color:var(--border); cursor: default; }
+        .pagination button.active { background: var(--accent); color: #fff; border-color:var(--accent); }
+        .pagination .page-input { width: 50px; padding: 6px; text-align: center; border: 1px solid var(--input-border); border-radius: 6px; font-size: .9rem; outline: none; }
+        .pagination .page-input:focus { border-color:var(--accent); }
+        .pagination .info { margin-left: auto; color:var(--muted); font-size: .85rem; }
+        .bool-true { color:var(--success); font-weight: bold; }
+        .bool-false { color:var(--danger); }
         .cell-icon { font-size: 1.1rem; cursor: default; }
-        .rel-btn { padding: 2px 10px; border: 1px solid #007bff; border-radius: 10px; background: #e7f1ff; color: #007bff; cursor: pointer; font-size: .85rem; font-weight: 600; }
-        .rel-btn:hover { background: #007bff; color: #fff; }
+        .rel-btn { padding: 2px 10px; border: 1px solid var(--accent); border-radius: 10px; background:var(--accent-soft); color:var(--accent); cursor: pointer; font-size: .85rem; font-weight: 600; }
+        .rel-btn:hover { background: var(--accent-soft-hover); color: #fff; }
         .num-cell { text-align: right; }
-        .modal-overlay { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,.4); align-items: center; justify-content: center; }
+        .modal-overlay { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background:var(--overlay-bg); align-items: center; justify-content: center; }
         .modal-overlay.open { display: flex; }
-        .modal-content { background: #fff; border-radius: 10px; max-width: 80vw; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 4px 24px rgba(0,0,0,.2); }
-        .modal-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-bottom: 1px solid #eee; }
+        .modal-content { background: var(--modal-bg); border-radius: 10px; max-width: 80vw; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 4px 24px rgba(0,0,0,.2); }
+        .modal-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-bottom:1px solid var(--border); }
         .modal-header h3 { margin: 0; font-size: 1.1rem; }
-        .modal-close { background: none; border: none; font-size: 1.4rem; cursor: pointer; color: #999; padding: 0 4px; }
-        .modal-close:hover { color: #333; }
+        .modal-close { background: none; border: none; font-size: 1.4rem; cursor: pointer; color:var(--disabled-text); padding: 0 4px; }
+        .modal-close:hover { color:var(--text); }
         .modal-body { padding: 16px 20px; overflow-y: auto; }
         .modal-body table { font-size: .85rem; }
         .modal-body th { font-size: .75rem; }
         .modal-body td, .modal-body th { padding: 6px 10px; }
         .filter-field-group { margin-bottom: 12px; }
-        .filter-field-group label { display: block; margin-bottom: 4px; font-size: .85rem; font-weight: 600; color: #555; }
-        .filter-field-group input, .filter-field-group select { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 6px; font-size: .9rem; outline: none; box-sizing: border-box; }
-        .filter-field-group input:focus, .filter-field-group select:focus { border-color: #007bff; }
+        .filter-field-group label { display: block; margin-bottom: 4px; font-size: .85rem; font-weight: 600; color:var(--muted); }
+        .filter-field-group input, .filter-field-group select { width: 100%; padding: 8px; border: 1px solid var(--input-border); border-radius: 6px; font-size: .9rem; outline: none; box-sizing: border-box; }
+        .filter-field-group input:focus, .filter-field-group select:focus { border-color:var(--accent); }
         .filter-section { margin-bottom: 16px; }
-        .filter-section-label { display: block; margin-bottom: 6px; font-size: .8rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: #666; }
+        .filter-section-label { display: block; margin-bottom: 6px; font-size: .8rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color:var(--muted); }
         .saved-filter-row { display: flex; gap: 8px; }
-        .saved-filter-row select { flex: 1; min-width: 0; padding: 8px; border: 1px solid #ccc; border-radius: 6px; font-size: .9rem; outline: none; }
+        .saved-filter-row select { flex: 1; min-width: 0; padding: 8px; border: 1px solid var(--input-border); border-radius: 6px; font-size: .9rem; outline: none; }
         .btn-sm { padding: 8px 12px; border: none; border-radius: 6px; font-size: .85rem; cursor: pointer; color: #fff; }
         .btn-primary { background: var(--btn-primary); }
         .btn-primary:hover { background: var(--btn-primary-hover); }
@@ -64,24 +64,24 @@
         .btn-danger { background: var(--btn-danger); }
         .btn-danger:hover { background: var(--btn-danger-hover); }
         .f-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-        .f-row select, .f-row input { padding: 8px; border: 1px solid #ccc; border-radius: 6px; font-size: .9rem; outline: none; min-width: 0; }
+        .f-row select, .f-row input { padding: 8px; border: 1px solid var(--input-border); border-radius: 6px; font-size: .9rem; outline: none; min-width: 0; }
         .f-field { flex: 1.4; }
         .f-op { flex: .5; }
-        .action-result-out { background: #f6f8fa; border: 1px solid #eee; border-radius: 6px; padding: 10px 12px; font-family: monospace; font-size: .85rem; line-height: 1.5; white-space: pre-wrap; max-height: 320px; overflow-y: auto; margin-bottom: 12px; }
+        .action-result-out { background:var(--readonly-bg); border: 1px solid var(--input-border); border-radius: 6px; padding: 10px 12px; font-family: monospace; font-size: .85rem; line-height: 1.5; white-space: pre-wrap; max-height: 320px; overflow-y: auto; margin-bottom: 12px; }
         .action-result-out:empty { display: none; }
         .action-status { padding: 8px 12px; border-radius: 6px; font-size: .9rem; font-weight: 600; }
-        .action-status.ok { background: #d4edda; color: #155724; }
-        .action-status.err { background: #f8d7da; color: #721c24; }
+        .action-status.ok { background:var(--success-soft); color:var(--success-strong); }
+        .action-status.err { background:var(--danger-soft); color:var(--danger-strong); }
         .row-check { width: 34px; text-align: center; cursor: pointer; }
         .f-val { flex: 1; }
         .f-val input, .f-val select { width: 100%; box-sizing: border-box; }
-        .f-param { flex-shrink: 0; display: flex; align-items: center; gap: 3px; font-size: .8rem; color: #666; cursor: pointer; white-space: nowrap; }
+        .f-param { flex-shrink: 0; display: flex; align-items: center; gap: 3px; font-size: .8rem; color:var(--muted); cursor: pointer; white-space: nowrap; }
         .f-param input { cursor: pointer; margin: 0; }
-        .f-remove { flex-shrink: 0; width: 30px; height: 30px; border: 1px solid #ccc; background: #fff; border-radius: 6px; cursor: pointer; color: #999; font-size: 1.1rem; line-height: 1; }
-        .f-remove:hover { background: #ffe3e3; color: #dc3545; border-color: #dc3545; }
+        .f-remove { flex-shrink: 0; width: 30px; height: 30px; border: 1px solid var(--input-border); background:var(--card-bg); border-radius: 6px; cursor: pointer; color:var(--disabled-text); font-size: 1.1rem; line-height: 1; }
+        .f-remove:hover { background:var(--danger-soft); color:var(--danger); border-color:var(--danger); }
         .f-conn { display: flex; align-items: center; justify-content: center; margin-bottom: 8px; }
-        .f-conn select { padding: 5px 8px; border: 1px solid #ccc; border-radius: 6px; font-size: .8rem; font-weight: 600; color: #333; background: #f5f5f5; outline: none; cursor: pointer; }
-        .filter-note { font-size: .8rem; color: #e67e22; margin-top: 4px; }
+        .f-conn select { padding: 5px 8px; border: 1px solid var(--input-border); border-radius: 6px; font-size: .8rem; font-weight: 600; color:var(--text); background:var(--body-bg); outline: none; cursor: pointer; }
+        .filter-note { font-size: .8rem; color:var(--warning); margin-top: 4px; }
     </style>
     <link rel="stylesheet" href="/assets/theme.css">
     <script src="/api/lang/{{.Lang}}/catalog.js"></script>
@@ -89,8 +89,8 @@
 <body data-theme="{{.Theme}}">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">
         <h1 style="margin:0">{{if .Config.PageTitle}}{{.Config.PageTitle}}{{else}}{{.CollectionName}}{{end}}</h1>
-        <button type="button" id="themeBtn" onclick="toggleTheme()" style="padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1.1rem;cursor:pointer;">🌙</button>
-        <button type="button" onclick="toggleLang()" style="padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">{{if eq .Lang "cs"}}EN{{else}}CS{{end}}</button>
+        <button type="button" id="themeBtn" onclick="toggleTheme()" class="pbx-icon-btn">🌙</button>
+        <button type="button" onclick="toggleLang()" class="pbx-icon-btn">{{if eq .Lang "cs"}}EN{{else}}CS{{end}}</button>
         <button type="button" onclick="window.location.href='/app'" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;margin-left:auto;">{{t .Lang "common.close"}}</button>
     </div>
     <div class="subtitle">{{.TotalRecords}} {{if eq .TotalRecords 1}}{{t .Lang "common.recordWord"}}{{else}}{{t .Lang "common.recordsWord"}}{{end}}</div>
@@ -100,10 +100,10 @@
         {{if .Config.SearchBox}}
         <div class="search-box" style="margin-bottom:0;display:flex;align-items:center;gap:4px;">
             <input type="text" id="searchInput" placeholder="{{t .Lang "common.searchPlaceholder"}}" style="flex:1;">
-            <button id="searchClearBtn" style="padding:4px 8px;background:none;border:none;cursor:pointer;font-size:1rem;color:#888;" title="{{t .Lang "common.clearSearch"}}">&times;</button>
+            <button id="searchClearBtn" style="padding:4px 8px;background:none;border:none;cursor:pointer;font-size:1rem;color:var(--muted);" title="{{t .Lang "common.clearSearch"}}">&times;</button>
         </div>
         {{end}}
-        <select id="filterSelect" style="padding:8px 12px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;min-width:180px;">
+        <select id="filterSelect" style="padding:8px 12px;border:1px solid var(--input-border);border-radius:6px;font-size:.9rem;min-width:180px;">
             <option value="">{{t .Lang "tabulator.allRecords"}}</option>
         </select>
         <button id="editFiltersBtn" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">{{t .Lang "tabulator.editFilters"}}</button>
@@ -114,7 +114,7 @@
             <img src="/assets/Upload-Brackets--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="{{t .Lang "tabulator.export"}}"> {{t .Lang "tabulator.export"}}
         </button>
         <a href="{{.BasePath}}/form/{{.ConfigName}}" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">{{t .Lang "tabulator.addNew"}}</a>
-        <select id="actionSelect" style="padding:8px 12px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;min-width:170px;">
+        <select id="actionSelect" style="padding:8px 12px;border:1px solid var(--input-border);border-radius:6px;font-size:.9rem;min-width:170px;">
             <option value="">— {{t .Lang "common.actions"}} —</option>
         </select>
         <button id="runActionBtn" style="padding:8px 16px;background:var(--btn-danger);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">{{t .Lang "common.run"}}</button>
@@ -172,10 +172,10 @@
             <div class="modal-body">
                 <form id="importForm" action="/import/{{.CollectionName}}" method="POST">
                     <label style="display:block;margin-bottom:6px;font-size:.9rem;font-weight:600;">{{t .Lang "tabulator.fileName"}}</label>
-                    <input type="text" name="excelFileName" value="{{.CollectionName}}" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;margin-bottom:12px;outline:none;box-sizing:border-box;">
+                    <input type="text" name="excelFileName" value="{{.CollectionName}}" style="width:100%;padding:8px;border:1px solid var(--input-border);border-radius:6px;font-size:.9rem;margin-bottom:12px;outline:none;box-sizing:border-box;">
 
                     <label style="display:block;margin-bottom:6px;font-size:.9rem;font-weight:600;">{{t .Lang "tabulator.sheetName"}}</label>
-                    <input type="text" name="sheetName" value="Sheet1" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;margin-bottom:12px;outline:none;box-sizing:border-box;">
+                    <input type="text" name="sheetName" value="Sheet1" style="width:100%;padding:8px;border:1px solid var(--input-border);border-radius:6px;font-size:.9rem;margin-bottom:12px;outline:none;box-sizing:border-box;">
 
                     <label style="display:block;margin-bottom:6px;font-size:.9rem;font-weight:600;">{{t .Lang "tabulator.mode"}}</label>
                     <div style="margin-bottom:20px;">
@@ -208,9 +208,9 @@
             </div>
             <div class="modal-body">
                 <label style="display:block;margin-bottom:6px;font-size:.9rem;font-weight:600;">{{t .Lang "tabulator.fileName"}}</label>
-                <input type="text" id="exportFileName" value="{{.CollectionName}}" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;margin-bottom:12px;outline:none;box-sizing:border-box;">
+                <input type="text" id="exportFileName" value="{{.CollectionName}}" style="width:100%;padding:8px;border:1px solid var(--input-border);border-radius:6px;font-size:.9rem;margin-bottom:12px;outline:none;box-sizing:border-box;">
                 <label style="display:block;margin-bottom:6px;font-size:.9rem;font-weight:600;">{{t .Lang "tabulator.sheetName"}}</label>
-                <input type="text" id="exportSheetName" value="Sheet1" style="width:100%;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;margin-bottom:20px;outline:none;box-sizing:border-box;">
+                <input type="text" id="exportSheetName" value="Sheet1" style="width:100%;padding:8px;border:1px solid var(--input-border);border-radius:6px;font-size:.9rem;margin-bottom:20px;outline:none;box-sizing:border-box;">
                 <div style="display:flex;gap:8px;">
                     <button id="exportSubmitBtn" style="flex:1;padding:10px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">{{t .Lang "tabulator.export"}}</button>
                     <button type="button" onclick="closeExportModal()" style="flex:1;padding:10px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1rem;cursor:pointer;">{{t .Lang "common.cancel"}}</button>
@@ -448,7 +448,7 @@
                         '<td style="white-space:nowrap">' +
                         '<a href="{{.BasePath}}/form/' + configName + '/' + r.id + '?view=1" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid var(--btn-neutral);border-radius:4px;margin-right:4px;line-height:0">' +
                         '<img src="/assets/Binocular--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="' + _t('common.view') + '"></a>' +
-                        '<a href="{{.BasePath}}/form/' + configName + '/' + r.id + '" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid #007bff;border-radius:4px;margin-right:4px;line-height:0">' +
+                        '<a href="{{.BasePath}}/form/' + configName + '/' + r.id + '" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid var(--accent);border-radius:4px;margin-right:4px;line-height:0">' +
                         '<img src="/assets/Arrange-List-Descending-1--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="' + _t('common.edit') + '"></a>' +
                         '<button onclick="deleteRecord(\'' + configName + '\',\'' + r.id + '\')" style="display:inline-block;padding:4px 8px;background:transparent;border:2px solid var(--btn-danger);border-radius:4px;cursor:pointer;line-height:0">' +
                         '<img src="/assets/Bin-1--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="' + _t('common.delete') + '"></button>' +
@@ -1175,7 +1175,7 @@
             title.textContent = _t('common.relatedPrefix') + ": " + coll + " (" + ids.length + ")";
 
             var body = document.getElementById("relModalBody");
-            body.innerHTML = '<div style="text-align:center;padding:20px;color:#999;">' + _t('common.loading') + '</div>';
+            body.innerHTML = '<div style="text-align:center;padding:20px;color:var(--disabled-text);">' + _t('common.loading') + '</div>';
             document.getElementById("relModal").classList.add("open");
 
             if (cachedRelData[coll]) {
@@ -1190,7 +1190,7 @@
                     renderRelModal(coll, ids, data);
                 })
                 .catch(function() {
-                    body.innerHTML = '<div style="text-align:center;padding:20px;color:#dc3545;">' + _t('common.loadFailed') + '</div>';
+                    body.innerHTML = '<div style="text-align:center;padding:20px;color:var(--danger);">' + _t('common.loadFailed') + '</div>';
                 });
         }
 
@@ -1200,7 +1200,7 @@
             var related = data.records.filter(function(r) { return idSet[r.id]; });
             var body = document.getElementById("relModalBody");
             if (!related.length) {
-                body.innerHTML = '<div style="text-align:center;padding:20px;color:#999;">' + _t('common.noRelated') + '</div>';
+                body.innerHTML = '<div style="text-align:center;padding:20px;color:var(--disabled-text);">' + _t('common.noRelated') + '</div>';
                 return;
             }
 

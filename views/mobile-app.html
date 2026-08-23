@@ -10,7 +10,7 @@
 <body data-theme="{{.Theme}}">
     <div class="m-topbar">
         <h1>PBX<span class="m-sub">{{if .Name}}{{.Name}}{{else}}{{if .Error}}not signed in{{end}}{{end}}</span></h1>
-        <button type="button" id="themeBtn" onclick="toggleTheme()">🌙</button>
+        <button type="button" id="themeBtn" onclick="toggleTheme()" class="pbx-icon-btn">🌙</button>
         <a class="btn" href="/logout">Logout</a>
     </div>
 

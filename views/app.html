@@ -6,30 +6,30 @@
     <title>App</title>
     <style>
         * { box-sizing: border-box; }
-        body { font-family: sans-serif; margin: 0; padding: 20px; background: var(--body-bg, #f5f5f5); color: #333; }
+        body { font-family: sans-serif; margin: 0; padding: 20px; background: var(--body-bg); color:var(--text); }
         h1 { margin: 0 0 4px 0; font-size: 1.8rem; }
-        .subtitle { margin: 0 0 12px 0; font-size: .95rem; color: #666; }
-        .user-bar { margin-bottom: 20px; padding: 12px 16px; background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.1); display: flex; justify-content: space-between; align-items: center; font-size: .9rem; }
-        .user-bar .name { font-weight: 600; color: #007bff; }
-        .user-bar .signin { color: #888; }
-        .user-bar a { color: #007bff; text-decoration: none; }
+        .subtitle { margin: 0 0 12px 0; font-size: .95rem; color:var(--muted); }
+        .user-bar { margin-bottom: 20px; padding: 12px 16px; background:var(--card-bg); border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.1); display: flex; justify-content: space-between; align-items: center; font-size: .9rem; }
+        .user-bar .name { font-weight: 600; color:var(--accent); }
+        .user-bar .signin { color:var(--muted); }
+        .user-bar a { color:var(--accent); text-decoration: none; }
         .user-bar a:hover { text-decoration: underline; }
-        .group-card { background: #fff; border-radius: 8px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.1); overflow: hidden; }
-        .group-header { padding: 12px 16px; font-weight: 600; font-size: .95rem; color: #444; border-bottom: 1px solid #eee; background: #fafafa; }
+        .group-card { background:var(--card-bg); border-radius: 8px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,.1); overflow: hidden; }
+        .group-header { padding: 12px 16px; font-weight: 600; font-size: .95rem; color:var(--text); border-bottom:1px solid var(--border); background:var(--card2-bg); }
         .group-links { list-style: none; margin: 0; padding: 0; }
-        .group-links li { border-bottom: 1px solid #f5f5f5; }
+        .group-links li { border-bottom:1px solid var(--border); }
         .group-links li:last-child { border-bottom: none; }
-        .group-links a { display: block; padding: 10px 16px; color: #007bff; text-decoration: none; font-size: .9rem; transition: background .15s; }
-        .group-links a:hover { background: #f0f7ff; }
-        .copyright { margin-top: 32px; font-size: .85rem; color: #888; }
+        .group-links a { display: block; padding: 10px 16px; color:var(--accent); text-decoration: none; font-size: .9rem; transition: background .15s; }
+        .group-links a:hover { background:var(--row-hover); }
+        .copyright { margin-top: 32px; font-size: .85rem; color:var(--muted); }
     </style>
     <link rel="stylesheet" href="/assets/theme.css">
 </head>
 <body data-theme="{{.Theme}}">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">
         <h1 style="margin:0">PBX - Pocketbase Extended</h1>
-        <button type="button" id="themeBtn" onclick="toggleTheme()" style="padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1.1rem;cursor:pointer;">🌙</button>
-        <button type="button" onclick="toggleLang()" style="padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">{{if eq .Lang "cs"}}EN{{else}}CS{{end}}</button>
+        <button type="button" id="themeBtn" onclick="toggleTheme()" class="pbx-icon-btn">🌙</button>
+        <button type="button" onclick="toggleLang()" class="pbx-icon-btn">{{if eq .Lang "cs"}}EN{{else}}CS{{end}}</button>
         <a href="/logout" style="padding:8px 16px;background:var(--btn-danger);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;margin-left:auto;">{{t .Lang "app.logout"}}</a>
     </div>
     <p class="subtitle">{{t .Lang "app.subtitle"}}</p>

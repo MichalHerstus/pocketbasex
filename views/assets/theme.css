@@ -1,16 +1,15 @@
 /*
- * Theme system: 4 base colors per theme + shared semantic colors.
- *   Light base:   --bg #ffffff, --surface #ffffff, --text #27463c, --accent #659287
- *   Dark base:    --bg #432323, --surface #2f5755,  --text #e0d9d9, --accent #5a9690
- * Every other token is derived from these via color-mix(), so re-skinning the
- * whole app = editing only these 4 numbers per theme (plus success/warning/danger).
- * Requires modern browsers (color-mix: Chrome 111+, Edge 111+, Firefox 113+, Safari 16.2+).
+ * Theme system: every token is an EXPLICIT literal per theme — no var() chains,
+ * no blending. NB: aliasing like "--card-bg: var(--surface)" inside :root would
+ * bake the light value at :root and ignore the dark override (custom properties
+ * substitute on the declaring element), so themes must repeat the full set.
+ * Re-skinning = editing these numbers in both blocks.
  */
 :root {
     /* base (light) */
     --bg: #ffffff;
     --surface: #ffffff;
-    --text: #27463c;
+    --text: #010c01;
     --accent: #659287;
 
     /* semantic (shared by both themes) */
@@ -24,44 +23,75 @@
     --danger-soft: #f9dddd;
     --danger-strong: #721c24;
 
-    /* derived — recompute automatically when the 4 base colors change */
-    --body-bg: var(--bg);
-    --muted: color-mix(in srgb, var(--text) 60%, var(--bg));
-    --muted2: color-mix(in srgb, var(--text) 75%, var(--bg));
-    --descr: var(--muted);
-    --card-bg: var(--surface);
-    --card2-bg: color-mix(in srgb, var(--accent) 50%, var(--bg));
-    --border: color-mix(in srgb, var(--accent) 28%, var(--surface));
-    --border2: color-mix(in srgb, var(--accent) 55%, var(--surface));
-    --input-bg: color-mix(in srgb, var(--accent) 7%, var(--surface));
-    --input-border: var(--border2);
-    --row-hover: color-mix(in srgb, var(--accent) 14%, var(--surface));
-    --th-hover: var(--border);
-    --btn-bg: var(--input-bg);
-    --btn-border: var(--border2);
-    --disabled-text: color-mix(in srgb, var(--text) 35%, var(--bg));
-    --modal-bg: color-mix(in srgb, var(--accent) 10%, var(--surface));
-    --empty: var(--disabled-text);
-    --field-value-bg: var(--input-bg);
-    --json-bg: var(--surface);
-    --file-bg: var(--surface);
-    --readonly-bg: color-mix(in srgb, var(--text) 5%, var(--surface));
-    --accent-soft: color-mix(in srgb, var(--accent) 16%, var(--surface));
-    --accent-soft-hover: color-mix(in srgb, var(--accent) 32%, var(--surface));
-    --btn-primary: var(--accent);
-    --btn-primary-hover: color-mix(in srgb, var(--accent) 85%, #000);
-    --btn-neutral: color-mix(in srgb, var(--accent) 50%, #000);
-    --btn-neutral-hover: color-mix(in srgb, var(--accent) 62%, #000);
-    --btn-danger: var(--danger);
-    --btn-danger-hover: color-mix(in srgb, var(--danger) 85%, #000);
+    /* derived (light literals) */
+    --body-bg: #ffffff;
+    --muted: #010c01;
+    --muted2: #010c01;
+    --descr: #010c01;
+    --card-bg: #ffffff;
+    --card2-bg: #ffffff;
+    --border: #659287;
+    --border2: #659287;
+    --input-bg: #ffffff;
+    --input-border: #659287;
+    --row-hover: #ddf5e3;
+    --th-hover: #dfeeea;
+    --btn-bg: #ffffff;
+    --btn-border: #659287;
+    --disabled-text: #9aa5a1;
+    --modal-bg: #ffffff;
+    --empty: #9aa5a1;
+    --field-value-bg: #ffffff;
+    --json-bg: #ffffff;
+    --file-bg: #ffffff;
+    --readonly-bg: #ffffff;
+    --accent-soft: #e3ede9;
+    --accent-soft-hover: #cbded8;
+    --btn-primary: #659287;
+    --btn-primary-hover: #4e746a;
+    --btn-neutral: #33514a;
+    --btn-neutral-hover: #40655c;
+    --btn-danger: #dc3545;
+    --btn-danger-hover: #bd2d3b;
+    --overlay-bg: rgba(0,0,0,.4);
 }
 
-/* Dark theme — override only the 4 base colors */
+/* Dark theme — the complete token set as literals */
 [data-theme="dark"] {
     --bg: #432323;
     --surface: #2f5755;
     --text: #e0d9d9;
     --accent: #5a9690;
+
+    --body-bg: #432323;
+    --muted: #cfd8d3;
+    --muted2: #cfd8d3;
+    --descr: #cfd8d3;
+    --card-bg: #2f5755;
+    --card2-bg: #432323;
+    --border: #5a9690;
+    --border2: #5a9690;
+    --input-bg: #2f5755;
+    --input-border: #5a9690;
+    --row-hover: #35605d;
+    --th-hover: #3d6a67;
+    --btn-bg: #2f5755;
+    --btn-border: #5a9690;
+    --disabled-text: #7d908c;
+    --modal-bg: #2f5755;
+    --empty: #7d908c;
+    --field-value-bg: #2f5755;
+    --json-bg: #2f5755;
+    --file-bg: #2f5755;
+    --readonly-bg: #2f5755;
+    --accent-soft: #2c5350;
+    --accent-soft-hover: #37615e;
+    --btn-primary: #5a9690;
+    --btn-primary-hover: #47756f;
+    --btn-neutral: #24413d;
+    --btn-neutral-hover: #2e514c;
+    --btn-danger: #dc3545;
+    --btn-danger-hover: #bd2d3b;
 }
 
 body { background: var(--body-bg); color: var(--text); }
@@ -128,7 +158,7 @@ a, .user-bar .name, .user-bar a, .group-links a, .form-col .field-value a,
 
 /* badges use the shared success/warning/danger semantic tokens */
 .badge-on { background: var(--success-soft); color: var(--success-strong); }
-.badge-off { background: color-mix(in srgb, var(--accent) 12%, var(--surface)); color: var(--muted); }
+.badge-off { background: var(--accent-soft); color: var(--muted); }
 
 /* buttons — theme colors, hover via !important to beat inline styles */
 .btn-green, .btn-blue { background: var(--btn-primary); color: #fff; }
@@ -137,6 +167,25 @@ a, .user-bar .name, .user-bar a, .group-links a, .form-col .field-value a,
 .btn-gray:hover { background: var(--btn-neutral-hover) !important; }
 .btn-red { background: var(--btn-danger); color: #fff; }
 .btn-red:hover { background: var(--btn-danger-hover) !important; }
+
+/* round topbar icon buttons (theme + language switch) */
+.pbx-icon-btn {
+    width: 36px;
+    height: 36px;
+    padding: 0;
+    flex-shrink: 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: 50%;
+    background: var(--btn-neutral);
+    color: #fff;
+    font-size: 1rem;
+    line-height: 1;
+    cursor: pointer;
+}
+.pbx-icon-btn:hover { background: var(--btn-neutral-hover) !important; }
 button[style*="var(--btn-primary)"], a[style*="var(--btn-primary)"] { background: var(--btn-primary); color: #fff; }
 button[style*="var(--btn-primary)"]:hover, a[style*="var(--btn-primary)"]:hover { background: var(--btn-primary-hover) !important; }
 button[style*="var(--btn-neutral)"], a[style*="var(--btn-neutral)"] { background: var(--btn-neutral); color: #fff; }

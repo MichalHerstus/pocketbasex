@@ -5,18 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>{{t .Lang "login.title"}} - PBX</title>
     <style>
-      :root {
-        --body-bg: #f8f9fb;
-        --card-bg: #fff;
-        --card-shadow: 0 16px 40px rgba(0,0,0,0.08);
-        --input-border: #d8dde6;
-        --primary: #2b79ff;
-        --primary-hover: #1a5fd6;
-        --primary-foreground: #fff;
-        --surface: #e9ecef;
-        --surface-foreground: #333;
-        --error: #c00;
-      }
       * { box-sizing: border-box; }
       body {
         font-family: Arial, Helvetica, sans-serif;
@@ -32,18 +20,18 @@
         background: var(--card-bg);
         padding: 32px 28px;
         border-radius: 16px;
-        box-shadow: var(--card-shadow);
+        box-shadow: 0 16px 40px rgba(0,0,0,0.08);
         width: min(400px, 90vw);
       }
       .login-card h1 {
         margin: 0 0 8px 0;
         font-size: 1.5rem;
-        color: #222;
+        color: var(--text);
         text-align: center;
       }
       .login-card p.subtitle {
         margin: 0 0 24px 0;
-        color: #666;
+        color: var(--muted);
         text-align: center;
         font-size: 0.9rem;
       }
@@ -51,7 +39,7 @@
         display: block;
         margin-top: 16px;
         font-weight: 600;
-        color: #333;
+        color: var(--text);
       }
       .login-card input {
         width: 100%;
@@ -62,9 +50,11 @@
         box-sizing: border-box;
         font-size: 0.95rem;
         outline: none;
+        background: var(--input-bg);
+        color: var(--text);
       }
       .login-card input:focus {
-        border-color: var(--primary);
+        border-color: var(--accent);
       }
       .login-card .actions {
         display: flex;
@@ -81,21 +71,21 @@
         font-weight: 600;
       }
       .login-card button[type="submit"] {
-        background: var(--primary);
-        color: var(--primary-foreground);
+        background: var(--accent);
+        color: #fff;
       }
       .login-card button[type="submit"]:hover {
-        background: var(--primary-hover);
+        background: var(--accent-soft-hover);
       }
       .login-card button[type="reset"] {
-        background: var(--surface);
-        color: var(--surface-foreground);
+        background: var(--card2-bg);
+        color: var(--text);
       }
       .login-card button[type="reset"]:hover {
-        background: #d3d7db;
+        background: var(--th-hover);
       }
       .error {
-        color: var(--error);
+        color: var(--danger);
         text-align: center;
         margin: 12px 0 0 0;
         font-size: 0.9rem;
@@ -104,8 +94,8 @@
     <link rel="stylesheet" href="/assets/theme.css">
   </head>
   <body data-theme="{{.Theme}}">
-    <button type="button" id="themeBtn" onclick="toggleTheme()" style="position:fixed;top:16px;right:16px;padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1.1rem;cursor:pointer;z-index:10;">🌙</button>
-    <button type="button" onclick="toggleLang()" style="position:fixed;top:16px;right:76px;padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;z-index:10;">{{if eq .Lang "cs"}}EN{{else}}CS{{end}}</button>
+    <button type="button" id="themeBtn" onclick="toggleTheme()" class="pbx-icon-btn" style="position:fixed;top:16px;right:16px;z-index:10;">🌙</button>
+    <button type="button" onclick="toggleLang()" class="pbx-icon-btn" style="position:fixed;top:16px;right:60px;z-index:10;">{{if eq .Lang "cs"}}EN{{else}}CS{{end}}</button>
     <div class="login-card">
       <h1>{{t .Lang "login.title"}}</h1>
       <p class="subtitle">{{t .Lang "login.subtitle"}}</p>

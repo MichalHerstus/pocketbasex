@@ -10,7 +10,7 @@
 <body data-theme="{{.Theme}}">
     <div class="m-topbar">
         <h1>{{.Title}}{{if .ViewOnly}} — view{{else if .ID}} — edit{{end}}</h1>
-        <button type="button" id="themeBtn" onclick="toggleTheme()">🌙</button>
+        <button type="button" id="themeBtn" onclick="toggleTheme()" class="pbx-icon-btn">🌙</button>
         <a class="btn" href="{{.BasePath}}/app">Close</a>
     </div>
 
@@ -125,8 +125,8 @@
             var res = resp.body || {};
             document.getElementById('resultOutput').textContent = (res.output || []).join('\n');
             var status = document.getElementById('resultStatus');
-            status.style.background = res.ok === false ? '#f8d7da' : '#d4edda';
-            status.style.color = res.ok === false ? '#721c24' : '#155724';
+            status.style.background = res.ok === false ? 'var(--danger-soft)' : 'var(--success-soft)';
+            status.style.color = res.ok === false ? 'var(--danger-strong)' : 'var(--success-strong)';
             status.textContent = res.ok === false
                 ? ('Error: ' + (res.error || 'unknown error'))
                 : ('Success' + (res.affected ? ' — ' + res.affected + ' record(s) affected' : ''));
@@ -134,8 +134,8 @@
         })
         .catch(function(err) {
             var status = document.getElementById('resultStatus');
-            status.style.background = '#f8d7da';
-            status.style.color = '#721c24';
+            status.style.background = 'var(--danger-soft)';
+            status.style.color = 'var(--danger-strong)';
             status.textContent = 'Error: ' + String(err);
             document.getElementById('resultModal').style.display = 'flex';
         })
@@ -152,7 +152,7 @@
     <div class="m-modal-overlay" id="resultModal" style="display:none;">
         <div class="m-modal">
             <h3>Action Result</h3>
-            <div style="background:#f6f8fa;border:1px solid #eee;border-radius:6px;padding:10px 12px;font-family:monospace;font-size:.85rem;line-height:1.5;white-space:pre-wrap;max-height:50vh;overflow-y:auto;margin-bottom:12px;" id="resultOutput"></div>
+            <div style="background:var(--readonly-bg);border:1px solid var(--input-border);border-radius:6px;padding:10px 12px;font-family:monospace;font-size:.85rem;line-height:1.5;white-space:pre-wrap;max-height:50vh;overflow-y:auto;margin-bottom:12px;" id="resultOutput"></div>
             <div style="padding:8px 12px;border-radius:6px;font-size:.9rem;font-weight:600;" id="resultStatus"></div>
             <div class="m-modal-actions">
                 <button type="button" class="m-use" onclick="closeResultModal()">Close</button>

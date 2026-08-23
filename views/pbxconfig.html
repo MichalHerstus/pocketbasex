@@ -6,26 +6,26 @@
     <title>PBX Config</title>
     <style>
         * { box-sizing: border-box; }
-        body { font-family: sans-serif; margin: 0; padding: 20px; background: var(--body-bg, #f5f5f5); color: #333; }
+        body { font-family: sans-serif; margin: 0; padding: 20px; background: var(--body-bg); color:var(--text); }
         h1 { margin: 0 0 4px 0; font-size: 1.8rem; }
-        .subtitle { margin: 0 0 12px 0; font-size: .95rem; color: #666; }
+        .subtitle { margin: 0 0 12px 0; font-size: .95rem; color:var(--muted); }
         .section { margin-bottom: 32px; }
         .section h2 { margin: 0 0 4px 0; font-size: 1.3rem; }
-        .section .subtitle { margin: 0 0 12px 0; font-size: .95rem; color: #666; }
+        .section .subtitle { margin: 0 0 12px 0; font-size: .95rem; color:var(--muted); }
         .table-wrap { overflow-x: auto; }
-        table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
-        th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #eee; white-space: nowrap; }
-        th { background: #fafafa; font-weight: 600; font-size: .85rem; text-transform: uppercase; letter-spacing: .03em; color: #555; }
-        tr:hover td { background: #f0f7ff; }
-        .empty { text-align: center; padding: 40px; color: #999; }
+        table { width: 100%; border-collapse: collapse; background:var(--card-bg); border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+        th, td { padding: 10px 12px; text-align: left; border-bottom:1px solid var(--border); white-space: nowrap; }
+        th { background:var(--card2-bg); font-weight: 600; font-size: .85rem; text-transform: uppercase; letter-spacing: .03em; color:var(--muted); }
+        tr:hover td { background:var(--row-hover); }
+        .empty { text-align: center; padding: 40px; color:var(--disabled-text); }
         .btn { padding: 8px 16px; border-radius: 6px; text-decoration: none; font-size: .9rem; display: inline-block; border: none; cursor: pointer; }
         .btn-green { background: var(--btn-primary); color: #fff; }
         .btn-gray { background: var(--btn-neutral); color: #fff; }
         .btn-blue { background: var(--btn-primary); color: #fff; }
         .btn-red { background: var(--btn-danger); color: #fff; padding: 4px 10px; font-size: .85rem; }
         .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: .75rem; font-weight: 600; }
-        .badge-on { background: #d4edda; color: #155724; }
-        .badge-off { background: #e9ecef; color: #495057; }
+        .badge-on { background:var(--success-soft); color:var(--success-strong); }
+        .badge-off { background:var(--th-hover); color:var(--muted); }
         .toolbar { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
     </style>
     <link rel="stylesheet" href="/assets/theme.css">
@@ -35,8 +35,8 @@
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">
         <h1 style="margin:0">{{t .Lang "config.title"}}</h1>
         <button type="button" onclick="goBack('/pbx-setup')" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;margin-left:auto;">{{t .Lang "common.close"}}</button>
-        <button type="button" id="themeBtn" onclick="toggleTheme()" style="padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1.1rem;cursor:pointer;">🌙</button>
-        <button type="button" onclick="toggleLang()" style="padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">{{if eq .Lang "cs"}}EN{{else}}CS{{end}}</button>
+        <button type="button" id="themeBtn" onclick="toggleTheme()" class="pbx-icon-btn">🌙</button>
+        <button type="button" onclick="toggleLang()" class="pbx-icon-btn">{{if eq .Lang "cs"}}EN{{else}}CS{{end}}</button>
         <a href="/pbx-setup" class="btn btn-gray" style="font-size:.9rem;">{{t .Lang "config.backToSetup"}}</a>
     </div>
     <p class="subtitle">{{t .Lang "config.subtitle"}}</p>

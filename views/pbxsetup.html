@@ -6,44 +6,44 @@
     <title>PBX Setup</title>
     <style>
         * { box-sizing: border-box; }
-        body { font-family: sans-serif; margin: 0; padding: 20px; background: var(--body-bg, #f5f5f5); color: #333; }
+        body { font-family: sans-serif; margin: 0; padding: 20px; background: var(--body-bg); color:var(--text); }
         h1 { margin: 0 0 4px 0; font-size: 1.8rem; }
-        .subtitle { margin: 0 0 12px 0; font-size: .95rem; color: #666; }
+        .subtitle { margin: 0 0 12px 0; font-size: .95rem; color:var(--muted); }
         .section { margin-bottom: 32px; }
         .section h2 { margin: 0 0 4px 0; font-size: 1.3rem; }
-        .section .subtitle { margin: 0 0 12px 0; font-size: .95rem; color: #666; }
+        .section .subtitle { margin: 0 0 12px 0; font-size: .95rem; color:var(--muted); }
         .table-wrap { overflow-x: auto; }
-        table { width: 100%; border-collapse: collapse; background: #fff; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
-        th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #eee; white-space: nowrap; }
-        th { background: #fafafa; font-weight: 600; font-size: .85rem; text-transform: uppercase; letter-spacing: .03em; color: #555; user-select: none; position: relative; }
+        table { width: 100%; border-collapse: collapse; background:var(--card-bg); border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+        th, td { padding: 10px 12px; text-align: left; border-bottom:1px solid var(--border); white-space: nowrap; }
+        th { background:var(--card2-bg); font-weight: 600; font-size: .85rem; text-transform: uppercase; letter-spacing: .03em; color:var(--muted); user-select: none; position: relative; }
         th.sortable { cursor: pointer; padding-right: 28px; }
-        th.sortable:hover { background: #f0f0f0; }
-        .sort-icon { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); font-size: .8rem; color: #999; }
-        .sort-icon.active { color: #007bff; }
-        tr:hover td { background: #f0f7ff; }
-        .empty { text-align: center; padding: 40px; color: #999; }
+        th.sortable:hover { background:var(--th-hover); }
+        .sort-icon { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); font-size: .8rem; color:var(--disabled-text); }
+        .sort-icon.active { color:var(--accent); }
+        tr:hover td { background:var(--row-hover); }
+        .empty { text-align: center; padding: 40px; color:var(--disabled-text); }
         .pagination { display: flex; align-items: center; gap: 6px; margin-top: 16px; flex-wrap: wrap; }
-        .pagination button { padding: 6px 12px; border: 1px solid #ddd; border-radius: 6px; background: #fff; color: #333; cursor: pointer; font-size: .9rem; }
-        .pagination button:hover:not(:disabled) { background: #e9ecef; }
-        .pagination button:disabled { color: #aaa; border-color: #eee; cursor: default; }
-        .pagination button.active { background: #007bff; color: #fff; border-color: #007bff; }
-        .pagination .page-input { width: 50px; padding: 6px; text-align: center; border: 1px solid #ddd; border-radius: 6px; font-size: .9rem; outline: none; }
-        .pagination .page-input:focus { border-color: #007bff; }
-        .pagination .info { margin-left: auto; color: #666; font-size: .85rem; }
-        .bool-true { color: #28a745; font-weight: bold; }
-        .bool-false { color: #dc3545; }
+        .pagination button { padding: 6px 12px; border: 1px solid var(--input-border); border-radius: 6px; background:var(--card-bg); color:var(--text); cursor: pointer; font-size: .9rem; }
+        .pagination button:hover:not(:disabled) { background:var(--th-hover); }
+        .pagination button:disabled { color:var(--disabled-text); border-color:var(--border); cursor: default; }
+        .pagination button.active { background: var(--accent); color: #fff; border-color:var(--accent); }
+        .pagination .page-input { width: 50px; padding: 6px; text-align: center; border: 1px solid var(--input-border); border-radius: 6px; font-size: .9rem; outline: none; }
+        .pagination .page-input:focus { border-color:var(--accent); }
+        .pagination .info { margin-left: auto; color:var(--muted); font-size: .85rem; }
+        .bool-true { color:var(--success); font-weight: bold; }
+        .bool-false { color:var(--danger); }
         .cell-icon { font-size: 1.1rem; cursor: default; }
-        .rel-btn { padding: 2px 10px; border: 1px solid #007bff; border-radius: 10px; background: #e7f1ff; color: #007bff; cursor: pointer; font-size: .85rem; font-weight: 600; }
-        .rel-btn:hover { background: #007bff; color: #fff; }
+        .rel-btn { padding: 2px 10px; border: 1px solid var(--accent); border-radius: 10px; background:var(--accent-soft); color:var(--accent); cursor: pointer; font-size: .85rem; font-weight: 600; }
+        .rel-btn:hover { background: var(--accent-soft-hover); color: #fff; }
         .num-cell { text-align: right; }
         .toolbar { display:flex; align-items:center; gap:12px; margin-bottom:12px; flex-wrap:wrap; }
-        .modal-overlay { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background: rgba(0,0,0,.4); align-items: center; justify-content: center; }
+        .modal-overlay { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; background:var(--overlay-bg); align-items: center; justify-content: center; }
         .modal-overlay.open { display: flex; }
-        .modal-content { background: #fff; border-radius: 10px; max-width: 80vw; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 4px 24px rgba(0,0,0,.2); }
-        .modal-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-bottom: 1px solid #eee; }
+        .modal-content { background: var(--modal-bg); border-radius: 10px; max-width: 80vw; max-height: 80vh; overflow: hidden; display: flex; flex-direction: column; box-shadow: 0 4px 24px rgba(0,0,0,.2); }
+        .modal-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px; border-bottom:1px solid var(--border); }
         .modal-header h3 { margin: 0; font-size: 1.1rem; }
-        .modal-close { background: none; border: none; font-size: 1.4rem; cursor: pointer; color: #999; padding: 0 4px; }
-        .modal-close:hover { color: #333; }
+        .modal-close { background: none; border: none; font-size: 1.4rem; cursor: pointer; color:var(--disabled-text); padding: 0 4px; }
+        .modal-close:hover { color:var(--text); }
         .modal-body { padding: 16px 20px; overflow-y: auto; }
         .modal-body table { font-size: .85rem; }
         .modal-body th { font-size: .75rem; }
@@ -56,8 +56,8 @@
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">
         <h1 style="margin:0">{{t .Lang "setup.title"}}</h1>
         <button type="button" onclick="goBack('/app')" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;margin-left:auto;">{{t .Lang "common.close"}}</button>
-        <button type="button" id="themeBtn" onclick="toggleTheme()" style="padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1.1rem;cursor:pointer;">🌙</button>
-        <button type="button" onclick="toggleLang()" style="padding:8px 12px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">{{if eq .Lang "cs"}}EN{{else}}CS{{end}}</button>
+        <button type="button" id="themeBtn" onclick="toggleTheme()" class="pbx-icon-btn">🌙</button>
+        <button type="button" onclick="toggleLang()" class="pbx-icon-btn">{{if eq .Lang "cs"}}EN{{else}}CS{{end}}</button>
         <a href="/app" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">{{t .Lang "setup.applications"}}</a>
         <a href="/pbx-config" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">{{t .Lang "setup.configEditor"}}</a>
         <a href="/_/" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">{{t .Lang "setup.administration"}}</a>
@@ -70,7 +70,7 @@
         <div class="toolbar" style="margin-bottom:0;">
             <button type="button" onclick="setTheme('light')" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">☀️ {{t .Lang "setup.light"}}</button>
             <button type="button" onclick="setTheme('dark')" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">🌙 {{t .Lang "setup.dark"}}</button>
-            <span id="themeStatus" style="font-size:.9rem;color:#666;">{{t .Lang "setup.current"}} {{.Theme}}</span>
+            <span id="themeStatus" style="font-size:.9rem;color:var(--muted);">{{t .Lang "setup.current"}} {{.Theme}}</span>
         </div>
     </div>
 
@@ -78,9 +78,9 @@
         <h2>{{t .Lang "setup.mssql"}}</h2>
         <div class="subtitle">{{t .Lang "setup.mssqlSubtitle"}}</div>
         <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-            <input type="text" id="mssqlDsn" value="{{.MssqlDSN}}" placeholder="sqlserver://user:pass@host:1433?database=db&amp;encrypt=disable" style="flex:1;min-width:300px;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;outline:none;font-family:monospace;">
+            <input type="text" id="mssqlDsn" value="{{.MssqlDSN}}" placeholder="sqlserver://user:pass@host:1433?database=db&amp;encrypt=disable" style="flex:1;min-width:300px;padding:8px;border:1px solid var(--input-border);border-radius:6px;font-size:.9rem;outline:none;font-family:monospace;">
             <button type="button" onclick="saveMssqlDsn()" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">{{t .Lang "setup.saveDsn"}}</button>
-            <span id="mssqlDsnStatus" style="font-size:.9rem;color:#666;"></span>
+            <span id="mssqlDsnStatus" style="font-size:.9rem;color:var(--muted);"></span>
         </div>
     </div>
 
@@ -90,32 +90,32 @@
         <div style="display:flex;flex-direction:column;gap:10px;max-width:700px;">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                 <label style="font-size:.9rem;font-weight:600;width:130px;">{{t .Lang "setup.provider"}}</label>
-                <select id="aiProvider" onchange="aiProviderChanged()" style="flex:1;min-width:200px;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;outline:none;">
+                <select id="aiProvider" onchange="aiProviderChanged()" style="flex:1;min-width:200px;padding:8px;border:1px solid var(--input-border);border-radius:6px;font-size:.9rem;outline:none;">
                     <option value="openrouter" {{if eq .Agent.Provider "openrouter"}}selected{{end}}>OpenRouter</option>
                     <option value="lmstudio" {{if eq .Agent.Provider "lmstudio"}}selected{{end}}>{{t .Lang "setup.lmstudioLocal"}}</option>
                 </select>
             </div>
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                 <label style="font-size:.9rem;font-weight:600;width:130px;">{{t .Lang "setup.baseUrl"}}</label>
-                <input type="text" id="aiBaseURL" value="{{.Agent.BaseURL}}" placeholder="http://127.0.0.1:1234/v1 or https://openrouter.ai/api/v1" style="flex:1;min-width:300px;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;outline:none;font-family:monospace;">
+                <input type="text" id="aiBaseURL" value="{{.Agent.BaseURL}}" placeholder="http://127.0.0.1:1234/v1 or https://openrouter.ai/api/v1" style="flex:1;min-width:300px;padding:8px;border:1px solid var(--input-border);border-radius:6px;font-size:.9rem;outline:none;font-family:monospace;">
             </div>
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                 <label style="font-size:.9rem;font-weight:600;width:130px;">{{t .Lang "setup.apiKey"}}</label>
-                <input type="password" id="aiApiKey" value="{{.Agent.APIKey}}" placeholder="sk-…" style="flex:1;min-width:300px;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;outline:none;font-family:monospace;">
+                <input type="password" id="aiApiKey" value="{{.Agent.APIKey}}" placeholder="sk-…" style="flex:1;min-width:300px;padding:8px;border:1px solid var(--input-border);border-radius:6px;font-size:.9rem;outline:none;font-family:monospace;">
             </div>
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                 <label style="font-size:.9rem;font-weight:600;width:130px;">{{t .Lang "setup.model"}}</label>
-                <input type="text" id="aiModel" value="{{.Agent.Model}}" placeholder="openai/gpt-4o-mini" style="flex:1;min-width:300px;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;outline:none;font-family:monospace;">
+                <input type="text" id="aiModel" value="{{.Agent.Model}}" placeholder="openai/gpt-4o-mini" style="flex:1;min-width:300px;padding:8px;border:1px solid var(--input-border);border-radius:6px;font-size:.9rem;outline:none;font-family:monospace;">
             </div>
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                 <label style="font-size:.9rem;font-weight:600;width:130px;">{{t .Lang "setup.timeout"}}</label>
-                <input type="number" id="aiTimeout" value="{{if .Agent.TimeoutSeconds}}{{.Agent.TimeoutSeconds}}{{else}}90{{end}}" min="5" max="600" style="width:120px;padding:8px;border:1px solid #ccc;border-radius:6px;font-size:.9rem;outline:none;">
+                <input type="number" id="aiTimeout" value="{{if .Agent.TimeoutSeconds}}{{.Agent.TimeoutSeconds}}{{else}}90{{end}}" min="5" max="600" style="width:120px;padding:8px;border:1px solid var(--input-border);border-radius:6px;font-size:.9rem;outline:none;">
             </div>
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                 <label style="display:inline-flex;align-items:center;gap:6px;font-size:.9rem;cursor:pointer;">
                     <input type="checkbox" id="aiEnabled" {{if .Agent.Enabled}}checked{{end}}> {{t .Lang "setup.enabled"}}
                 </label>
-                <span id="aiConfigStatus" style="font-size:.9rem;color:#666;"></span>
+                <span id="aiConfigStatus" style="font-size:.9rem;color:var(--muted);"></span>
             </div>
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                 <button type="button" onclick="saveAiConfig()" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">{{t .Lang "setup.saveConfig"}}</button>
@@ -216,7 +216,7 @@
             </div>
             <div style="margin-top:12px;">
                 <button type="submit" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">{{t .Lang "setup.saveRules"}}</button>
-                <span id="rulesStatus" style="font-size:.9rem;color:#666;margin-left:10px;"></span>
+                <span id="rulesStatus" style="font-size:.9rem;color:var(--muted);margin-left:10px;"></span>
             </div>
         </form>
     </div>
@@ -457,7 +457,7 @@
             title.textContent = _t('common.relatedPrefix') + ": " + coll + " (" + ids.length + ")";
 
             var body = document.getElementById("relModalBody");
-            body.innerHTML = '<div style="text-align:center;padding:20px;color:#999;">' + _t('common.loading') + '</div>';
+            body.innerHTML = '<div style="text-align:center;padding:20px;color:var(--disabled-text);">' + _t('common.loading') + '</div>';
             document.getElementById("relModal").classList.add("open");
 
             if (cachedRelData[coll]) {
@@ -472,7 +472,7 @@
                     renderRelModal(coll, ids, data);
                 })
                 .catch(function() {
-                    body.innerHTML = '<div style="text-align:center;padding:20px;color:#dc3545;">' + _t('common.loadFailed') + '</div>';
+                    body.innerHTML = '<div style="text-align:center;padding:20px;color:var(--danger);">' + _t('common.loadFailed') + '</div>';
                 });
         }
 
@@ -482,7 +482,7 @@
             var related = data.records.filter(function(r) { return idSet[r.id]; });
             var body = document.getElementById("relModalBody");
             if (!related.length) {
-                body.innerHTML = '<div style="text-align:center;padding:20px;color:#999;">' + _t('common.noRelated') + '</div>';
+                body.innerHTML = '<div style="text-align:center;padding:20px;color:var(--disabled-text);">' + _t('common.noRelated') + '</div>';
                 return;
             }
 
@@ -563,16 +563,16 @@
                     var s = document.getElementById('mssqlDsnStatus');
                     if (res.ok) {
                         s.textContent = _t('common.saved');
-                        s.style.color = '#28a745';
+                        s.style.color = 'var(--success)';
                     } else {
                         s.textContent = _t('common.saveFailed') + ': ' + (res.data.message || _t('common.unknownError'));
-                        s.style.color = '#dc3545';
+                        s.style.color = 'var(--danger)';
                     }
                 })
                 .catch(function() {
                     var s = document.getElementById('mssqlDsnStatus');
                     s.textContent = _t('common.saveFailed');
-                    s.style.color = '#dc3545';
+                    s.style.color = 'var(--danger)';
                 });
         }
         function aiProviderChanged() {
@@ -603,16 +603,16 @@
                     var s = document.getElementById('aiConfigStatus');
                     if (res.ok) {
                         s.textContent = _t('common.saved');
-                        s.style.color = '#28a745';
+                        s.style.color = 'var(--success)';
                     } else {
                         s.textContent = _t('common.saveFailed') + ': ' + (res.data.message || _t('common.unknownError'));
-                        s.style.color = '#dc3545';
+                        s.style.color = 'var(--danger)';
                     }
                 })
                 .catch(function() {
                     var s = document.getElementById('aiConfigStatus');
                     s.textContent = _t('common.saveFailed');
-                    s.style.color = '#dc3545';
+                    s.style.color = 'var(--danger)';
                 });
         }
         function ruleModeChanged(sel) {

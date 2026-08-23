@@ -88,7 +88,64 @@ Decisions confirmed with user:
 4. Phase 4 (MSSQL) → `go mod tidy`, build/vet (needs a reachable MSSQL to test).
 5. Phase 5 (collection creation) → build/vet.
 6. Phase 6 docs/cleanup.
-  
+
+  ## Phase 7 — Superadmin `/pbx-setup` management hub
+### done!
+
+Context: `/pbx-setup` (main.go:947) is currently NOT superadmin-gated and renders `_app`/`_views` as read-only tables whose edit links target `/form/{collName}` — those 404 because `resolveFormConfig` needs a `_views` config named after the collection (none exists for `_app`/`_views`/`_agent`). All data collections have `NULL` rules (superuser-only); `users` uses `id = @request.auth.id`. App routes ignore PB rules; `handleFormPost` has no file-upload support.
+
+Decisions confirmed with user:
+- Rules UI = mode select + user checkboxes → generate `@request.auth.id = "id1" || @request.auth.id = "id2"`.
+- Rules editor applies to data collections only (exclude `users`, `roles`, `_`-prefixed, `collection.IsView()`).
+- Enforce rules also in app routes (`/tabular`, `/form` GET/POST, delete, `/api/tabulator-data`); view collections skipped.
+- `_app.group_icon` gets file-upload support (`filesystem.NewFileFromMultipart`).
+- Create-rule dummy-record evaluation: duplicate `checkCreateRule` helper in main.go (mirrors `pbai.checkCreateRule`), keep packages decoupled.
+
+### 7.1 Superadmin gate
+- `handlePbxSetup` starts with `if err := requireSuperAdmin(e); err != nil { return err }` (mirrors `handlePbxConfig`).
+
+### 7.2 System record editors (`_app`, `_views`, `_agent`)
+- New superadmin-gated routes in `main.go`:
+  - `GET /pbx-setup/record/{coll}/new` · `GET /pbx-setup/record/{coll}/{id}` → `handleSetupRecord` (renders new template `views/setup-record.html`).
+  - `POST /pbx-setup/record/{coll}` (create) · `POST /pbx-setup/record/{coll}/{id}` (update) → `handleSetupRecordPost` — multipart; `_app.group_icon` via `filesystem.NewFileFromMultipart` (keep existing unless replaced; "remove" option).
+  - `POST /pbx-setup/record/{coll}/{id}/delete` → `handleSetupRecordDelete`.
+- Generic renderer (`SetupRecordPageData` in `views/pages.go`): iterate `collection.Fields`, skip `id/created/updated`; `text` (with `_collName` → `<select>` of all collections), `number`, `bool`, `file`, `json` → structured JSON form (7.3).
+- `/pbx-setup` `_app`/`_views` table links switch from `/form/{coll}` to these routes.
+
+### 7.3 Schema-driven structured JSON editor
+- New Go types: `JsonFormField{Key,Label,Type,Value,Checked,Options,FieldOptions}` (`Type ∈ text|number|bool|select|fieldMulti|fieldLabels|mapping|columns`, `FieldOpt{Index(1-based),Name,Checked,Value}`), `JsonFormSection{Key,Title,TargetColl,Fields,Raw}`.
+- Schema mapping (target collection = record's `_collName`):
+  - `columnOrder` → `fieldMulti` — checkbox list of target collection fields → comma-delimited 1-based indices.
+  - `columnTitles`, `filter`, `pageTitle`, `formTitle`, `formDescr`, `collectionDescr`, `formLayout`, `dsn`, `table` → text.
+  - `columnSorting`, `searchBox`, `pagination`, `displaySystemCol`, `enabled` → bool.
+  - `mode` → select (insert/update/replace).
+  - `formLabels` → `fieldLabels` per-field label inputs → `field=Label` pairs.
+  - `columns` → dynamic rows (field select + title); `_mssql.mapping` → dynamic rows (pbField select + dbField text).
+  - `_agent._config` → provider select (openrouter/lmstudio), baseURL/apiKey/model text, timeoutSeconds number, enabled bool.
+  - Unknown/advanced keys preserved from existing JSON on save; collapsible raw-JSON textarea fallback.
+
+### 7.4 Collection API rules editor
+- New `/pbx-setup` section "Collection API rules" for data collections (exclude `users`, `roles`, `_`-prefixed, `IsView()`).
+- Per collection: 5 rule rows (list/view/create/update/delete), each a mode dropdown (Public / Signed-in / Selected users / Superusers only / Custom) + checkbox list of all `users` records (id + name/email label) + custom filter text input.
+- Generation: Public→`""`; Signed-in→`@request.auth.id != ''`; Selected→`@request.auth.id = "id1" || @request.auth.id = "id2"`; Superusers only→`nil`; Custom→raw text.
+- Parse existing rule back to UI state on load (nil→superusers, `""`→public, auth-id `||` chain→selected ids, else custom).
+- New `POST /pbx-setup/rules` (superadmin) → parse form, `e.App.Save(collection)` per collection, redirect back.
+- Page-data additions: `SetupCollectionRules[]`, `SetupUser{ID,Label}`.
+
+### 7.5 Enforce rules in app routes
+- Rename `agentRequestInfo` → `authRequestInfo` (keep alias).
+- Non-superuser checks:
+  - list: `handleTabulator`/`buildTabulatorData` + `handleTabulatorDataJSON` filter via `app.CanAccessRecord(rec, info, coll.ListRule)`; nil listRule → empty for non-superusers.
+  - form GET edit: `CanAccessRecord(rec, info, coll.ViewRule)`; GET new: deny if `!info.HasSuperuserAuth() && coll.CreateRule == nil`.
+  - POST update: `CanAccessRecord(rec, info, coll.UpdateRule)`; POST create: duplicated `checkCreateRule` helper (dummy-record eval, mirrors pbai).
+  - delete: `CanAccessRecord(rec, info, coll.DeleteRule)`.
+  - View collections (`IsView()`): skipped.
+
+### 7.6 Verification
+- `go build ./... && go vet ./...`, `go test ./pbai/`.
+- Manual E2E as superuser (`mherstus@pointx.cz` / `Michal_1962`): gate `/pbx-setup`; edit `_app` (incl. icon upload), `_views` (structured JSON + columnOrder checkboxes), `_agent`; save rules via user selection; confirm non-superuser sees filtered `/tabular` and 403 on create when rules deny.
+- Update `AGENTS.md` (new routes, rules editor, enforcement, setup-record page).
+
 **Not in this iteration (later phases):** Lua actions, card/kanban/detail/report views, print-to-PDF, MySQL/Postgres support.
 ## Phase 8 — Mobile views (phone/tablet)
 
@@ -983,62 +1040,6 @@ Total: ~420 new lines (translations + loader), ~100 modified lines (handlers + t
 - Independent of Phases 1-11
 - No new Go dependencies (plain `encoding/json` + `fmt.Sprintf`)
 
-## Phase 7 — Superadmin `/pbx-setup` management hub
-### done!
-
-Context: `/pbx-setup` (main.go:947) is currently NOT superadmin-gated and renders `_app`/`_views` as read-only tables whose edit links target `/form/{collName}` — those 404 because `resolveFormConfig` needs a `_views` config named after the collection (none exists for `_app`/`_views`/`_agent`). All data collections have `NULL` rules (superuser-only); `users` uses `id = @request.auth.id`. App routes ignore PB rules; `handleFormPost` has no file-upload support.
-
-Decisions confirmed with user:
-- Rules UI = mode select + user checkboxes → generate `@request.auth.id = "id1" || @request.auth.id = "id2"`.
-- Rules editor applies to data collections only (exclude `users`, `roles`, `_`-prefixed, `collection.IsView()`).
-- Enforce rules also in app routes (`/tabular`, `/form` GET/POST, delete, `/api/tabulator-data`); view collections skipped.
-- `_app.group_icon` gets file-upload support (`filesystem.NewFileFromMultipart`).
-- Create-rule dummy-record evaluation: duplicate `checkCreateRule` helper in main.go (mirrors `pbai.checkCreateRule`), keep packages decoupled.
-
-### 7.1 Superadmin gate
-- `handlePbxSetup` starts with `if err := requireSuperAdmin(e); err != nil { return err }` (mirrors `handlePbxConfig`).
-
-### 7.2 System record editors (`_app`, `_views`, `_agent`)
-- New superadmin-gated routes in `main.go`:
-  - `GET /pbx-setup/record/{coll}/new` · `GET /pbx-setup/record/{coll}/{id}` → `handleSetupRecord` (renders new template `views/setup-record.html`).
-  - `POST /pbx-setup/record/{coll}` (create) · `POST /pbx-setup/record/{coll}/{id}` (update) → `handleSetupRecordPost` — multipart; `_app.group_icon` via `filesystem.NewFileFromMultipart` (keep existing unless replaced; "remove" option).
-  - `POST /pbx-setup/record/{coll}/{id}/delete` → `handleSetupRecordDelete`.
-- Generic renderer (`SetupRecordPageData` in `views/pages.go`): iterate `collection.Fields`, skip `id/created/updated`; `text` (with `_collName` → `<select>` of all collections), `number`, `bool`, `file`, `json` → structured JSON form (7.3).
-- `/pbx-setup` `_app`/`_views` table links switch from `/form/{coll}` to these routes.
-
-### 7.3 Schema-driven structured JSON editor
-- New Go types: `JsonFormField{Key,Label,Type,Value,Checked,Options,FieldOptions}` (`Type ∈ text|number|bool|select|fieldMulti|fieldLabels|mapping|columns`, `FieldOpt{Index(1-based),Name,Checked,Value}`), `JsonFormSection{Key,Title,TargetColl,Fields,Raw}`.
-- Schema mapping (target collection = record's `_collName`):
-  - `columnOrder` → `fieldMulti` — checkbox list of target collection fields → comma-delimited 1-based indices.
-  - `columnTitles`, `filter`, `pageTitle`, `formTitle`, `formDescr`, `collectionDescr`, `formLayout`, `dsn`, `table` → text.
-  - `columnSorting`, `searchBox`, `pagination`, `displaySystemCol`, `enabled` → bool.
-  - `mode` → select (insert/update/replace).
-  - `formLabels` → `fieldLabels` per-field label inputs → `field=Label` pairs.
-  - `columns` → dynamic rows (field select + title); `_mssql.mapping` → dynamic rows (pbField select + dbField text).
-  - `_agent._config` → provider select (openrouter/lmstudio), baseURL/apiKey/model text, timeoutSeconds number, enabled bool.
-  - Unknown/advanced keys preserved from existing JSON on save; collapsible raw-JSON textarea fallback.
-
-### 7.4 Collection API rules editor
-- New `/pbx-setup` section "Collection API rules" for data collections (exclude `users`, `roles`, `_`-prefixed, `IsView()`).
-- Per collection: 5 rule rows (list/view/create/update/delete), each a mode dropdown (Public / Signed-in / Selected users / Superusers only / Custom) + checkbox list of all `users` records (id + name/email label) + custom filter text input.
-- Generation: Public→`""`; Signed-in→`@request.auth.id != ''`; Selected→`@request.auth.id = "id1" || @request.auth.id = "id2"`; Superusers only→`nil`; Custom→raw text.
-- Parse existing rule back to UI state on load (nil→superusers, `""`→public, auth-id `||` chain→selected ids, else custom).
-- New `POST /pbx-setup/rules` (superadmin) → parse form, `e.App.Save(collection)` per collection, redirect back.
-- Page-data additions: `SetupCollectionRules[]`, `SetupUser{ID,Label}`.
-
-### 7.5 Enforce rules in app routes
-- Rename `agentRequestInfo` → `authRequestInfo` (keep alias).
-- Non-superuser checks:
-  - list: `handleTabulator`/`buildTabulatorData` + `handleTabulatorDataJSON` filter via `app.CanAccessRecord(rec, info, coll.ListRule)`; nil listRule → empty for non-superusers.
-  - form GET edit: `CanAccessRecord(rec, info, coll.ViewRule)`; GET new: deny if `!info.HasSuperuserAuth() && coll.CreateRule == nil`.
-  - POST update: `CanAccessRecord(rec, info, coll.UpdateRule)`; POST create: duplicated `checkCreateRule` helper (dummy-record eval, mirrors pbai).
-  - delete: `CanAccessRecord(rec, info, coll.DeleteRule)`.
-  - View collections (`IsView()`): skipped.
-
-### 7.6 Verification
-- `go build ./... && go vet ./...`, `go test ./pbai/`.
-- Manual E2E as superuser (`mherstus@pointx.cz` / `Michal_1962`): gate `/pbx-setup`; edit `_app` (incl. icon upload), `_views` (structured JSON + columnOrder checkboxes), `_agent`; save rules via user selection; confirm non-superuser sees filtered `/tabular` and 403 on create when rules deny.
-- Update `AGENTS.md` (new routes, rules editor, enforcement, setup-record page).
 
 ## Phase 13 — Agent AI enhancements
 ### done!
