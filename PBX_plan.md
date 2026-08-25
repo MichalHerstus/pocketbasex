@@ -1173,3 +1173,153 @@ Context: Full codebase audit performed after Phases 1–13. Found critical vulne
 - Load test: `/tabular` with 10k+ records renders in <200ms (paginated)
 - Login flow works; redirects validated; cookies secure in HTTPS
 - AI agent streaming works; history persisted across prompts
+
+# PBX Development Plan - Phase 17
+
+## Extend AI Agent Toolset for Collections, Views, and Records
+
+### Objective
+Extend the built-in AI agent (`pbai`) with 7 new tools to enable full CRUD operations on Collections, Views, and Records while respecting PocketBase collection rules.
+
+---
+
+### Current Toolset (8 tools)
+
+| Tool | Purpose | Write? | Auth |
+|------|---------|--------|------|
+| `list_collections` | List accessible collections | No | User |
+| `get_collection_schema` | Show collection fields | No | User |
+| `query_records` | Query records (filter, limit) | No | User |
+| `insert_records` | Insert new records | Yes | User |
+| `create_collection` | Create new collection | Yes | Superuser |
+| `set_view_config` | Create/update view config | Yes | Superuser |
+| `create_action` | Create/update custom action | Yes | Superuser |
+| `list_actions` | List custom actions | No | Superuser |
+
+---
+
+### New Tools (7 tools) - Phase 17
+
+#### Collections (3 tools)
+
+| Tool | Parameters | Behavior |
+|------|------------|----------|
+| `update_collection` | `{collection, addFields: [{name, type, options?, required?}], removeFields: [string]}` | Add/remove fields only; **no type changes**; validates no duplicates; reconstructs schema |
+| `delete_collection` | `{collection, force?: false}` | Deletes base collection; **warns if `_views` configs reference it**; requires `force=true` to override |
+| `set_collection_rules` | `{collection, listRule?, viewRule?, createRule?, updateRule?, deleteRule?}` | Full replace of rule strings (nil/empty/raw filter); validates filter syntax |
+
+#### Views (2 tools) - `_views` collection
+
+| Tool | Parameters | Behavior |
+|------|------------|----------|
+| `update_view_config` | `{configName, collection?, pageTitle?, columnTitles?, columnSorting?, searchBox?, pagination?, displaySystemCol?, filter?, formTitle?, formDescr?, formLabels?, formLayout?, columnOrder?, displaySystemCol?, mssql?}` | **Full replace** of JSON fields (`_tabulator`, `_form`, `_mssql`); finds by `_name` |
+| `delete_view_config` | `{configName}` | Deletes `_views` record by `_name` |
+
+#### Records (2 tools) - extends existing
+
+| Tool | Parameters | Behavior |
+|------|------------|----------|
+| `update_records` | `{collection, records: [{id, field: value, ...}]}` | Max **50 records**; per-record `updateRule` check via `CanAccessRecord`; value coercion |
+| `delete_records` | `{collection, ids: [string]}` | Max **50 IDs**; per-record `deleteRule` check |
+| `query_records` (enhanced) | Add: `sort: "label1,-label2"`, `offset: 0`, `fields: "col1,col2"` | Sort by **column labels** (from view config); offset for pagination; field projection |
+
+---
+
+### Rule Enforcement Model
+
+| Operation | Rule Checked | Superuser Bypass |
+|-----------|--------------|------------------|
+| List collections | listRule | Yes |
+| View schema/records | viewRule | Yes |
+| Create records | createRule | Yes |
+| Update records | updateRule (per record) | Yes |
+| Delete records | deleteRule (per record) | Yes |
+| Manage collections/views/actions | N/A (superuser only) | N/A |
+
+**Key Pattern**: For record-level rules (update/delete):
+```go
+ok, err := a.App.CanAccessRecord(rec, a.Info, rec.Collection().UpdateRule)
+// or DeleteRule
+```
+
+---
+
+### Implementation Details
+
+#### 1. Access Helpers (tools.go)
+```go
+func (a *Agent) canUpdate(coll *core.Collection) bool
+func (a *Agent) canDelete(coll *core.Collection) bool
+```
+
+#### 2. Collection Update Logic
+- Get collection via `FindCachedCollectionByNameOrId`
+- For `addFields`: create new `core.Field` instances, append to `coll.Fields`
+- For `removeFields`: filter out from `coll.Fields` (skip system fields)
+- **Reject** if attempting to change type of existing field
+- Save with `a.App.Save(coll)`
+
+#### 3. View Config Full Replace
+- Find `_views` record by `_name` (configName)
+- Rebuild entire `_tabulator` / `_form` / `_mssql` JSON from params
+- Similar to `set_view_config` but all params optional
+
+#### 4. Record Sort by Labels
+- Fetch view config for collection to get column label mapping
+- Translate label sort string (`"Name,-Date"`) → field sort string (`"name,-created"`)
+- Pass to `FindRecordsByFilter`
+
+#### 5. Cascade Warning for Collection Delete
+```go
+recs, _ := a.App.FindRecordsByFilter("_views", "_collName = {:c}", "", 1, 0, dbx.Params{"c": collName})
+if len(recs) > 0 && !force {
+    return fmt.Errorf("collection has %d view config(s); use force=true to delete", len(recs))
+}
+```
+
+---
+
+### Files to Modify
+
+| File | Changes |
+|------|---------|
+| `pbai/tools.go` | 7 new tool functions + register in `allTools()` + access helpers |
+| `pbai/agent.go` | Update `systemMessages()` with new tool docs |
+| `pbrules/rules.go` | (Optional) `CheckUpdateRule`/`CheckDeleteRule` helpers |
+
+---
+
+### Testing Checklist
+
+- [ ] `update_collection`: add field, remove field, reject type change, reject duplicate name
+- [ ] `delete_collection`: succeeds when no views, warns with views, force overrides
+- [ ] `set_collection_rules`: all 5 rules, nil/empty/string validation
+- [ ] `update_view_config`: partial params merge correctly
+- [ ] `delete_view_config`: removes record
+- [ ] `update_records`: 1-50 records, updateRule enforced, coercion works
+- [ ] `delete_records`: 1-50 IDs, deleteRule enforced
+- [ ] `query_records`: sort by labels, offset, fields projection
+- [ ] Non-superuser blocked appropriately on all write tools
+
+---
+
+### Estimated Effort
+
+| Task | Complexity |
+|------|------------|
+| Access helpers + rule checks | Low |
+| Collection CRUD tools | Medium |
+| View config tools | Low |
+| Record update/delete tools | Medium |
+| Sort by labels translation | Medium |
+| System prompt updates | Low |
+| Tests | Medium |
+
+**Total**: ~300-400 lines of new code across 2-3 files.
+
+---
+
+### Notes
+- Phase 17 follows Phase 14 (Security posture - CSRF/rate limiting) and precedes future phases
+- Tools use existing pending action pattern (write=true, confirmation required)
+- All write operations respect collection rules via existing `pbrules` package patterns

@@ -6,12 +6,13 @@ PocketBase capabilities (data storage, the stock admin UI at `/_/`, CLI) and ext
 them with ready-made list (tabular) and form pages, a dashboard, Excel and MSSQL
 import/export, an AI agent, mobile views, and a superadmin setup area.
 
-This guide covers everything implemented up to **Phase 13** of `PBX_plan.md`
+This guide covers everything implemented up to **Phase 17** of `PBX_plan.md`
 (configuration model, config-name routing, superadmin config editor, view-collection
 editing, Excel/MSSQL import+sync, collection-creation wizard, mobile views, the
 per-user landing-page `_view` field, custom actions, AI-agent action-management tools,
-multilingual UI (English/Czech), and the AI agent enhancements: conversation memory,
-streaming responses, self-correcting collection lookup, and server-rendered chat replies).
+multilingual UI (English/Czech), AI agent enhancements (conversation memory,
+streaming responses, self-correcting collection lookup, server-rendered chat replies),
+and the extended AI agent toolset for full CRUD on collections, views, and records).
 
 ---
 
@@ -235,16 +236,48 @@ The form page shows one record at a time:
 A chat page. You can:
 
 - Ask natural-language questions about your data ("how many products cost less than 100").
-- The agent has tools: `list_collections`, `get_collection_schema`, `query_records`,
-  `insert_records`, `create_collection`, `set_view_config`, `create_action`, and
-  `list_actions`.
-- **Read-only tools** (list/schema/query, list actions) run immediately.
-- **Write tools** (insert/create/set config/create action) never run straight away — they
-  produce a **Pending Action**, shown in a confirm modal with an *Approve & execute* /
-  *Reject* button. Only after your explicit confirmation does the action execute.
+- The agent has **15 tools** organized in three categories:
+
+**Read tools** (run immediately, no confirmation):
+
+| Tool | Description |
+|------|-------------|
+| `list_collections` | List collections the user can access |
+| `get_collection_schema` | Show field names and types of a collection |
+| `query_records` | Query records with filter, sort, pagination, field projection |
+| `list_actions` | List custom actions for a collection (superuser) |
+
+**Write tools** (confirmation required via pending action modal):
+
+| Tool | Description | Auth |
+|------|-------------|------|
+| `insert_records` | Insert new records | User |
+| `update_records` | Update existing records (max 50) | User |
+| `delete_records` | Delete records (max 50) | User |
+| `create_collection` | Create a new collection | Superuser |
+| `update_collection` | Add/remove fields from a collection | Superuser |
+| `delete_collection` | Delete a collection (warns about view configs) | Superuser |
+| `set_collection_rules` | Set list/view/create/update/delete rules | Superuser |
+| `set_view_config` | Create/update view configuration | Superuser |
+| `update_view_config` | Update view configuration (full replace) | Superuser |
+| `delete_view_config` | Delete a view configuration | Superuser |
+| `create_action` | Create/update custom action script | Superuser |
+
+- **Read-only tools** run immediately.
+- **Write tools** never run straight away — they produce a **Pending Action**, shown in a
+  confirm modal with an *Approve & execute* / *Reject* button. Only after your explicit
+  confirmation does the action execute.
+- **Record operations** respect collection rules: `update_records` checks `updateRule`,
+  `delete_records` checks `deleteRule` per record. Superusers bypass all rules.
+- **Collection management** (create/update/delete/set rules) is superuser-only.
+- **View config** management is superuser-only. `update_view_config` does a full replace of
+  the tabulator/form JSON; `delete_view_config` removes the config record.
+- **Collection deletion** warns if `_views` configs reference the collection; use
+  `force=true` to delete and remove all dependent configs.
+- **Sorting** supports column labels from view config (e.g. `"Name,-Date"`) or field names.
+- **Field projection** — `query_records` accepts a `fields` param to limit returned columns.
 - **Streaming replies** — the assistant's answer streams in live, with a status line
-  beneath each tool the agent calls; the final answer (a table, a detail card, or plain
-  text) replaces the streamed text when it is ready.
+  beneath each tool the agent calls; the final answer replaces the streamed text when ready.
 - **Rich, server-rendered answers** — record data is rendered as a proper table (or a
   detail card for a single record), not raw markdown, and is sanitized server-side.
 - **Tabular fast path** — "list records in …" style questions answer from a **single**
@@ -638,9 +671,11 @@ create/extend the underscore collections and the `users._view` landing field.
 
 ---
 
-*This document describes PBX as of **Phase 13** — the named feature set above is complete
+*This document describes PBX as of **Phase 17** — the named feature set above is complete
 up to the config model & routing, superuser setup/config editing, view-collection editing,
 Excel/MSSQL sync, the collection-from-wizard, mobile views, the per-user `_view` landing,
-custom actions, AI-agent action-management tools, multilingual UI (English/Czech), and the
+custom actions, AI-agent action-management tools, multilingual UI (English/Czech), the
 AI agent enhancements (conversation memory, streaming, self-correcting collection lookup,
-server-rendered chat answers).*
+server-rendered chat answers), and the extended AI agent toolset: record update/delete,
+collection update/delete/rules, view config update/delete, and enhanced query with
+sort/offset/field projection.*

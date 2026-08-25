@@ -56,6 +56,13 @@ func allTools() []tool {
 		setViewConfigTool(),
 		createActionTool(),
 		listActionsTool(),
+		updateRecordsTool(),
+		deleteRecordsTool(),
+		updateCollectionTool(),
+		deleteCollectionTool(),
+		setCollectionRulesTool(),
+		updateViewConfigTool(),
+		deleteViewConfigTool(),
 	}
 }
 
@@ -85,6 +92,14 @@ func (a *Agent) canView(coll *core.Collection) bool {
 
 func (a *Agent) canCreate(coll *core.Collection) bool {
 	return a.isSuper() || coll.CreateRule != nil
+}
+
+func (a *Agent) canUpdate(coll *core.Collection) bool {
+	return a.isSuper() || coll.UpdateRule != nil
+}
+
+func (a *Agent) canDelete(coll *core.Collection) bool {
+	return a.isSuper() || coll.DeleteRule != nil
 }
 
 // canAccessRecord reports whether the caller may read the given record
@@ -259,13 +274,16 @@ func requiredMark(f core.Field) string {
 func queryRecordsTool() tool {
 	return tool{
 		name:        "query_records",
-		description: "Queries records from a collection the user is allowed to read. Args: {\"collection\": \"name\", \"filter\": \"optional PB filter expression\", \"limit\": 20}. Returns up to 20 records as JSON. Filter syntax examples: \"title ~ 'foo'\", \"price > 100 && visible = true\".",
+		description: "Queries records from a collection the user is allowed to read. Args: {\"collection\": \"name\", \"filter\": \"optional PB filter expression\", \"limit\": 20, \"offset\": 0, \"sort\": \"field1,-field2\", \"fields\": \"col1,col2\"}. Returns up to 20 records as JSON. Filter syntax examples: \"title ~ 'foo'\", \"price > 100 && visible = true\". Sort accepts field names or column labels from view config (prefix with - for descending). Fields limits returned columns.",
 		params: map[string]any{
 			"type": "object",
 			"properties": map[string]any{
 				"collection": map[string]any{"type": "string"},
 				"filter":     map[string]any{"type": "string"},
 				"limit":      map[string]any{"type": "integer"},
+				"offset":     map[string]any{"type": "integer"},
+				"sort":       map[string]any{"type": "string"},
+				"fields":     map[string]any{"type": "string"},
 			},
 			"required": []string{"collection"},
 		},
@@ -274,6 +292,9 @@ func queryRecordsTool() tool {
 				Collection string `json:"collection"`
 				Filter     string `json:"filter"`
 				Limit      int    `json:"limit"`
+				Offset     int    `json:"offset"`
+				Sort       string `json:"sort"`
+				Fields     string `json:"fields"`
 			}
 			if err := json.Unmarshal(args, &in); err != nil {
 				return "", err
@@ -295,17 +316,15 @@ func queryRecordsTool() tool {
 			if limit > 20 {
 				limit = 20
 			}
-
-			var recs []*core.Record
-			if in.Filter == "" {
-				recs, err = a.App.FindRecordsByFilter(coll, "", "", limit, 0)
-			} else {
-				recs, err = a.App.FindRecordsByFilter(coll, in.Filter, "", limit, 0)
+			offset := in.Offset
+			if offset < 0 {
+				offset = 0
 			}
+			sortStr := translateSort(a, coll.Name, in.Sort)
+			recs, err := a.App.FindRecordsByFilter(coll, in.Filter, sortStr, limit, offset)
 			if err != nil {
 				return "", fmt.Errorf("query failed: %w", err)
 			}
-
 			var visible []map[string]any
 			for _, r := range recs {
 				if !a.canAccessRecord(r) {
@@ -315,6 +334,27 @@ func queryRecordsTool() tool {
 			}
 			if len(visible) == 0 {
 				return "No accessible records found.", nil
+			}
+			if in.Fields != "" {
+				fieldSet := map[string]bool{}
+				for _, f := range strings.Split(in.Fields, ",") {
+					f = strings.TrimSpace(f)
+					if f != "" {
+						fieldSet[f] = true
+					}
+				}
+				fieldSet["id"] = true
+				var filtered []map[string]any
+				for _, rec := range visible {
+					row := map[string]any{}
+					for k, v := range rec {
+						if fieldSet[k] {
+							row[k] = v
+						}
+					}
+					filtered = append(filtered, row)
+				}
+				visible = filtered
 			}
 			data, err := json.Marshal(visible)
 			if err != nil {
@@ -905,7 +945,776 @@ func listActionsTool() tool {
 	}
 }
 
-// sanitizeName normalizes a collection/field name to lowercase [a-z0-9_].
+// --- record update/delete tools ---
+
+func updateRecordsTool() tool {
+	return tool{
+		name: "update_records",
+		description: "Updates one or more existing records in a collection. Requires explicit user confirmation. Args: {\"collection\": \"name\", \"records\": [{\"id\": \"record_id\", \"field\": \"value\", ...}]}. Max 50 records. Only include fields that exist in the collection schema.",
+		params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"collection": map[string]any{"type": "string"},
+				"records": map[string]any{
+					"type":  "array",
+					"items": map[string]any{"type": "object"},
+				},
+			},
+			"required": []string{"collection", "records"},
+		},
+		write: true,
+		pending: func(a *Agent, args json.RawMessage) (*PendingAction, error) {
+			var in struct {
+				Collection string           `json:"collection"`
+				Records    []map[string]any `json:"records"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, err
+			}
+			if in.Collection == "" {
+				return nil, fmt.Errorf("collection name is required")
+			}
+			if len(in.Records) == 0 {
+				return nil, fmt.Errorf("no records provided")
+			}
+			if len(in.Records) > 50 {
+				return nil, fmt.Errorf("maximum 50 records per update")
+			}
+			coll, err := a.findCollection(in.Collection)
+			if err != nil {
+				return nil, err
+			}
+			if !a.canUpdate(coll) {
+				return nil, fmt.Errorf("you do not have permission to update records in %q", coll.Name)
+			}
+			for _, r := range in.Records {
+				if _, ok := r["id"]; !ok {
+					return nil, fmt.Errorf("each record must have an 'id' field")
+				}
+			}
+			preview := make([]map[string]any, 0, len(in.Records))
+			for _, r := range in.Records {
+				coerced, err := coerceRecordValues(coll, r)
+				if err != nil {
+					return nil, err
+				}
+				coerced["id"] = r["id"]
+				preview = append(preview, coerced)
+			}
+			detail, err := json.MarshalIndent(preview, "", "  ")
+			if err != nil {
+				return nil, err
+			}
+			return &PendingAction{
+				Type:       "update_records",
+				Summary:    fmt.Sprintf("Update %d record(s) in %s", len(preview), coll.Name),
+				Detail:     string(detail),
+				Collection: coll.Name,
+				toolName:   "update_records",
+				params:     mustMarshal(in),
+			}, nil
+		},
+		exec: func(a *Agent, args json.RawMessage) (string, error) {
+			var in struct {
+				Collection string           `json:"collection"`
+				Records    []map[string]any `json:"records"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return "", err
+			}
+			coll, err := a.findCollection(in.Collection)
+			if err != nil {
+				return "", err
+			}
+			var updated []string
+			for _, raw := range in.Records {
+				id, _ := raw["id"].(string)
+				if id == "" {
+					continue
+				}
+				rec, err := a.App.FindRecordById(coll, id)
+				if err != nil {
+					return "", fmt.Errorf("record %q not found in %q: %w", id, coll.Name, err)
+				}
+				ok, err := a.App.CanAccessRecord(rec, a.Info, coll.UpdateRule)
+				if err != nil || !ok {
+					return "", fmt.Errorf("you do not have permission to update record %q in %q", id, coll.Name)
+				}
+				data, err := coerceRecordValues(coll, raw)
+				if err != nil {
+					return "", err
+				}
+				for k, v := range data {
+					rec.Set(k, v)
+				}
+				if err := a.App.Save(rec); err != nil {
+					return "", fmt.Errorf("failed to save record %q in %q: %w", id, coll.Name, err)
+				}
+				updated = append(updated, id)
+			}
+			return fmt.Sprintf("Updated %d record(s) in %s (ids: %s).", len(updated), coll.Name, strings.Join(updated, ", ")), nil
+		},
+	}
+}
+
+func deleteRecordsTool() tool {
+	return tool{
+		name: "delete_records",
+		description: "Deletes one or more records from a collection. Requires explicit user confirmation. Args: {\"collection\": \"name\", \"ids\": [\"id1\", \"id2\", ...]}. Max 50 records.",
+		params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"collection": map[string]any{"type": "string"},
+				"ids":        map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			},
+			"required": []string{"collection", "ids"},
+		},
+		write: true,
+		pending: func(a *Agent, args json.RawMessage) (*PendingAction, error) {
+			var in struct {
+				Collection string   `json:"collection"`
+				IDs        []string `json:"ids"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, err
+			}
+			if in.Collection == "" {
+				return nil, fmt.Errorf("collection name is required")
+			}
+			if len(in.IDs) == 0 {
+				return nil, fmt.Errorf("no record IDs provided")
+			}
+			if len(in.IDs) > 50 {
+				return nil, fmt.Errorf("maximum 50 records per delete")
+			}
+			coll, err := a.findCollection(in.Collection)
+			if err != nil {
+				return nil, err
+			}
+			if !a.canDelete(coll) {
+				return nil, fmt.Errorf("you do not have permission to delete records in %q", coll.Name)
+			}
+			detail, _ := json.MarshalIndent(in.IDs, "", "  ")
+			return &PendingAction{
+				Type:       "delete_records",
+				Summary:    fmt.Sprintf("Delete %d record(s) from %s", len(in.IDs), coll.Name),
+				Detail:     string(detail),
+				Collection: coll.Name,
+				toolName:   "delete_records",
+				params:     mustMarshal(in),
+			}, nil
+		},
+		exec: func(a *Agent, args json.RawMessage) (string, error) {
+			var in struct {
+				Collection string   `json:"collection"`
+				IDs        []string `json:"ids"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return "", err
+			}
+			coll, err := a.findCollection(in.Collection)
+			if err != nil {
+				return "", err
+			}
+			var deleted []string
+			for _, id := range in.IDs {
+				if id == "" {
+					continue
+				}
+				rec, err := a.App.FindRecordById(coll, id)
+				if err != nil {
+					return "", fmt.Errorf("record %q not found in %q: %w", id, coll.Name, err)
+				}
+				ok, err := a.App.CanAccessRecord(rec, a.Info, coll.DeleteRule)
+				if err != nil || !ok {
+					return "", fmt.Errorf("you do not have permission to delete record %q in %q", id, coll.Name)
+				}
+				if err := a.App.Delete(rec); err != nil {
+					return "", fmt.Errorf("failed to delete record %q in %q: %w", id, coll.Name, err)
+				}
+				deleted = append(deleted, id)
+			}
+			return fmt.Sprintf("Deleted %d record(s) from %s (ids: %s).", len(deleted), coll.Name, strings.Join(deleted, ", ")), nil
+		},
+	}
+}
+
+// --- collection management tools ---
+
+func updateCollectionTool() tool {
+	return tool{
+		name: "update_collection",
+		description: "Adds or removes fields from a collection. Superuser only. Args: {\"collection\": \"name\", \"addFields\": [{\"name\": \"field_name\", \"type\": \"text|number|bool|date|json\"}], \"removeFields\": [\"field_name\", ...]}. Cannot change field types - only add or remove.",
+		params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"collection":    map[string]any{"type": "string"},
+				"addFields":     map[string]any{"type": "array", "items": map[string]any{"type": "object"}},
+				"removeFields":  map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
+			},
+			"required": []string{"collection"},
+		},
+		write: true,
+		pending: func(a *Agent, args json.RawMessage) (*PendingAction, error) {
+			var in struct {
+				Collection   string `json:"collection"`
+				AddFields    []struct {
+					Name string `json:"name"`
+					Type string `json:"type"`
+				} `json:"addFields"`
+				RemoveFields []string `json:"removeFields"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, err
+			}
+			if !a.isSuper() {
+				return nil, fmt.Errorf("only superusers can update collections")
+			}
+			if in.Collection == "" {
+				return nil, fmt.Errorf("collection name is required")
+			}
+			if len(in.AddFields) == 0 && len(in.RemoveFields) == 0 {
+				return nil, fmt.Errorf("no changes specified")
+			}
+			coll, err := a.findCollection(in.Collection)
+			if err != nil {
+				return nil, err
+			}
+			summary := fmt.Sprintf("Update collection %q: ", coll.Name)
+			if len(in.AddFields) > 0 {
+				summary += fmt.Sprintf("add %d field(s)", len(in.AddFields))
+			}
+			if len(in.RemoveFields) > 0 {
+				if len(in.AddFields) > 0 {
+					summary += ", "
+				}
+				summary += fmt.Sprintf("remove %d field(s)", len(in.RemoveFields))
+			}
+			detail, _ := json.MarshalIndent(in, "", "  ")
+			return &PendingAction{
+				Type:     "update_collection",
+				Summary:  summary,
+				Detail:   string(detail),
+				toolName: "update_collection",
+				params:   mustMarshal(in),
+			}, nil
+		},
+		exec: func(a *Agent, args json.RawMessage) (string, error) {
+			var in struct {
+				Collection   string `json:"collection"`
+				AddFields    []struct {
+					Name string `json:"name"`
+					Type string `json:"type"`
+				} `json:"addFields"`
+				RemoveFields []string `json:"removeFields"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return "", err
+			}
+			if !a.isSuper() {
+				return "", fmt.Errorf("only superusers can update collections")
+			}
+			coll, err := a.findCollection(in.Collection)
+			if err != nil {
+				return "", err
+			}
+			existingNames := map[string]bool{}
+			for _, f := range coll.Fields {
+				existingNames[f.GetName()] = true
+			}
+			for _, name := range in.RemoveFields {
+				if existingNames[name] {
+					coll.Fields.RemoveByName(name)
+					delete(existingNames, name)
+				}
+			}
+			var added []string
+			for _, f := range in.AddFields {
+				fn := sanitizeName(f.Name)
+				if fn == "" || existingNames[fn] {
+					continue
+				}
+				typ := core.FieldTypeText
+				switch strings.ToLower(f.Type) {
+				case "number":
+					typ = core.FieldTypeNumber
+				case "bool":
+					typ = core.FieldTypeBool
+				case "date":
+					typ = core.FieldTypeDate
+				case "json":
+					typ = core.FieldTypeJSON
+				}
+				cf := core.Fields[typ]()
+				cf.SetName(fn)
+				coll.Fields.Add(cf)
+				existingNames[fn] = true
+				added = append(added, fn)
+			}
+			if err := a.App.Save(coll); err != nil {
+				return "", fmt.Errorf("failed to update collection: %w", err)
+			}
+			msg := fmt.Sprintf("Collection %q updated.", coll.Name)
+			if len(added) > 0 {
+				msg += fmt.Sprintf(" Added: %s.", strings.Join(added, ", "))
+			}
+			if len(in.RemoveFields) > 0 {
+				msg += fmt.Sprintf(" Removed: %s.", strings.Join(in.RemoveFields, ", "))
+			}
+			return msg, nil
+		},
+	}
+}
+
+func deleteCollectionTool() tool {
+	return tool{
+		name: "delete_collection",
+		description: "Deletes a base collection. Superuser only. Warns if view configurations reference the collection. Args: {\"collection\": \"name\", \"force\": false}.",
+		params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"collection": map[string]any{"type": "string"},
+				"force":      map[string]any{"type": "boolean"},
+			},
+			"required": []string{"collection"},
+		},
+		write: true,
+		pending: func(a *Agent, args json.RawMessage) (*PendingAction, error) {
+			var in struct {
+				Collection string `json:"collection"`
+				Force      *bool `json:"force"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, err
+			}
+			if !a.isSuper() {
+				return nil, fmt.Errorf("only superusers can delete collections")
+			}
+			if in.Collection == "" {
+				return nil, fmt.Errorf("collection name is required")
+			}
+			coll, err := a.findCollection(in.Collection)
+			if err != nil {
+				return nil, err
+			}
+			force := false
+			if in.Force != nil {
+				force = *in.Force
+			}
+			if !force {
+				recs, _ := a.App.FindRecordsByFilter("_views", "_collName = {:c}", "", 100, 0, dbx.Params{"c": coll.Name})
+				if len(recs) > 0 {
+					return nil, fmt.Errorf("collection %q has %d view configuration(s); use force=true to delete and remove all view configs", coll.Name, len(recs))
+				}
+			}
+			detail, _ := json.MarshalIndent(in, "", "  ")
+			return &PendingAction{
+				Type:     "delete_collection",
+				Summary:  fmt.Sprintf("Delete collection %q", coll.Name),
+				Detail:   string(detail),
+				toolName: "delete_collection",
+				params:   mustMarshal(in),
+			}, nil
+		},
+		exec: func(a *Agent, args json.RawMessage) (string, error) {
+			var in struct {
+				Collection string `json:"collection"`
+				Force      *bool `json:"force"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return "", err
+			}
+			if !a.isSuper() {
+				return "", fmt.Errorf("only superusers can delete collections")
+			}
+			coll, err := a.findCollection(in.Collection)
+			if err != nil {
+				return "", err
+			}
+			force := false
+			if in.Force != nil {
+				force = *in.Force
+			}
+			if force {
+				recs, _ := a.App.FindRecordsByFilter("_views", "_collName = {:c}", "", 100, 0, dbx.Params{"c": coll.Name})
+				for _, r := range recs {
+					_ = a.App.Delete(r)
+				}
+			}
+			if err := a.App.Delete(coll); err != nil {
+				return "", fmt.Errorf("failed to delete collection: %w", err)
+			}
+			return fmt.Sprintf("Collection %q deleted.", coll.Name), nil
+		},
+	}
+}
+
+func setCollectionRulesTool() tool {
+	return tool{
+		name: "set_collection_rules",
+		description: "Sets the API rules for a collection. Superuser only. Args: {\"collection\": \"name\", \"listRule\": \"filter or empty\", \"viewRule\": \"filter or empty\", \"createRule\": \"filter or empty\", \"updateRule\": \"filter or empty\", \"deleteRule\": \"filter or empty\"}. Use empty string for public, null for superuser-only, or a PB filter expression.",
+		params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"collection": map[string]any{"type": "string"},
+				"listRule":   map[string]any{"type": "string"},
+				"viewRule":   map[string]any{"type": "string"},
+				"createRule": map[string]any{"type": "string"},
+				"updateRule": map[string]any{"type": "string"},
+				"deleteRule": map[string]any{"type": "string"},
+			},
+			"required": []string{"collection"},
+		},
+		write: true,
+		pending: func(a *Agent, args json.RawMessage) (*PendingAction, error) {
+			var in struct {
+				Collection string  `json:"collection"`
+				ListRule   *string `json:"listRule"`
+				ViewRule   *string `json:"viewRule"`
+				CreateRule *string `json:"createRule"`
+				UpdateRule *string `json:"updateRule"`
+				DeleteRule *string `json:"deleteRule"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, err
+			}
+			if !a.isSuper() {
+				return nil, fmt.Errorf("only superusers can set collection rules")
+			}
+			if in.Collection == "" {
+				return nil, fmt.Errorf("collection name is required")
+			}
+			coll, err := a.findCollection(in.Collection)
+			if err != nil {
+				return nil, err
+			}
+			detail, _ := json.MarshalIndent(in, "", "  ")
+			return &PendingAction{
+				Type:       "set_collection_rules",
+				Summary:    fmt.Sprintf("Update rules for collection %q", coll.Name),
+				Detail:     string(detail),
+				Collection: coll.Name,
+				toolName:   "set_collection_rules",
+				params:     mustMarshal(in),
+			}, nil
+		},
+		exec: func(a *Agent, args json.RawMessage) (string, error) {
+			var in struct {
+				Collection string  `json:"collection"`
+				ListRule   *string `json:"listRule"`
+				ViewRule   *string `json:"viewRule"`
+				CreateRule *string `json:"createRule"`
+				UpdateRule *string `json:"updateRule"`
+				DeleteRule *string `json:"deleteRule"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return "", err
+			}
+			if !a.isSuper() {
+				return "", fmt.Errorf("only superusers can set collection rules")
+			}
+			coll, err := a.findCollection(in.Collection)
+			if err != nil {
+				return "", err
+			}
+			if in.ListRule != nil {
+				coll.ListRule = in.ListRule
+			}
+			if in.ViewRule != nil {
+				coll.ViewRule = in.ViewRule
+			}
+			if in.CreateRule != nil {
+				coll.CreateRule = in.CreateRule
+			}
+			if in.UpdateRule != nil {
+				coll.UpdateRule = in.UpdateRule
+			}
+			if in.DeleteRule != nil {
+				coll.DeleteRule = in.DeleteRule
+			}
+			if err := a.App.Save(coll); err != nil {
+				return "", fmt.Errorf("failed to save rules: %w", err)
+			}
+			return fmt.Sprintf("Rules updated for collection %q.", coll.Name), nil
+		},
+	}
+}
+
+// --- view config management tools ---
+
+func updateViewConfigTool() tool {
+	return tool{
+		name: "update_view_config",
+		description: "Updates an existing view configuration. Superuser only. Args: {\"configName\": \"name\", \"pageTitle\": \"optional\", \"columnTitles\": \"optional\", \"columnSorting\": bool, \"searchBox\": bool, \"pagination\": bool, \"displaySystemCol\": bool, \"filter\": \"optional\", \"formTitle\": \"optional\", \"formDescr\": \"optional\", \"formLabels\": \"optional\", \"formLayout\": \"optional\", \"columnOrder\": \"optional\"}. Full replace of tabulator/form JSON.",
+		params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"configName":     map[string]any{"type": "string"},
+				"pageTitle":      map[string]any{"type": "string"},
+				"columnTitles":   map[string]any{"type": "string"},
+				"columnSorting":  map[string]any{"type": "boolean"},
+				"searchBox":      map[string]any{"type": "boolean"},
+				"pagination":     map[string]any{"type": "boolean"},
+				"displaySystemCol": map[string]any{"type": "boolean"},
+				"filter":         map[string]any{"type": "string"},
+				"formTitle":      map[string]any{"type": "string"},
+				"formDescr":      map[string]any{"type": "string"},
+				"formLabels":     map[string]any{"type": "string"},
+				"formLayout":     map[string]any{"type": "string"},
+				"columnOrder":    map[string]any{"type": "string"},
+			},
+			"required": []string{"configName"},
+		},
+		write: true,
+		pending: func(a *Agent, args json.RawMessage) (*PendingAction, error) {
+			var in struct {
+				ConfigName      string `json:"configName"`
+				PageTitle       string `json:"pageTitle"`
+				ColumnTitles    string `json:"columnTitles"`
+				ColumnSorting   *bool  `json:"columnSorting"`
+				SearchBox       *bool  `json:"searchBox"`
+				Pagination      *bool  `json:"pagination"`
+				DisplaySystemCol *bool `json:"displaySystemCol"`
+				Filter          string `json:"filter"`
+				FormTitle       string `json:"formTitle"`
+				FormDescr       string `json:"formDescr"`
+				FormLabels      string `json:"formLabels"`
+				FormLayout      string `json:"formLayout"`
+				ColumnOrder     string `json:"columnOrder"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, err
+			}
+			if !a.isSuper() {
+				return nil, fmt.Errorf("only superusers can update view configurations")
+			}
+			if in.ConfigName == "" {
+				return nil, fmt.Errorf("configName is required")
+			}
+			detail, _ := json.MarshalIndent(in, "", "  ")
+			return &PendingAction{
+				Type:       "update_view_config",
+				Summary:    fmt.Sprintf("Update view configuration %q", in.ConfigName),
+				Detail:     string(detail),
+				toolName:   "update_view_config",
+				params:     mustMarshal(in),
+			}, nil
+		},
+		exec: func(a *Agent, args json.RawMessage) (string, error) {
+			var in struct {
+				ConfigName      string `json:"configName"`
+				PageTitle       string `json:"pageTitle"`
+				ColumnTitles    string `json:"columnTitles"`
+				ColumnSorting   *bool  `json:"columnSorting"`
+				SearchBox       *bool  `json:"searchBox"`
+				Pagination      *bool  `json:"pagination"`
+				DisplaySystemCol *bool `json:"displaySystemCol"`
+				Filter          string `json:"filter"`
+				FormTitle       string `json:"formTitle"`
+				FormDescr       string `json:"formDescr"`
+				FormLabels      string `json:"formLabels"`
+				FormLayout      string `json:"formLayout"`
+				ColumnOrder     string `json:"columnOrder"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return "", err
+			}
+			if !a.isSuper() {
+				return "", fmt.Errorf("only superusers can update view configurations")
+			}
+			if in.ConfigName == "" {
+				return "", fmt.Errorf("configName is required")
+			}
+			recs, err := a.App.FindRecordsByFilter("_views", "_name = {:name}", "", 1, 0, dbx.Params{"name": in.ConfigName})
+			if err != nil || len(recs) == 0 {
+				return "", fmt.Errorf("view configuration %q not found", in.ConfigName)
+			}
+			rec := recs[0]
+			collName := rec.GetString("_collName")
+			if collName == "" {
+				return "", fmt.Errorf("view configuration %q has no associated collection", in.ConfigName)
+			}
+			if _, err := a.findCollection(collName); err != nil {
+				return "", err
+			}
+			tab := map[string]any{}
+			if in.PageTitle != "" {
+				tab["pageTitle"] = in.PageTitle
+			}
+			if in.ColumnTitles != "" {
+				tab["columnTitles"] = in.ColumnTitles
+			}
+			if in.ColumnSorting != nil {
+				tab["columnSorting"] = *in.ColumnSorting
+			}
+			if in.SearchBox != nil {
+				tab["searchBox"] = *in.SearchBox
+			}
+			if in.Pagination != nil {
+				tab["pagination"] = *in.Pagination
+			}
+			if in.DisplaySystemCol != nil {
+				tab["displaySystemCol"] = *in.DisplaySystemCol
+			}
+			if in.Filter != "" {
+				tab["filter"] = in.Filter
+			}
+			if in.ColumnOrder != "" {
+				tab["columnOrder"] = in.ColumnOrder
+			}
+			tabJSON, _ := json.Marshal(tab)
+			rec.Set("_tabulator", string(tabJSON))
+			form := map[string]any{}
+			if in.FormTitle != "" {
+				form["formTitle"] = in.FormTitle
+			}
+			if in.FormDescr != "" {
+				form["formDescr"] = in.FormDescr
+			}
+			if in.FormLabels != "" {
+				form["formLabels"] = in.FormLabels
+			}
+			if in.FormLayout != "" {
+				form["formLayout"] = in.FormLayout
+			}
+			formJSON, _ := json.Marshal(form)
+			rec.Set("_form", string(formJSON))
+			if err := a.App.Save(rec); err != nil {
+				return "", fmt.Errorf("failed to save view config: %w", err)
+			}
+			return fmt.Sprintf("View configuration %q updated for collection %q.", in.ConfigName, collName), nil
+		},
+	}
+}
+
+func deleteViewConfigTool() tool {
+	return tool{
+		name: "delete_view_config",
+		description: "Deletes a view configuration. Superuser only. Args: {\"configName\": \"name\"}.",
+		params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"configName": map[string]any{"type": "string"},
+			},
+			"required": []string{"configName"},
+		},
+		write: true,
+		pending: func(a *Agent, args json.RawMessage) (*PendingAction, error) {
+			var in struct {
+				ConfigName string `json:"configName"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return nil, err
+			}
+			if !a.isSuper() {
+				return nil, fmt.Errorf("only superusers can delete view configurations")
+			}
+			if in.ConfigName == "" {
+				return nil, fmt.Errorf("configName is required")
+			}
+			recs, err := a.App.FindRecordsByFilter("_views", "_name = {:name}", "", 1, 0, dbx.Params{"name": in.ConfigName})
+			if err != nil || len(recs) == 0 {
+				return nil, fmt.Errorf("view configuration %q not found", in.ConfigName)
+			}
+			detail, _ := json.MarshalIndent(in, "", "  ")
+			return &PendingAction{
+				Type:     "delete_view_config",
+				Summary:  fmt.Sprintf("Delete view configuration %q", in.ConfigName),
+				Detail:   string(detail),
+				toolName: "delete_view_config",
+				params:   mustMarshal(in),
+			}, nil
+		},
+		exec: func(a *Agent, args json.RawMessage) (string, error) {
+			var in struct {
+				ConfigName string `json:"configName"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return "", err
+			}
+			if !a.isSuper() {
+				return "", fmt.Errorf("only superusers can delete view configurations")
+			}
+			if in.ConfigName == "" {
+				return "", fmt.Errorf("configName is required")
+			}
+			recs, err := a.App.FindRecordsByFilter("_views", "_name = {:name}", "", 1, 0, dbx.Params{"name": in.ConfigName})
+			if err != nil || len(recs) == 0 {
+				return "", fmt.Errorf("view configuration %q not found", in.ConfigName)
+			}
+			if err := a.App.Delete(recs[0]); err != nil {
+				return "", fmt.Errorf("failed to delete view configuration: %w", err)
+			}
+			return fmt.Sprintf("View configuration %q deleted.", in.ConfigName), nil
+		},
+	}
+}
+
+// --- collection listing with labels for sort translation ---
+
+// viewLabels returns a field→label map for the collection from its _views config.
+func viewLabels(a *Agent, collName string) map[string]string {
+	labels := map[string]string{}
+	recs, err := a.App.FindRecordsByFilter("_views", "_collName = {:c}", "", 1, 0, dbx.Params{"c": collName})
+	if err != nil || len(recs) == 0 {
+		return labels
+	}
+	var form struct {
+		FormLabels string            `json:"formLabels"`
+		Labels     map[string]string `json:"labels"`
+	}
+	if j := recs[0].GetString("_form"); j != "" {
+		_ = json.Unmarshal([]byte(j), &form)
+	}
+	for _, pair := range strings.Split(form.FormLabels, ",") {
+		kv := strings.SplitN(strings.TrimSpace(pair), "=", 2)
+		if len(kv) == 2 && kv[0] != "" {
+			labels[kv[0]] = kv[1]
+		}
+	}
+	for k, v := range form.Labels {
+		labels[k] = v
+	}
+	return labels
+}
+
+// translateSort converts a label-based sort string to a field-based sort string.
+func translateSort(a *Agent, collName, sort string) string {
+	if sort == "" {
+		return ""
+	}
+	labels := viewLabels(a, collName)
+	if len(labels) == 0 {
+		return sort
+	}
+	reverse := map[string]string{}
+	for field, label := range labels {
+		reverse[strings.ToLower(label)] = field
+	}
+	var parts []string
+	for _, part := range strings.Split(sort, ",") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		desc := false
+		if strings.HasPrefix(part, "-") {
+			desc = true
+			part = part[1:]
+		}
+		field, ok := reverse[strings.ToLower(part)]
+		if !ok {
+			field = sanitizeName(part)
+		}
+		if desc {
+			field = "-" + field
+		}
+		parts = append(parts, field)
+	}
+	return strings.Join(parts, ",")
+}
+
+// --- sanitizeName normalizes a collection/field name to lowercase [a-z0-9_].
 func sanitizeName(name string) string {
 	name = strings.TrimSpace(strings.ToLower(name))
 	var b strings.Builder
