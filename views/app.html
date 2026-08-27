@@ -44,6 +44,9 @@
         <span>{{t .Lang "app.signedInAs"}} <span class="name">{{.Name}}</span></span>
         <span style="display:flex;gap:12px;align-items:center;">
             <a href="{{.BasePath}}/ai">{{t .Lang "app.aiAgent"}}</a>
+            {{if .IsSuperAdmin}}
+            <a href="{{.BasePath}}/pbx-setup" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">{{t .Lang "app.config"}}</a>
+            {{end}}
         </span>
     </div>
     {{end}}
@@ -53,13 +56,14 @@
         <div class="group-header">{{if .GroupIcon}}<img src="{{.GroupIcon}}" style="width:20px;height:20px;vertical-align:middle;margin-right:6px;">{{end}}{{.GroupLabel}}</div>
         <ul class="group-links">
             {{range .Links}}
-            <li><a href="{{.URL}}">{{.Label}}</a></li>
+            <li><a href="{{.URL}}">{{.Label}}{{if .Count}} <span style="font-size:.75rem;padding:2px 8px;background:var(--accent-soft);color:var(--accent);border-radius:10px;margin-left:6px;">{{.Count}} {{plural .Count $.Lang (t $.Lang "common.recordWord") (t $.Lang "common.recordFew") (t $.Lang "common.recordMany")}}</span>{{end}}</a></li>
             {{end}}
         </ul>
     </div>
     {{end}}
 
-    <p class="copyright"><i>(c)White Dog Software, MH - version 0.10.0</i></p>
+    <img src="/assets/logo-wds.jpg" alt="White Dog Software logo" style="display:block;max-height:120px;width:auto;border-radius:50%;margin:0 0 2px 0;">
+    <p class="copyright"><i>(c)White Dog Software, MH - version 0.17.0</i></p>
 
     <script>
         function toggleLang() {

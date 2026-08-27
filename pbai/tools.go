@@ -45,6 +45,29 @@ func toolDefs() []openai.Tool {
 	return out
 }
 
+// filteredToolDefs returns only the tools whose names appear in the allow list.
+func filteredToolDefs(allow []string) []openai.Tool {
+	allowSet := make(map[string]bool, len(allow))
+	for _, name := range allow {
+		allowSet[name] = true
+	}
+	defs := allTools()
+	out := make([]openai.Tool, 0, len(allow))
+	for _, d := range defs {
+		if allowSet[d.name] {
+			out = append(out, openai.Tool{
+				Type: openai.ToolTypeFunction,
+				Function: &openai.FunctionDefinition{
+					Name:        d.name,
+					Description: d.description,
+					Parameters:  d.params,
+				},
+			})
+		}
+	}
+	return out
+}
+
 // allTools returns the tool definitions in registry order.
 func allTools() []tool {
 	return []tool{

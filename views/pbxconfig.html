@@ -71,7 +71,7 @@
                         <a href="/pbx-config/view/{{.Name}}" class="btn btn-gray" style="padding:4px 10px;font-size:.85rem;">{{t $.Lang "common.edit"}}</a>
                         <form method="POST" action="/pbx-config/delete" style="display:inline">
                             <input type="hidden" name="name" value="{{.Name}}">
-                            <button type="submit" class="btn btn-red" onclick="return confirm(_t('config.deleteConfirm').replace('%s', {{.Name}}))">{{t $.Lang "common.delete"}}</button>
+                            <button type="button" class="btn btn-red" data-name="{{.Name}}" onclick="confirmDeleteConfig(this)">{{t $.Lang "common.delete"}}</button>
                         </form>
                     </td>
                 </tr>
@@ -89,6 +89,68 @@
             } else {
                 window.location.href = fallback;
             }
+        }
+
+        function pbxConfirm(message, opts) {
+            opts = opts || {};
+            var host = document.querySelector(".pbx-confirm-host");
+            if (!host) {
+                host = document.createElement("div");
+                host.className = "pbx-confirm-host" + (opts.mobile ? " mobile" : "");
+                document.body.appendChild(host);
+            }
+            function escHtml(s) {
+                return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+            }
+            var danger = !!opts.danger;
+            var t = function(k, fb) { return typeof _t === "function" ? (_t(k) || fb) : fb; };
+            var title = opts.title || t("common.confirm", "Confirm");
+            var confirmText = opts.confirmText || t("common.confirm", "Confirm");
+            var cancelText = opts.cancelText || t("common.cancel", "Cancel");
+            var overlay = document.createElement("div");
+            overlay.className = "pbx-confirm-overlay";
+            overlay.innerHTML =
+                '<div class="pbx-confirm" role="dialog" aria-modal="true">' +
+                    '<div class="pbx-confirm-head">' +
+                        '<span class="pbx-confirm-ico">' + (danger ? "&#9888;" : "&#10067;") + '</span>' +
+                        '<span class="pbx-confirm-title">' + escHtml(title) + '</span>' +
+                    '</div>' +
+                    '<div class="pbx-confirm-msg">' + escHtml(message) + '</div>' +
+                    '<div class="pbx-confirm-actions">' +
+                        '<button type="button" class="pbx-confirm-cancel">' + escHtml(cancelText) + '</button>' +
+                        '<button type="button" class="pbx-confirm-ok ' + (danger ? "danger" : "primary") + '">' + escHtml(confirmText) + '</button>' +
+                    '</div>' +
+                '</div>';
+            host.appendChild(overlay);
+            requestAnimationFrame(function() { overlay.classList.add("show"); });
+            return new Promise(function(resolve) {
+                var settled = false;
+                function done(val) {
+                    if (settled) return;
+                    settled = true;
+                    document.removeEventListener("keydown", onKey);
+                    overlay.classList.remove("show");
+                    setTimeout(function() { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 180);
+                    resolve(val);
+                }
+                function onKey(e) {
+                    if (e.key === "Escape") done(false);
+                    else if (e.key === "Enter") done(true);
+                }
+                var ok = overlay.querySelector(".pbx-confirm-ok");
+                var cancel = overlay.querySelector(".pbx-confirm-cancel");
+                ok.focus();
+                ok.addEventListener("click", function() { done(true); });
+                cancel.addEventListener("click", function() { done(false); });
+                overlay.addEventListener("click", function(e) { if (e.target === overlay) done(false); });
+                document.addEventListener("keydown", onKey);
+            });
+        }
+
+        async function confirmDeleteConfig(btn) {
+            var name = btn.getAttribute("data-name");
+            if (!(await pbxConfirm(_t('config.deleteConfirm').replace('%s', name), { danger: true }))) return;
+            btn.closest("form").submit();
         }
 
         function currentTheme() {

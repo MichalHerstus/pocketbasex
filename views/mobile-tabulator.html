@@ -78,6 +78,17 @@
         const fieldOptions = {{.FieldOptionsJSON | safeJS}};
         const basePath = "{{.BasePath}}";
         const configName = "{{.ConfigName}}";
+        const _pluralWord = ["{{t .Lang "common.recordWord"}}", "{{t .Lang "common.recordFew"}}", "{{t .Lang "common.recordMany"}}"];
+        const _pluralLang = "{{.Lang}}";
+        function _pluralCount(n) {
+            var an = Math.abs(n), l2 = an % 100, l1 = an % 10;
+            if (_pluralLang === "cs") {
+                if (l1 === 1 && l2 !== 11) return 0;
+                if (l1 >= 2 && l1 <= 4 && (l2 < 12 || l2 > 14)) return 1;
+                return 2;
+            }
+            return an === 1 ? 0 : 1;
+        }
 
         const perPage = 20;
         let currentPage = 1;
@@ -287,7 +298,7 @@
                 el.innerHTML = pageRecords.map(cardHTML).join("");
             }
             var rc = document.getElementById("recordCount");
-            if (rc) rc.textContent = filtered.length + " record" + (filtered.length === 1 ? "" : "s");
+            if (rc) rc.textContent = filtered.length + " " + _pluralWord[_pluralCount(filtered.length)];
 
             var pag = document.getElementById("pagination");
             if (pag) {
@@ -435,31 +446,24 @@
         }
 
         // ---- delete ----
-        function deleteRecord(id) {
-            if (!confirm("Really delete selected record?")) return;
+        async function deleteRecord(id) {
+            if (!(await pbxConfirm("Really delete selected record?", { danger: true, mobile: true }))) return;
             fetch(basePath + "/form/" + configName + "/" + id + "/delete", { method: "POST" })
                 .then(function(res) {
                     if (!res.ok) throw new Error();
                     var idx = allRecords.findIndex(function(r) { return r.id === id; });
                     if (idx !== -1) allRecords.splice(idx, 1);
                     render();
-                    toast("Record deleted.");
+                    pbxToast('success', "Record deleted.");
                 })
-                .catch(function() { toast("Failed to delete record."); });
-        }
-
-        function toast(msg) {
-            var t = document.getElementById("toast");
-            t.textContent = msg;
-            t.classList.add("show");
-            setTimeout(function() { t.classList.remove("show"); }, 2000);
+                .catch(function() { pbxToast('danger', "Failed to delete record."); });
         }
 
         // show success message passed via ?msg=
         var sp = new URLSearchParams(window.location.search);
         var smsg = sp.get("msg");
         if (smsg) {
-            toast(smsg);
+            pbxToast('info', smsg);
             sp.delete("msg");
             var newUrl = window.location.pathname + (sp.toString() ? "?" + sp.toString() : "");
             window.history.replaceState({}, "", newUrl);
@@ -529,9 +533,9 @@
 
         document.getElementById('runActionBtn').addEventListener('click', function() {
             var actionId = document.getElementById('actionSelect').value;
-            if (!actionId) { alert('Select an action first.'); return; }
+            if (!actionId) { pbxToast('warning', 'Select an action first.'); return; }
             var ids = actionIds();
-            if (!ids.length) { alert('No records to run this action on.'); return; }
+            if (!ids.length) { pbxToast('warning', 'No records to run this action on.'); return; }
             var btn = this;
             btn.disabled = true;
             fetch('/actions/execute', {
@@ -547,16 +551,98 @@
 
         function showActionResult(res) {
             document.getElementById('resultOutput').textContent = (res.output || []).join('\n');
-            var status = document.getElementById('resultStatus');
-            status.style.background = res.ok === false ? 'var(--danger-soft)' : 'var(--success-soft)';
-            status.style.color = res.ok === false ? 'var(--danger-strong)' : 'var(--success-strong)';
-            status.textContent = res.ok === false
-                ? ('Error: ' + (res.error || 'unknown error'))
-                : ('Success' + (res.affected ? ' — ' + res.affected + ' record(s) affected' : ''));
+            alertEl(document.getElementById('resultStatus'), res.ok === false ? 'danger' : 'success',
+                res.ok === false
+                    ? ('Error: ' + (res.error || 'unknown error'))
+                    : ('Success' + (res.affected ? ' — ' + res.affected + ' record(s) affected' : '')));
             document.getElementById('resultModal').style.display = 'flex';
         }
         function closeResultModal() {
             document.getElementById('resultModal').style.display = 'none';
+        }
+
+        function _esc(s) {
+            if (s == null) return "";
+            var d = document.createElement("div"); d.textContent = String(s); return d.innerHTML;
+        }
+        function pbxToast(kind, msg, persist) {
+            var host = document.querySelector(".toast-host");
+            if (!host) { host = document.createElement("div"); host.className = "toast-host"; document.body.appendChild(host); }
+            var t = document.createElement("div");
+            t.className = "alert alert-" + kind + " alert-toast mount";
+            t.setAttribute("role", "alert");
+            var ico = { success: "&#10004;", danger: "&#10007;", warning: "&#9888;", info: "&#8505;" }[kind] || "&#8505;";
+            t.innerHTML = '<span class="a-ico">' + ico + '</span><span class="a-body">' + _esc(msg) + '</span>';
+            var dismiss = function() { t.classList.add("leaving"); setTimeout(function() { if (t.parentNode) t.parentNode.removeChild(t); }, 200); };
+            t.addEventListener("click", dismiss);
+            host.appendChild(t);
+            var listed = host.querySelectorAll(".alert");
+            while (listed.length > 3) { listed[0].parentNode.removeChild(listed[0]); }
+            if (!persist) setTimeout(dismiss, 4500);
+            return t;
+        }
+        function alertEl(el, kind, msg) {
+            var ico = { success: "&#10004;", danger: "&#10007;", warning: "&#9888;", info: "&#8505;" }[kind] || "&#8505;";
+            el.className = "alert alert-" + kind;
+            el.setAttribute("role", "alert");
+            el.innerHTML = '<span class="a-ico">' + ico + '</span><span class="a-body">' + _esc(msg) + '</span>';
+            return el;
+        }
+
+        function pbxConfirm(message, opts) {
+            opts = opts || {};
+            var host = document.querySelector(".pbx-confirm-host");
+            if (!host) {
+                host = document.createElement("div");
+                host.className = "pbx-confirm-host" + (opts.mobile ? " mobile" : "");
+                document.body.appendChild(host);
+            }
+            function escHtml(s) {
+                return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+            }
+            var danger = !!opts.danger;
+            var t = function(k, fb) { return typeof _t === "function" ? (_t(k) || fb) : fb; };
+            var title = opts.title || t("common.confirm", "Confirm");
+            var confirmText = opts.confirmText || t("common.confirm", "Confirm");
+            var cancelText = opts.cancelText || t("common.cancel", "Cancel");
+            var overlay = document.createElement("div");
+            overlay.className = "pbx-confirm-overlay";
+            overlay.innerHTML =
+                '<div class="pbx-confirm" role="dialog" aria-modal="true">' +
+                    '<div class="pbx-confirm-head">' +
+                        '<span class="pbx-confirm-ico">' + (danger ? "&#9888;" : "&#10067;") + '</span>' +
+                        '<span class="pbx-confirm-title">' + escHtml(title) + '</span>' +
+                    '</div>' +
+                    '<div class="pbx-confirm-msg">' + escHtml(message) + '</div>' +
+                    '<div class="pbx-confirm-actions">' +
+                        '<button type="button" class="pbx-confirm-cancel">' + escHtml(cancelText) + '</button>' +
+                        '<button type="button" class="pbx-confirm-ok ' + (danger ? "danger" : "primary") + '">' + escHtml(confirmText) + '</button>' +
+                    '</div>' +
+                '</div>';
+            host.appendChild(overlay);
+            requestAnimationFrame(function() { overlay.classList.add("show"); });
+            return new Promise(function(resolve) {
+                var settled = false;
+                function done(val) {
+                    if (settled) return;
+                    settled = true;
+                    document.removeEventListener("keydown", onKey);
+                    overlay.classList.remove("show");
+                    setTimeout(function() { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 180);
+                    resolve(val);
+                }
+                function onKey(e) {
+                    if (e.key === "Escape") done(false);
+                    else if (e.key === "Enter") done(true);
+                }
+                var ok = overlay.querySelector(".pbx-confirm-ok");
+                var cancel = overlay.querySelector(".pbx-confirm-cancel");
+                ok.focus();
+                ok.addEventListener("click", function() { done(true); });
+                cancel.addEventListener("click", function() { done(false); });
+                overlay.addEventListener("click", function(e) { if (e.target === overlay) done(false); });
+                document.addEventListener("keydown", onKey);
+            });
         }
 
         loadActions();

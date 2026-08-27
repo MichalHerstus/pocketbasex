@@ -12,20 +12,18 @@
         .stepbar { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
         .stepbar .step { padding: 6px 14px; border-radius: 16px; font-size: .85rem; font-weight: 600; background: var(--btn-neutral); color: #fff; }
         .stepbar .step.active { background: var(--btn-primary); }
-        form { background:var(--card-bg); border-radius: 8px; padding: 20px; max-width: 900px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+        form, .wiz-card { background:var(--card-bg); border-radius: 8px; padding: 20px; max-width: 900px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
         label { display: block; font-weight: 600; font-size: .85rem; margin: 14px 0 4px; }
         input[type=text], select { width: 100%; padding: 8px; border: 1px solid var(--input-border); border-radius: 6px; font-size: .9rem; outline: none; font-family: monospace; }
         input[type=text]:focus, select:focus { border-color:var(--accent); }
         select { font-family: sans-serif; }
         .hint { font-size: .8rem; color:var(--muted); margin: 4px 0 0; }
-        .msg { padding: 10px 14px; border-radius: 6px; margin-bottom: 16px; background:var(--danger-soft); color:var(--danger); font-size: .9rem; }
-        .msg.ok { background:var(--success-soft); color:var(--success); }
         table { width: 100%; border-collapse: collapse; margin-top: 8px; }
         th, td { padding: 8px 10px; text-align: left; border-bottom:1px solid var(--border); font-size: .9rem; }
         th { font-size: .78rem; text-transform: uppercase; letter-spacing: .03em; color:var(--muted); }
         .col-name input, .col-name select { width: 100%; padding: 6px; }
         .samples { color:var(--muted); font-size: .8rem; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .actions { margin-top: 20px; display: flex; gap: 12px; }
+        .actions { margin-top: 20px; display: flex; gap: 12px; flex-wrap: wrap; }
         .btn { padding: 10px 20px; border-radius: 6px; text-decoration: none; font-size: .95rem; display: inline-block; border: none; cursor: pointer; }
         .btn-green { background: var(--btn-primary); color: #fff; }
         .btn-gray { background: var(--btn-neutral); color: #fff; }
@@ -46,116 +44,7 @@
     </div>
     <p class="subtitle">{{if eq .Source "excel"}}{{t .Lang "wizard.subtitleExcel"}}{{else}}{{t .Lang "wizard.subtitleMssql"}}{{end}}</p>
 
-    <div class="stepbar">
-        <span class="step {{if eq .Step 1}}active{{end}}">1. {{t .Lang "wizard.source"}}</span>
-        <span class="step {{if eq .Step 2}}active{{end}}">2. {{t .Lang "wizard.preview"}}</span>
-        <span class="step {{if eq .Step 3}}active{{end}}">3. {{t .Lang "wizard.createStep"}}</span>
-    </div>
-
-    {{if .Message}}
-    <div class="msg {{if .Created}}ok{{end}}">{{.Message}}</div>
-    {{end}}
-
-    {{if eq .Step 3}}
-    <div style="background:var(--card-bg);border-radius:8px;padding:20px;max-width:900px;box-shadow:0 1px 3px rgba(0,0,0,.1);">
-        <p style="font-size:1rem;">
-            {{t .Lang "wizard.collection"}} <strong>{{.Created}}</strong> {{t .Lang "wizard.wasCreated"}}
-            {{if .Import}}{{t .Lang "wizard.imported"}}{{else}}{{t .Lang "wizard.notImported"}}{{end}}
-        </p>
-        <div class="actions" style="display:flex;gap:12px;margin-top:16px;">
-            <a href="/pbx-config/view/new" class="btn btn-green">{{t .Lang "wizard.createViewConfig"}}</a>
-            <a href="/pbx-config" class="btn btn-gray">{{t .Lang "wizard.backToConfig"}}</a>
-        </div>
-    </div>
-    {{end}}
-
-    {{if eq .Step 2}}
-    <form method="POST" action="/pbx-config/import-{{if eq .Source "excel"}}excel{{else}}mssql{{end}}">
-        <input type="hidden" name="action" value="create">
-        <input type="hidden" name="name" value="{{.Name}}">
-        {{if eq .Source "excel"}}
-        <input type="hidden" name="fileName" value="{{.FileName}}">
-        <input type="hidden" name="sheet" value="{{.Sheet}}">
-        {{else}}
-        <input type="hidden" name="dsn" value="{{.DSN}}">
-        <input type="hidden" name="table" value="{{.Table}}">
-        {{end}}
-        <input type="hidden" name="import" value="{{if .Import}}1{{else}}0{{end}}">
-        <input type="hidden" name="colCount" value="{{len .Columns}}">
-
-        <label>{{t .Lang "wizard.collectionName"}}: <strong>{{.Name}}</strong></label>
-        <p class="hint">{{t .Lang "wizard.headersHint"}}</p>
-
-        <table>
-            <tr>
-                <th style="width:36px">{{t .Lang "wizard.colUse"}}</th>
-                <th>{{t .Lang "wizard.colHeader"}}</th>
-                <th style="width:200px">{{t .Lang "wizard.colPbField"}}</th>
-                <th style="width:120px">{{t .Lang "wizard.colType"}}</th>
-                <th>{{t .Lang "wizard.colSamples"}}</th>
-            </tr>
-            {{range $i, $c := .Columns}}
-            <tr>
-                <td><input type="checkbox" name="col_{{$i}}_include" value="1" {{if $c.Include}}checked{{end}}></td>
-                <td>{{$c.Header}}</td>
-                <td class="col"><input type="text" name="col_{{$i}}_field" value="{{$c.Field}}"></td>
-                <td class="col">
-                    <select name="col_{{$i}}_type">
-                        {{if eq $c.Type "number"}}<option value="text">text</option><option value="number" selected>number</option>
-                        {{else if eq $c.Type "bool"}}<option value="text">text</option><option value="number">number</option><option value="bool" selected>bool</option>
-                        {{else if eq $c.Type "date"}}<option value="text">text</option><option value="number">number</option><option value="bool">bool</option><option value="date" selected>date</option>
-                        {{else}}<option value="text" selected>text</option><option value="number">number</option><option value="bool">bool</option><option value="date">date</option>
-                        {{end}}
-                    </select>
-                </td>
-                <td class="samples" title="{{$c.Values}}">{{$c.Values}}</td>
-                <input type="hidden" name="col_{{$i}}_header" value="{{$c.Header}}">
-                <input type="hidden" name="col_{{$i}}_values" value="{{$c.Values}}">
-            </tr>
-            {{end}}
-        </table>
-
-        <div class="actions">
-            <button type="submit" class="btn btn-green">{{t .Lang "wizard.createCollection"}}</button>
-            <a class="btn btn-gray" href="/pbx-config/import-{{if eq .Source "excel"}}excel{{else}}mssql{{end}}">{{t .Lang "wizard.back"}}</a>
-        </div>
-    </form>
-    {{end}}
-
-    {{if eq .Step 1}}
-    <form method="POST" action="/pbx-config/import-{{if eq .Source "excel"}}excel{{else}}mssql{{end}}">
-        <input type="hidden" name="action" value="preview">
-
-        <label for="name">{{t .Lang "wizard.collectionName"}}</label>
-        <input type="text" id="name" name="name" value="{{.Name}}" placeholder="e.g. novy_majetek">
-        <p class="hint">{{t .Lang "wizard.nameHint"}}</p>
-
-        {{if eq .Source "excel"}}
-        <label for="fileName">{{t .Lang "wizard.excelFileName"}}</label>
-        <input type="text" id="fileName" name="fileName" value="{{.FileName}}" placeholder="./pb_data or relative name, e.g. produkty">
-        <p class="hint">{{t .Lang "wizard.fileNameHint"}}</p>
-
-        <label for="sheet">{{t .Lang "wizard.sheet"}}</label>
-        <input type="text" id="sheet" name="sheet" value="{{.Sheet}}" placeholder="Sheet1">
-        {{else}}
-        <label for="dsn">{{t .Lang "wizard.dsn"}}</label>
-        <input type="text" id="dsn" name="dsn" value="{{.DSN}}" placeholder="sqlserver://user:pass@host:1433?database=db&encrypt=disable">
-        <p class="hint">{{t .Lang "wizard.dsnHint"}}</p>
-
-        <label for="table">{{t .Lang "wizard.table"}}</label>
-        <input type="text" id="table" name="table" value="{{.Table}}" placeholder="dbo.MyTable">
-        {{end}}
-
-        <div class="checkbox-row">
-            <input type="checkbox" id="import" name="import" value="1" {{if .Import}}checked{{end}}>
-            <label for="import" style="margin:0;">{{t .Lang "wizard.importDataNow"}}</label>
-        </div>
-
-        <div class="actions">
-            <button type="submit" class="btn btn-blue">{{t .Lang "wizard.detectSchema"}}</button>
-        </div>
-    </form>
-    {{end}}
+    {{template "importWizard" dict "W" . "Lang" .Lang "Theme" .Theme}}
 
     <script>
         function goBack(fallback) {
@@ -190,11 +79,128 @@
             fetch('/api/theme/' + next, { method: 'POST' }).catch(function(){});
         }
         applyTheme(currentTheme());
-
-        // keep the "import data" checkbox state through the preview step
-        {{if eq .Step 2}}
-        var importField = document.querySelector('input[name="import"]');
-        {{end}}
     </script>
 </body>
 </html>
+
+{{define "importWizard"}}
+    <div class="stepbar">
+        <span class="step {{if eq .W.Step 1}}active{{end}}">1. {{t .Lang "wizard.source"}}</span>
+        <span class="step {{if eq .W.Step 2}}active{{end}}">2. {{t .Lang "wizard.preview"}}</span>
+        <span class="step {{if eq .W.Step 3}}active{{end}}">3. {{t .Lang "wizard.createStep"}}</span>
+    </div>
+
+    {{if .W.Message}}
+    <div class="alert {{if .W.Created}}alert-success{{else}}alert-danger{{end}}" role="alert">
+        <span class="a-ico">{{if .W.Created}}&#10004;{{else}}&#10007;{{end}}</span>
+        <span class="a-body">{{.W.Message}}</span>
+    </div>
+    {{end}}
+
+    {{if eq .W.Step 3}}
+    <div class="wiz-card">
+        <p style="font-size:1rem;">
+            {{t .Lang "wizard.collection"}} <strong>{{.W.Created}}</strong> {{t .Lang "wizard.wasCreated"}}
+            {{if .W.Import}}{{t .Lang "wizard.imported"}}{{else}}{{t .Lang "wizard.notImported"}}{{end}}
+        </p>
+        <div class="actions" style="margin-top:16px;">
+            <a href="/pbx-config/view/new" class="btn btn-green">{{t .Lang "wizard.createViewConfig"}}</a>
+            <a href="{{.W.BackURL}}" class="btn btn-gray">{{t .Lang "wizard.backToConfig"}}</a>
+        </div>
+    </div>
+    {{end}}
+
+    {{if eq .W.Step 2}}
+    <form method="POST" action="{{.W.Action}}">
+        <input type="hidden" name="action" value="create">
+        <input type="hidden" name="source" value="{{.W.Source}}">
+        <input type="hidden" name="name" value="{{.W.Name}}">
+        {{if eq .W.Source "excel"}}
+        <input type="hidden" name="fileName" value="{{.W.FileName}}">
+        <input type="hidden" name="sheet" value="{{.W.Sheet}}">
+        {{else}}
+        <input type="hidden" name="dsn" value="{{.W.DSN}}">
+        <input type="hidden" name="table" value="{{.W.Table}}">
+        {{end}}
+        <input type="hidden" name="import" value="{{if .W.Import}}1{{else}}0{{end}}">
+        <input type="hidden" name="colCount" value="{{len .W.Columns}}">
+
+        <label>{{t .Lang "wizard.collectionName"}}: <strong>{{.W.Name}}</strong></label>
+        <p class="hint">{{t .Lang "wizard.headersHint"}}</p>
+
+        <table>
+            <tr>
+                <th style="width:36px">{{t .Lang "wizard.colUse"}}</th>
+                <th>{{t .Lang "wizard.colHeader"}}</th>
+                <th style="width:200px">{{t .Lang "wizard.colPbField"}}</th>
+                <th style="width:120px">{{t .Lang "wizard.colType"}}</th>
+                <th>{{t .Lang "wizard.colSamples"}}</th>
+            </tr>
+            {{range $i, $c := .W.Columns}}
+            <tr>
+                <td><input type="checkbox" name="col_{{$i}}_include" value="1" {{if $c.Include}}checked{{end}}></td>
+                <td>{{$c.Header}}</td>
+                <td class="col"><input type="text" name="col_{{$i}}_field" value="{{$c.Field}}"></td>
+                <td class="col">
+                    <select name="col_{{$i}}_type">
+                        {{if eq $c.Type "number"}}<option value="text">text</option><option value="number" selected>number</option>
+                        {{else if eq $c.Type "bool"}}<option value="text">text</option><option value="number">number</option><option value="bool" selected>bool</option>
+                        {{else if eq $c.Type "date"}}<option value="text">text</option><option value="number">number</option><option value="bool">bool</option><option value="date" selected>date</option>
+                        {{else}}<option value="text" selected>text</option><option value="number">number</option><option value="bool">bool</option><option value="date">date</option>
+                        {{end}}
+                    </select>
+                </td>
+                <td class="samples" title="{{$c.Values}}">{{$c.Values}}</td>
+                <input type="hidden" name="col_{{$i}}_header" value="{{$c.Header}}">
+                <input type="hidden" name="col_{{$i}}_values" value="{{$c.Values}}">
+            </tr>
+            {{end}}
+        </table>
+
+        <div class="actions">
+            <button type="submit" class="btn btn-green">{{t .Lang "wizard.createCollection"}}</button>
+            <a class="btn btn-gray" href="{{.W.BackURL}}">{{t .Lang "wizard.back"}}</a>
+        </div>
+    </form>
+    {{end}}
+
+    {{if eq .W.Step 1}}
+    {{template "importWizardSourceForm" .}}
+    {{end}}
+{{end}}
+
+{{define "importWizardSourceForm"}}
+    <form method="POST" action="{{.W.Action}}">
+        <input type="hidden" name="action" value="preview">
+        <input type="hidden" name="source" value="{{.W.Source}}">
+
+        <label for="name">{{t .Lang "wizard.collectionName"}}</label>
+        <input type="text" id="name" name="name" value="{{.W.Name}}" placeholder="e.g. novy_majetek">
+        <p class="hint">{{t .Lang "wizard.nameHint"}}</p>
+
+        {{if eq .W.Source "excel"}}
+        <label for="fileName">{{t .Lang "wizard.excelFileName"}}</label>
+        <input type="text" id="fileName" name="fileName" value="{{.W.FileName}}" placeholder="./pb_data or relative name, e.g. produkty">
+        <p class="hint">{{t .Lang "wizard.fileNameHint"}}</p>
+
+        <label for="sheet">{{t .Lang "wizard.sheet"}}</label>
+        <input type="text" id="sheet" name="sheet" value="{{.W.Sheet}}" placeholder="Sheet1">
+        {{else}}
+        <label for="dsn">{{t .Lang "wizard.dsn"}}</label>
+        <input type="text" id="dsn" name="dsn" value="{{.W.DSN}}" placeholder="sqlserver://user:pass@host:1433?database=db&encrypt=disable">
+        <p class="hint">{{t .Lang "wizard.dsnHint"}}</p>
+
+        <label for="table">{{t .Lang "wizard.table"}}</label>
+        <input type="text" id="table" name="table" value="{{.W.Table}}" placeholder="dbo.MyTable">
+        {{end}}
+
+        <div class="checkbox-row">
+            <input type="checkbox" id="import" name="import" value="1" {{if .W.Import}}checked{{end}}>
+            <label for="import" style="margin:0;">{{t .Lang "wizard.importDataNow"}}</label>
+        </div>
+
+        <div class="actions">
+            <button type="submit" class="btn btn-blue">{{t .Lang "wizard.detectSchema"}}</button>
+        </div>
+    </form>
+{{end}}

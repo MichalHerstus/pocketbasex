@@ -188,7 +188,14 @@ func init() {
 		Funcs(template.FuncMap{
 			"add": func(a, b int) int { return a + b },
 			"sub": func(a, b int) int { return a - b },
-			"t":   func(lang, key string) string { return i18n.T(lang, key) },
+			"t":     func(lang, key string) string { return i18n.T(lang, key) },
+			"plural": func(count int, lang string, forms ...string) string {
+				idx := pluralIndex(count, lang)
+				if idx >= len(forms) {
+					idx = len(forms) - 1
+				}
+				return forms[idx]
+			},
 			"seq": func(n int) []int {
 				r := make([]int, n)
 				for i := range r {
@@ -198,6 +205,13 @@ func init() {
 			},
 			"safeJS":   func(s string) template.JS { return template.JS(s) },
 			"safeHTML": func(s string) template.HTML { return template.HTML(s) },
+			"jsonQuote": func(v any) template.JS {
+				b, err := json.Marshal(v)
+				if err != nil {
+					return template.JS("[]")
+				}
+				return template.JS(b)
+			},
 			"dict": func(vals ...any) map[string]any {
 				m := map[string]any{}
 				for i := 0; i+1 < len(vals); i += 2 {
@@ -209,6 +223,39 @@ func init() {
 			},
 		}).
 		ParseFS(viewsFS, "views/*.html"))
+}
+
+// pluralIndex returns the index into a plural forms slice for the given count
+// and language. Supported languages: en (2 forms), cs (3 forms). Fallback is
+// English-style singular/plural.
+func pluralIndex(count int, lang string) int {
+	n := abs(count)
+	switch lang {
+	case "cs":
+		// Czech: 1 form for 1,21,31…; 2 forms for 2-4,22-24…; 3 forms for 0,5-20,25-30…
+		last2 := n % 100
+		last1 := n % 10
+		if last1 == 1 && last2 != 11 {
+			return 0
+		}
+		if last1 >= 2 && last1 <= 4 && (last2 < 12 || last2 > 14) {
+			return 1
+		}
+		return 2
+	default:
+		// English-style: singular for 1, plural for everything else
+		if n == 1 {
+			return 0
+		}
+		return 1
+	}
+}
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+	return n
 }
 
 func main() {
@@ -247,7 +294,7 @@ func main() {
 			// se.Next() builds the PB mux and assigns it to Server.Handler;
 			// wrap it here so every request is logged once.
 			if se.Server.Handler != nil {
-				se.Server.Handler = requestLogger(se.Server.Handler)
+				se.Server.Handler = requestLogger(se.Server.Handler, se.App.IsDev())
 			}
 			printPbxEndpoints(se)
 			return err
@@ -338,12 +385,14 @@ func handleMobileApp(e *core.RequestEvent) error {
 func buildAppData(e *core.RequestEvent, basePath string) (views.AppPageData, bool, error) {
 	var userName string
 	signedIn := false
+	isSuperAdmin := false
 
 	cookie, cookieErr := e.Request.Cookie("pb_auth")
 	if cookieErr == nil {
 		record, findErr := e.App.FindAuthRecordByToken(cookie.Value, core.TokenTypeAuth)
 		if findErr == nil && record != nil {
 			signedIn = true
+			isSuperAdmin = record.Collection().Name == "_superusers"
 			userName = record.GetString("name")
 			if userName == "" {
 				userName = record.GetString("email")
@@ -389,6 +438,7 @@ func buildAppData(e *core.RequestEvent, basePath string) (views.AppPageData, boo
 
 	groupOrder := make([]string, 0)
 	groups := map[string]*views.AppGroup{}
+	collCounts := map[string]int{}
 	for _, ent := range entries {
 		g, ok := groups[ent.group]
 		if !ok {
@@ -405,10 +455,22 @@ func buildAppData(e *core.RequestEvent, basePath string) (views.AppPageData, boo
 		if linkURL == "" {
 			linkURL = ent.collection
 		}
+		count := 0
+		if ent.collection != "" {
+			if c, ok := collCounts[ent.collection]; ok {
+				count = c
+			} else {
+				if cnt, cerr := getTotalRecords(e, ent.collection); cerr == nil {
+					count = cnt
+				}
+				collCounts[ent.collection] = count
+			}
+		}
 		g.Links = append(g.Links, views.AppLink{
 			Collection: ent.collection,
 			Label:      ent.label,
 			URL:        basePath + "/tabular/" + linkURL,
+			Count:      count,
 		})
 	}
 
@@ -418,11 +480,12 @@ func buildAppData(e *core.RequestEvent, basePath string) (views.AppPageData, boo
 	}
 
 	return views.AppPageData{
-		LangData: langData(e),
-		Theme:    getThemeMode(e.App),
-		BasePath: basePath,
-		Name:     userName,
-		Groups:   grouped,
+		LangData:     langData(e),
+		Theme:        getThemeMode(e.App),
+		BasePath:     basePath,
+		Name:         userName,
+		Groups:       grouped,
+		IsSuperAdmin: isSuperAdmin,
 	}, signedIn, nil
 }
 
@@ -544,19 +607,19 @@ func langFilePath(app core.App) string {
 
 // getLangCode resolves the UI language for a page:
 //
-//  1. CLI --lang flag (if set and valid)
-//  2. the caller's pb_lang cookie (per-browser override)
+//  1. the caller's pb_lang cookie (per-browser override)
+//  2. CLI --lang flag (if set and valid)
 //  3. global default from pb_data/lang.json
 //  4. "en"
 func getLangCode(app core.App, r *http.Request) string {
-	if cliLangOverride {
-		if i18n.IsValid(cliLang) {
-			return cliLang
-		}
-	}
 	if r != nil {
 		if c, err := r.Cookie("pb_lang"); err == nil && i18n.IsValid(c.Value) {
 			return c.Value
+		}
+	}
+	if cliLangOverride {
+		if i18n.IsValid(cliLang) {
+			return cliLang
 		}
 	}
 	data, err := os.ReadFile(langFilePath(app))
@@ -1122,11 +1185,10 @@ func handleMobileTabulator(e *core.RequestEvent) error {
 
 // --- PBX Setup ---
 
-func handlePbxSetup(e *core.RequestEvent) error {
-	if err := requireSuperAdmin(e); err != nil {
-		return err
-	}
-
+// buildPbxSetupPageData assembles the hub data. When importSource is "excel" or
+// "mssql", it runs the embedded collection-import wizard and keeps the Import
+// tab active.
+func buildPbxSetupPageData(e *core.RequestEvent, activeTab, importSource string) views.PbxSetupPageData {
 	collections := []string{"_app", "_views", "_actions"}
 	sections := make([]views.TabulatorPageData, 0, len(collections))
 
@@ -1140,17 +1202,60 @@ func handlePbxSetup(e *core.RequestEvent) error {
 	}
 
 	pageData := views.PbxSetupPageData{
-		LangData: langData(e),
-		Theme:    getThemeMode(e.App),
-		MssqlDSN: getMssqlDSN(e.App),
-		Agent:    getAgentConfig(e),
-		Sections: sections,
-		Rules:    buildSetupRules(e),
-		Users:    buildSetupUsers(e),
+		LangData:  langData(e),
+		Theme:     getThemeMode(e.App),
+		MssqlDSN:  getMssqlDSN(e.App),
+		Agent:     getAgentConfig(e),
+		Sections:  sections,
+		Rules:     buildSetupRules(e),
+		Users:     buildSetupUsers(e),
+		Filters:   buildSetupFilters(e),
+		ActiveTab: activeTab,
 	}
 
+	if importSource == "excel" || importSource == "mssql" {
+		wiz := processImportWizard(e, importSource)
+		wiz.Action = "/pbx-setup/import"
+		wiz.BackURL = "/pbx-setup"
+		pageData.ImportSource = importSource
+		pageData.Wizard = wiz
+	}
+
+	return pageData
+}
+
+func handlePbxSetup(e *core.RequestEvent) error {
+	if err := requireSuperAdmin(e); err != nil {
+		return err
+	}
+	pageData := buildPbxSetupPageData(e, "global", "")
 	e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	return templates.ExecuteTemplate(e.Response, "pbxsetup.html", pageData)
+}
+
+// handleSetupImport processes the embedded import wizard (POST from the Import
+// tab on /pbx-setup) and re-renders the hub with the Import tab active.
+func handleSetupImport(e *core.RequestEvent) error {
+	if err := requireSuperAdmin(e); err != nil {
+		return err
+	}
+	source := e.Request.FormValue("source")
+	if source != "excel" && source != "mssql" {
+		source = "excel"
+	}
+	pageData := buildPbxSetupPageData(e, "import", source)
+	e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
+	return templates.ExecuteTemplate(e.Response, "pbxsetup.html", pageData)
+}
+
+// buildSetupFilters builds tabulator data for _filters collection (Views tab).
+func buildSetupFilters(e *core.RequestEvent) *views.TabulatorPageData {
+	data, err := buildTabulatorData(e, "_filters", nil)
+	if err != nil {
+		return nil
+	}
+	data.SetupLinks = true
+	return data
 }
 
 // --- Collection API rules ---
@@ -1542,15 +1647,19 @@ func buildJsonSection(e *core.RequestEvent, collection *core.Collection, record 
 		sec.Fields = []views.JsonFormField{
 			{Key: "pageTitle", Label: "Page title", Type: "text", Value: vc.PageTitle},
 			{Key: "collectionDescr", Label: "Collection description", Type: "text", Value: vc.CollectionDescr},
-			{Key: "columnTitles", Label: "Column titles (comma-separated)", Type: "text", Value: vc.ColumnTitles},
-			{Key: "columnOrder", Label: "Column order", Type: "fieldMulti", FieldOptions: fieldMultiFromCSV(targetFields, vc.ColumnOrder)},
 			{Key: "filter", Label: "Filter expression", Type: "text", Value: vc.Filter},
 			{Key: "columnSorting", Label: "Column sorting", Type: "bool", Checked: vc.ColumnSorting},
 			{Key: "searchBox", Label: "Search box", Type: "bool", Checked: vc.SearchBox},
 			{Key: "pagination", Label: "Pagination", Type: "bool", Checked: vc.Pagination},
 			{Key: "displaySystemCol", Label: "Display system columns", Type: "bool", Checked: vc.DisplaySystemCol},
-			{Key: "columns", Label: "Columns", Type: "columns", FieldOptions: columnsFromConfig(vc.Columns), Options: targetFields},
+			{Key: "columns", Label: "Table columns", Type: "columnPicker", FieldOptions: columnsFromConfig2(targetFields, vc), TargetFields: targetFields},
 		}
+
+		// Keep legacy scalar fields in sync so older consumers still work.
+		sec.Fields = append(sec.Fields,
+			views.JsonFormField{Key: "columnTitles", Label: "Column titles (comma-separated)", Type: "text", Value: vc.ColumnTitles},
+			views.JsonFormField{Key: "columnOrder", Label: "Column order (legacy)", Type: "fieldMulti", FieldOptions: fieldMultiFromCSV(targetFields, vc.ColumnOrder)},
+		)
 	case "_form":
 		fv := parseViewForm(record)
 		sec.Fields = []views.JsonFormField{
@@ -1560,6 +1669,7 @@ func buildJsonSection(e *core.RequestEvent, collection *core.Collection, record 
 			{Key: "formLayout", Label: "Form layout", Type: "text", Value: fv.FormLayout},
 			{Key: "columnOrder", Label: "Column order", Type: "fieldMulti", FieldOptions: fieldMultiFromCSV(targetFields, fv.ColumnOrder)},
 			{Key: "displaySystemCol", Label: "Display system columns", Type: "bool", Checked: fv.DisplaySystemCol},
+			{Key: "layout", Label: "Form layout grid", Type: "formLayoutGrid", LayoutRows: layoutRowsFromConfig(fv, targetFields), TargetFields: targetFields},
 		}
 	case "_mssql":
 		mc := parseMssqlConfig(record)
@@ -1644,6 +1754,64 @@ func columnsFromConfig(cols []views.ViewColumn) []views.FieldOpt {
 	return opts
 }
 
+// columnsFromConfig2 builds the column-picker rows for a _views _tabulator
+// config. One row per target-collection field, carrying visibility, title,
+// sortable/searchable flags and 1-based display order.
+func columnsFromConfig2(targetFields []string, vc views.ViewTabulatorConfig) []views.FieldOpt {
+	// Map field -> existing column config (keyed by field name).
+	byField := map[string]*views.ViewColumn{}
+	for i := range vc.Columns {
+		c := &vc.Columns[i]
+		byField[c.Field] = c
+	}
+	opts := make([]views.FieldOpt, 0, len(targetFields))
+	for i, fname := range targetFields {
+		opt := views.FieldOpt{
+			Index:   i + 1,
+			Name:    fname,
+			Label:   fname,
+			Checked: byField[fname] != nil,
+		}
+		if c, ok := byField[fname]; ok {
+			opt.Label = c.Title
+			opt.ColumnSortable = c.Sortable
+			opt.ColumnSearchable = c.Searchable
+		}
+		opt.ColumnOrder = i + 1
+		opts = append(opts, opt)
+	}
+	return opts
+}
+
+// layoutRowsFromConfig converts a _form layout (0-based indices into
+// targetFields, grouped into rows then columns) into visual LayoutRows.
+func layoutRowsFromConfig(fv views.ViewFormConfig, targetFields []string) []views.LayoutRow {
+	if len(fv.Layout) == 0 {
+		return nil
+	}
+	rows := make([]views.LayoutRow, 0, len(fv.Layout))
+	for _, r := range fv.Layout {
+		lr := views.LayoutRow{}
+		for _, col := range r {
+			for _, idx := range col {
+				if idx < 0 || idx >= len(targetFields) {
+					continue
+				}
+				field := targetFields[idx]
+				label := field
+				if fv.Labels != nil {
+					if l, ok := fv.Labels[field]; ok {
+						label = l
+					}
+				}
+				lr.Cells = append(lr.Cells, views.LayoutCell{Field: field, Label: label})
+			}
+		}
+		rows = append(rows, lr)
+	}
+	return rows
+}
+
 // mappingFromConfig converts the _mssql mapping into dynamic mapping rows.
 func mappingFromConfig(mapping []views.MssqlMapping) []views.FieldOpt {
 	opts := make([]views.FieldOpt, 0, len(mapping))
@@ -1651,6 +1819,16 @@ func mappingFromConfig(mapping []views.MssqlMapping) []views.FieldOpt {
 		opts = append(opts, views.FieldOpt{Index: i + 1, Name: m.PBField, Label: m.DBField})
 	}
 	return opts
+}
+
+// indexOf returns the index of needle in hay, or -1 if absent.
+func indexOf(hay []string, needle string) int {
+	for i, s := range hay {
+		if s == needle {
+			return i
+		}
+	}
+	return -1
 }
 
 // jsonValueFromSetupForm reconstructs the JSON string for a record JSON field
@@ -1781,6 +1959,97 @@ func jsonValueFromSetupForm(e *core.RequestEvent, collection *core.Collection, f
 				delete(existing, ff.Key)
 			} else {
 				existing[ff.Key] = mapping
+			}
+		case "columnPicker":
+			// One row per target field; each row contributes show/title/sortable/
+			// searchable/order. Build []ViewColumn ordered by display order.
+			cols := []views.ViewColumn{}
+			type colEnt struct {
+				order   int
+				title   string
+				sortable   bool
+				searchable bool
+			}
+			byField := map[string]*colEnt{}
+			for _, opt := range ff.FieldOptions {
+				suffix := "_" + strconv.Itoa(opt.Index)
+				if e.Request.FormValue(key+"_show"+suffix) != "on" {
+					continue
+				}
+				order := opt.Index
+				if ov := e.Request.FormValue(key + "_order" + suffix); ov != "" {
+					if n, err := strconv.Atoi(ov); err == nil && n > 0 {
+						order = n
+					}
+				}
+				ent := &colEnt{
+					order:      order,
+					title:      e.Request.FormValue(key + "_title" + suffix),
+					sortable:   e.Request.FormValue(key+"_sortable"+suffix) == "on",
+					searchable: e.Request.FormValue(key+"_searchable"+suffix) == "on",
+				}
+				if ent.title == "" {
+					ent.title = opt.Name
+				}
+				byField[opt.Name] = ent
+			}
+			fields := make([]string, 0, len(byField))
+			for f := range byField {
+				fields = append(fields, f)
+			}
+			sort.Slice(fields, func(a, b int) bool { return byField[fields[a]].order < byField[fields[b]].order })
+			for _, f := range fields {
+				e := byField[f]
+				cols = append(cols, views.ViewColumn{Field: f, Title: e.title, Sortable: e.sortable, Searchable: e.searchable})
+			}
+			if len(cols) == 0 {
+				delete(existing, ff.Key)
+			} else {
+				existing[ff.Key] = cols
+			}
+		case "formLayoutGrid":
+			// Cells are submitted as key_row_{r}_field / key_row_{r}_label,
+			// where _field is repeated per cell in a row. Rebuild layout (rows of
+			// 0-based indices) and labels map from the target fields.
+			layout := [][][]int{}
+			labels := map[string]string{}
+			for r := 0; ; r++ {
+				fieldsInRow := e.Request.Form[key + "_row_" + strconv.Itoa(r) + "_field"]
+				labelsInRow := e.Request.Form[key + "_row_" + strconv.Itoa(r) + "_label"]
+				if len(fieldsInRow) == 0 {
+					break
+				}
+				rowCells := [][]int{}
+				for i, fname := range fieldsInRow {
+					if fname == "" {
+						continue
+					}
+					idx := indexOf(ff.TargetFields, fname)
+					if idx < 0 {
+						continue
+					}
+					rowCells = append(rowCells, []int{idx})
+					lbl := ""
+					if i < len(labelsInRow) {
+						lbl = labelsInRow[i]
+					}
+					if lbl != "" {
+						labels[fname] = lbl
+					}
+				}
+				if len(rowCells) > 0 {
+					layout = append(layout, rowCells)
+				}
+			}
+			if len(layout) == 0 {
+				delete(existing, "layout")
+			} else {
+				existing["layout"] = layout
+			}
+			if len(labels) > 0 {
+				existing["labels"] = labels
+			} else {
+				delete(existing, "labels")
 			}
 		}
 	}
@@ -3405,6 +3674,65 @@ func handleAgentChatStream(e *core.RequestEvent) error {
 	}
 	return nil
 }
+
+// handleViewChatStream is the SSE endpoint for the AI agent embedded in
+// tabular/form views. It creates a ViewAgent scoped to a single collection
+// with a restricted tool set (query, insert, update, delete records).
+func handleViewChatStream(e *core.RequestEvent) error {
+	var req struct {
+		Messages   []pbai.ChatMessage `json:"messages"`
+		Collection string             `json:"collection"`
+		ConfigName string             `json:"configName"`
+		FormFields []string           `json:"formFields"` // editable field names (form view only)
+		RecordID   string             `json:"recordID"`   // existing record ID (edit mode)
+		LabelMap   map[string]string  `json:"labelMap"`   // precomputed label→field map (frontend)
+	}
+	if err := json.NewDecoder(e.Request.Body).Decode(&req); err != nil {
+		return e.BadRequestError("Invalid request body", err)
+	}
+
+	cfg := getAgentConfig(e)
+	if !cfg.Enabled || cfg.BaseURL == "" || cfg.Model == "" {
+		return e.BadRequestError("The AI agent is not configured. Ask a superuser to set it up in /pbx-setup → AI agent.", nil)
+	}
+
+	info, err := agentRequestInfo(e)
+	if err != nil {
+		return e.InternalServerError("Failed to resolve request context", err)
+	}
+
+	fl, ok := e.Response.(http.Flusher)
+	if !ok {
+		return e.InternalServerError("Streaming not supported", nil)
+	}
+
+	e.Response.Header().Set("Content-Type", "text/event-stream")
+	e.Response.Header().Set("Cache-Control", "no-cache")
+	e.Response.Header().Set("X-Accel-Buffering", "no")
+	e.Response.WriteHeader(http.StatusOK)
+
+	writeEvent := func(ev pbai.StreamEvent) {
+		b, merr := json.Marshal(ev)
+		if merr != nil {
+			return
+		}
+		fmt.Fprintf(e.Response, "data: %s\n\n", b)
+		fl.Flush()
+	}
+
+	agent := pbai.NewViewAgent(e.App, info, cfg, req.Collection, req.ConfigName)
+	agent.FormFields = req.FormFields
+	agent.RecordID = req.RecordID
+	if len(req.LabelMap) > 0 {
+		agent.LabelToField = req.LabelMap
+	}
+	_, err = agent.RunStream(e.Request.Context(), req.Messages, nil, writeEvent)
+	if err != nil {
+		writeEvent(pbai.StreamEvent{Type: "error", Message: "Agent failed: " + err.Error()})
+	}
+	return nil
+}
+
 // handleAgentConfirm executes or rejects a pending agent write action.
 func handleAgentConfirm(e *core.RequestEvent) error {
 	var req struct {
@@ -3746,6 +4074,8 @@ func handlePbxConfigDelete(e *core.RequestEvent) error {
 // --- Import wizard (create collection from Excel / MSSQL) ---
 
 func renderImportWizard(e *core.RequestEvent, data views.ImportWizardPageData) error {
+	data.Action = "/pbx-config/import-" + data.Source
+	data.BackURL = "/pbx-config/import-" + data.Source
 	e.Response.Header().Set("Content-Type", "text/html; charset=utf-8")
 	return templates.ExecuteTemplate(e.Response, "import-wizard.html", data)
 }
@@ -3754,7 +4084,13 @@ func handleImportWizard(e *core.RequestEvent, source string) error {
 	if err := requireSuperAdmin(e); err != nil {
 		return err
 	}
+	return renderImportWizard(e, processImportWizard(e, source))
+}
 
+// processImportWizard runs one step of the collection import wizard and returns
+// the populated page data. It is shared by the standalone /pbx-config/import-*
+// pages and the embedded import tab on /pbx-setup.
+func processImportWizard(e *core.RequestEvent, source string) views.ImportWizardPageData {
 	action := e.Request.FormValue("action")
 	step := 1
 	page := views.ImportWizardPageData{
@@ -3775,17 +4111,17 @@ func handleImportWizard(e *core.RequestEvent, source string) error {
 
 			if page.Name == "" {
 				page.Message = i18n.T(getLangCode(e.App, e.Request), "wizard.nameRequired")
-				return renderImportWizard(e, page)
+				return page
 			}
 			cols, err := pbexcel.IntrospectSheet(fileName, sheet)
 			if err != nil {
 				page.Message = i18n.T(getLangCode(e.App, e.Request), "wizard.readExcelFailed") + err.Error()
-				return renderImportWizard(e, page)
+				return page
 			}
 			page.Columns = wizardColumnsToDetected(cols)
 			if len(page.Columns) == 0 {
 				page.Message = i18n.T(getLangCode(e.App, e.Request), "wizard.noColumnsExcel") + sheet
-				return renderImportWizard(e, page)
+				return page
 			}
 			step = 2
 		} else {
@@ -3798,16 +4134,16 @@ func handleImportWizard(e *core.RequestEvent, source string) error {
 
 			if page.Name == "" {
 				page.Message = i18n.T(getLangCode(e.App, e.Request), "wizard.nameRequired")
-				return renderImportWizard(e, page)
+				return page
 			}
 			cols, err := pbmssql.IntrospectTable(dsn, table)
 			if err != nil {
 				page.Message = i18n.T(getLangCode(e.App, e.Request), "wizard.introspectFailed") + err.Error()
-				return renderImportWizard(e, page)
+				return page
 			}
 			if len(cols) == 0 {
 				page.Message = i18n.T(getLangCode(e.App, e.Request), "wizard.noColumnsMssql") + table
-				return renderImportWizard(e, page)
+				return page
 			}
 			for _, c := range cols {
 				page.Columns = append(page.Columns, views.WizardColumn{
@@ -3834,7 +4170,7 @@ func handleImportWizard(e *core.RequestEvent, source string) error {
 		page.Columns = parseWizardColumns(e)
 		if page.Name == "" {
 			page.Message = i18n.T(getLangCode(e.App, e.Request), "wizard.nameRequired")
-			return renderImportWizard(e, page)
+			return page
 		}
 
 		// normalize field/collection names so creation and import stay consistent
@@ -3858,13 +4194,13 @@ func handleImportWizard(e *core.RequestEvent, source string) error {
 		}
 		if !anyField {
 			page.Message = i18n.T(getLangCode(e.App, e.Request), "wizard.noColumnsSelected")
-			return renderImportWizard(e, page)
+			return page
 		}
 
 		created, err := createCollectionFromWizard(e, page)
 		if err != nil {
 			page.Message = i18n.T(getLangCode(e.App, e.Request), "wizard.createFailed") + err.Error()
-			return renderImportWizard(e, page)
+			return page
 		}
 
 		if page.Import {
@@ -3878,7 +4214,7 @@ func handleImportWizard(e *core.RequestEvent, source string) error {
 				if ierr := pbexcel.ImportFromExcel(e.App, page.FileName, page.Sheet, page.Name, "insert", headerMap); ierr != nil {
 					page.Message = i18n.T(getLangCode(e.App, e.Request), "wizard.importFailed") + ierr.Error()
 					page.Created = created
-					return renderImportWizard(e, page)
+					return page
 				}
 			} else {
 				var mapping []struct {
@@ -3896,7 +4232,7 @@ func handleImportWizard(e *core.RequestEvent, source string) error {
 				if ierr := pbmssql.ImportFromMSSQL(e.App, page.Name, page.DSN, page.Table, "insert", mapping); ierr != nil {
 					page.Message = i18n.T(getLangCode(e.App, e.Request), "wizard.importFailed") + ierr.Error()
 					page.Created = created
-					return renderImportWizard(e, page)
+					return page
 				}
 			}
 		}
@@ -3906,7 +4242,7 @@ func handleImportWizard(e *core.RequestEvent, source string) error {
 	}
 
 	page.Step = step
-	return renderImportWizard(e, page)
+	return page
 }
 
 func wizardColumnsToDetected(cols []pbexcel.DetectedColumn) []views.WizardColumn {

@@ -7,11 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	openai "github.com/sashabaranov/go-openai"
+	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 
 	"pbx/views"
@@ -75,6 +77,16 @@ type Agent struct {
 
 	// maxIterations bounds the tool-calling loop.
 	maxIterations int
+
+	// View-agent mode: when allowedTools is non-nil, only the listed tools
+	// are offered to the LLM and viewSystemMessages() is used instead of
+	// systemMessages(). nil = full agent (existing behaviour).
+	allowedTools   []string
+	viewCollection string
+	viewConfigName string
+	LabelToField   map[string]string // label → field name (for view agent)
+	FormFields     []string          // editable field names (form-fill mode)
+	RecordID       string            // existing record ID (form-fill mode)
 }
 
 // NewAgent creates an agent bound to the caller's request context.
@@ -84,6 +96,105 @@ func NewAgent(app core.App, info *core.RequestInfo, cfg views.AgentConfig) *Agen
 		a.Info = &core.RequestInfo{Context: "ai"}
 	}
 	return a
+}
+
+// NewViewAgent creates an agent scoped to a single collection view.
+// Only the tools listed in allowedTools are offered to the LLM.
+func NewViewAgent(app core.App, info *core.RequestInfo, cfg views.AgentConfig, collection, configName string) *Agent {
+	a := NewAgent(app, info, cfg)
+	a.allowedTools = []string{"query_records", "insert_records", "update_records", "delete_records"}
+	a.viewCollection = collection
+	a.viewConfigName = configName
+	a.LabelToField = buildLabelToField(app, collection, configName)
+	return a
+}
+
+// buildLabelToField reads the _views config and returns a label→field map.
+// It combines tabulator column titles and form labels so the agent can
+// translate user-friendly labels (e.g. "Cena") to real field names (e.g. "prodPrice").
+func buildLabelToField(app core.App, collName, configName string) map[string]string {
+	out := map[string]string{}
+
+	recs, err := app.FindRecordsByFilter("_views", "_name = {:name}", "", 1, 0, dbx.Params{"name": configName})
+	if err != nil || len(recs) == 0 {
+		return out
+	}
+	rec := recs[0]
+
+	// --- tabulator column titles ---
+	if tabJSON := rec.GetString("_tabulator"); tabJSON != "" {
+		var tab struct {
+			ColumnTitles string `json:"columnTitles"`
+			ColumnOrder  string `json:"columnOrder"`
+			Columns      []struct {
+				Field string `json:"field"`
+				Title string `json:"title"`
+			} `json:"columns"`
+		}
+		if json.Unmarshal([]byte(tabJSON), &tab) == nil {
+			// Build field list for index-based lookup
+			pbColl, cerr := app.FindCachedCollectionByNameOrId(collName)
+			if cerr == nil {
+				fields := pbColl.Fields
+
+				if len(tab.Columns) > 0 {
+					// Explicit columns array
+					for _, c := range tab.Columns {
+						if c.Field != "" && c.Title != "" {
+							out[strings.TrimSpace(c.Title)] = c.Field
+						}
+					}
+				} else if tab.ColumnOrder != "" {
+					// Index-based: columnOrder maps positions to field indices,
+					// columnTitles maps positions to labels.
+					indices := strings.Split(tab.ColumnOrder, ",")
+					var titles []string
+					if tab.ColumnTitles != "" {
+						for _, t := range strings.Split(tab.ColumnTitles, ",") {
+							titles = append(titles, strings.TrimSpace(t))
+						}
+					}
+					for i, idxStr := range indices {
+						idx, e := strconv.Atoi(strings.TrimSpace(idxStr))
+						if e != nil || idx < 1 || idx > len(fields) {
+							continue
+						}
+						fieldName := fields[idx-1].GetName()
+						label := fieldName // fallback to field name
+						if i < len(titles) && titles[i] != "" {
+							label = titles[i]
+						}
+						out[label] = fieldName
+					}
+				}
+			}
+		}
+	}
+
+	// --- form labels (fallback, may overlap with tabulator titles) ---
+	if formJSON := rec.GetString("_form"); formJSON != "" {
+		var form struct {
+			FormLabels string            `json:"formLabels"`
+			Labels     map[string]string `json:"labels"`
+		}
+		if json.Unmarshal([]byte(formJSON), &form) == nil {
+			for _, pair := range strings.Split(form.FormLabels, ",") {
+				kv := strings.SplitN(strings.TrimSpace(pair), "=", 2)
+				if len(kv) == 2 && kv[0] != "" {
+					if _, exists := out[kv[1]]; !exists {
+						out[kv[1]] = kv[0] // label → field
+					}
+				}
+			}
+			for k, v := range form.Labels {
+				if _, exists := out[v]; !exists {
+					out[v] = k // label → field
+				}
+			}
+		}
+	}
+
+	return out
 }
 
 // isSuper reports whether the caller is a superuser.
@@ -187,7 +298,12 @@ func (a *Agent) RunStream(ctx context.Context, history []ChatMessage, file *File
 	}
 
 	// build the initial message list
-	messages := a.systemMessages()
+	var messages []openai.ChatCompletionMessage
+	if a.allowedTools != nil {
+		messages = a.viewSystemMessages()
+	} else {
+		messages = a.systemMessages()
+	}
 	for _, m := range history {
 		messages = append(messages, openai.ChatCompletionMessage{Role: m.Role, Content: m.Content})
 	}
@@ -217,6 +333,9 @@ func (a *Agent) RunStream(ctx context.Context, history []ChatMessage, file *File
 	}
 
 	tools := toolDefs()
+	if a.allowedTools != nil {
+		tools = filteredToolDefs(a.allowedTools)
+	}
 
 	transcript := []ChatMessage{}
 	var lastRecords []map[string]any
@@ -344,6 +463,61 @@ func (a *Agent) Confirm(ctx context.Context, actionID string, approved bool) (*C
 		return &ConfirmResult{OK: false, Message: err.Error()}, nil
 	}
 	return &ConfirmResult{OK: true, Message: resultText}, nil
+}
+
+// viewSystemMessages builds a focused system prompt for the view-embedded agent.
+func (a *Agent) viewSystemMessages() []openai.ChatCompletionMessage {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("You are embedded in a data view of collection %q (config: %q). ", a.viewCollection, a.viewConfigName))
+	b.WriteString("You can read, search, insert, update and delete records in this collection.\n\n")
+	b.WriteString("Available tools:\n")
+	b.WriteString("- Read (no confirmation): query_records\n")
+	b.WriteString("- Write (confirmation required): insert_records, update_records, delete_records\n\n")
+	b.WriteString("Rules:\n")
+	b.WriteString("- Answer in the same language the user writes in.\n")
+	b.WriteString("- For search/filter requests: call query_records — the UI displays returned records directly as table rows. Keep text answers minimal.\n")
+	b.WriteString("- For write requests: call the appropriate tool — the system will ask for user confirmation before executing.\n")
+	b.WriteString("- Use the provided tools to gather facts; do not invent record contents.\n")
+	b.WriteString("- Copy collection names exactly as they appear in tool output.\n")
+	b.WriteString("- Enforce collection rules; respect the caller's permissions.\n")
+	b.WriteString("- If a tool reports access is denied, tell the user they lack permission.\n")
+	b.WriteString("- Keep final answers concise but complete.\n")
+	b.WriteString("- Sort by column labels from the view config (e.g. \"Name,-Date\") or by field names.\n")
+
+	if len(a.LabelToField) > 0 {
+		b.WriteString("\nColumn label → field name mapping:\n")
+		b.WriteString("When the user refers to a column by its visible label, translate it to the real field name before calling a tool.\n")
+		for label, field := range a.LabelToField {
+			b.WriteString(fmt.Sprintf("- %q → %s\n", label, field))
+		}
+	}
+
+	if len(a.FormFields) > 0 {
+		b.WriteString("\nThis view has an editable form with these fields: ")
+		b.WriteString(strings.Join(a.FormFields, ", "))
+		b.WriteString(".\n")
+		if a.RecordID == "" {
+			b.WriteString("When the user asks to CREATE a new record, do NOT call insert_records. ")
+			b.WriteString("Instead, respond with a single JSON object (no other text) like:\n")
+			b.WriteString("```json\n{\"formFill\": {\"fieldName\": \"value\", ...}}\n```\n")
+			b.WriteString("Use only field names from the list above and include all values the user mentioned.\n")
+		} else {
+			b.WriteString(fmt.Sprintf("When the user asks to EDIT record %s, do NOT call update_records or insert_records. ", a.RecordID))
+			b.WriteString("Instead, respond with a single JSON object (no other text) containing ONLY the changed fields:\n")
+			b.WriteString("```json\n{\"formFill\": {\"fieldName\": \"newValue\"}}\n```\n")
+			b.WriteString("Use only field names from the list above.\n")
+		}
+		b.WriteString("The UI will populate the form for the user to review and submit themselves.\n")
+		b.WriteString("For queries and deletions, continue using the normal tools.\n")
+	}
+
+	if a.isSuper() {
+		b.WriteString("\nThe current user is a superuser with full access to this collection.\n")
+	} else {
+		b.WriteString("\nThe current user is a regular signed-in user: reads and writes are restricted by the collection rules.\n")
+	}
+
+	return []openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleSystem, Content: b.String()}}
 }
 
 // systemMessages builds the system prompt describing the agent's role and tools.

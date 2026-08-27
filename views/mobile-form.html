@@ -112,7 +112,7 @@
     }
     document.getElementById('runActionBtn').addEventListener('click', function() {
         var actionId = document.getElementById('actionSelect').value;
-        if (!actionId) { alert('Select an action first.'); return; }
+        if (!actionId) { pbxToast('warning', 'Select an action first.'); return; }
         var btn = this;
         btn.disabled = true;
         fetch('/actions/execute', {
@@ -124,19 +124,14 @@
         .then(function(resp) {
             var res = resp.body || {};
             document.getElementById('resultOutput').textContent = (res.output || []).join('\n');
-            var status = document.getElementById('resultStatus');
-            status.style.background = res.ok === false ? 'var(--danger-soft)' : 'var(--success-soft)';
-            status.style.color = res.ok === false ? 'var(--danger-strong)' : 'var(--success-strong)';
-            status.textContent = res.ok === false
-                ? ('Error: ' + (res.error || 'unknown error'))
-                : ('Success' + (res.affected ? ' — ' + res.affected + ' record(s) affected' : ''));
+            alertEl(document.getElementById('resultStatus'), res.ok === false ? 'danger' : 'success',
+                res.ok === false
+                    ? ('Error: ' + (res.error || 'unknown error'))
+                    : ('Success' + (res.affected ? ' — ' + res.affected + ' record(s) affected' : '')));
             document.getElementById('resultModal').style.display = 'flex';
         })
         .catch(function(err) {
-            var status = document.getElementById('resultStatus');
-            status.style.background = 'var(--danger-soft)';
-            status.style.color = 'var(--danger-strong)';
-            status.textContent = 'Error: ' + String(err);
+            alertEl(document.getElementById('resultStatus'), 'danger', 'Error: ' + String(err));
             document.getElementById('resultModal').style.display = 'flex';
         })
         .finally(function() { btn.disabled = false; });
@@ -146,6 +141,34 @@
     }
     loadActions();
     {{end}}
+
+    function _esc(s) {
+        if (s == null) return "";
+        var d = document.createElement("div"); d.textContent = String(s); return d.innerHTML;
+    }
+    function pbxToast(kind, msg, persist) {
+        var host = document.querySelector(".toast-host");
+        if (!host) { host = document.createElement("div"); host.className = "toast-host"; document.body.appendChild(host); }
+        var t = document.createElement("div");
+        t.className = "alert alert-" + kind + " alert-toast mount";
+        t.setAttribute("role", "alert");
+        var ico = { success: "&#10004;", danger: "&#10007;", warning: "&#9888;", info: "&#8505;" }[kind] || "&#8505;";
+        t.innerHTML = '<span class="a-ico">' + ico + '</span><span class="a-body">' + _esc(msg) + '</span>';
+        var dismiss = function() { t.classList.add("leaving"); setTimeout(function() { if (t.parentNode) t.parentNode.removeChild(t); }, 200); };
+        t.addEventListener("click", dismiss);
+        host.appendChild(t);
+        var listed = host.querySelectorAll(".alert");
+        while (listed.length > 3) { listed[0].parentNode.removeChild(listed[0]); }
+        if (!persist) setTimeout(dismiss, 4500);
+        return t;
+    }
+    function alertEl(el, kind, msg) {
+        var ico = { success: "&#10004;", danger: "&#10007;", warning: "&#9888;", info: "&#8505;" }[kind] || "&#8505;";
+        el.className = "alert alert-" + kind;
+        el.setAttribute("role", "alert");
+        el.innerHTML = '<span class="a-ico">' + ico + '</span><span class="a-body">' + _esc(msg) + '</span>';
+        return el;
+    }
     </script>
 
     {{if .ID}}

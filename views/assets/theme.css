@@ -160,6 +160,101 @@ a, .user-bar .name, .user-bar a, .group-links a, .form-col .field-value a,
 .badge-on { background: var(--success-soft); color: var(--success-strong); }
 .badge-off { background: var(--accent-soft); color: var(--muted); }
 
+/* alerts — shared semantic alert boxes (success / warning / danger / info).
+   All colors derive from the theme tokens above, so both themes stay consistent. */
+.alert {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 11px 14px;
+    border-radius: 8px;
+    font-size: .9rem;
+    line-height: 1.45;
+    margin-bottom: 12px;
+    border: 1px solid;
+    border-left-width: 4px;
+}
+.alert .a-ico { flex-shrink: 0; font-size: 1.05rem; line-height: 1; }
+.alert .a-body { flex: 1; min-width: 0; }
+.alert .a-close {
+    flex-shrink: 0;
+    background: none;
+    border: none;
+    color: inherit;
+    opacity: .6;
+    cursor: pointer;
+    font-size: 1.1rem;
+    line-height: 1;
+    padding: 0 2px;
+}
+.alert .a-close:hover { opacity: 1; }
+.alert-success { background: var(--success-soft); color: var(--success-strong); border-color: var(--success); }
+.alert-warning { background: var(--warning-soft); color: var(--warning-strong); border-color: var(--warning); }
+.alert-danger  { background: var(--danger-soft);  color: var(--danger-strong);  border-color: var(--danger); }
+.alert-info    { background: var(--accent-soft);  color: var(--text);            border-color: var(--accent); }
+
+@keyframes pbx-alert-in { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.alert.mount { animation: pbx-alert-in .18s ease-out; }
+
+/* confirm dialog — replaces native confirm(), theme-driven, centered (mobile: bottom sheet) */
+.pbx-confirm-host { position: fixed; inset: 0; z-index: 3000; pointer-events: none; }
+.pbx-confirm-overlay {
+    position: fixed; inset: 0;
+    background: var(--overlay-bg);
+    display: flex; align-items: center; justify-content: center;
+    opacity: 0; transition: opacity .18s ease;
+    pointer-events: auto;
+}
+.pbx-confirm-host.mobile .pbx-confirm-overlay { align-items: flex-end; }
+.pbx-confirm-overlay.show { opacity: 1; }
+.pbx-confirm {
+    background: var(--modal-bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    width: 92%; max-width: 400px;
+    padding: 20px;
+    box-shadow: 0 10px 40px rgba(0,0,0,.25);
+    transform: translateY(8px) scale(.98);
+    transition: transform .18s ease;
+}
+.pbx-confirm-host.mobile .pbx-confirm { border-radius: 16px 16px 0 0; }
+.pbx-confirm-overlay.show .pbx-confirm { transform: none; }
+.pbx-confirm-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }
+.pbx-confirm-ico { font-size: 1.3rem; line-height: 1; flex-shrink: 0; }
+.pbx-confirm-title { font-weight: 600; font-size: 1.02rem; }
+.pbx-confirm-msg { color: var(--muted); font-size: .92rem; line-height: 1.5; margin-bottom: 18px; word-wrap: break-word; }
+.pbx-confirm-actions { display: flex; gap: 10px; justify-content: flex-end; }
+.pbx-confirm-actions button { padding: 8px 18px; border: none; border-radius: 6px; cursor: pointer; font-size: .9rem; font-weight: 600; }
+.pbx-confirm-cancel { background: var(--btn-neutral); color: #fff; }
+.pbx-confirm-cancel:hover { background: var(--btn-neutral-hover); }
+.pbx-confirm-ok.primary { background: var(--btn-primary); color: #fff; }
+.pbx-confirm-ok.primary:hover { background: var(--btn-primary-hover); }
+.pbx-confirm-ok.danger { background: var(--btn-danger); color: #fff; }
+.pbx-confirm-ok.danger:hover { background: var(--btn-danger-hover); }
+
+/* toast — floating non-blocking alert mounted top-right */
+.toast-host {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 2000;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-width: 380px;
+    pointer-events: none;
+}
+.toast-host .alert {
+    max-width: 380px;
+    box-shadow: 0 4px 16px rgba(0,0,0,.18);
+    animation: pbx-alert-in .2s ease-out;
+    cursor: pointer;
+    pointer-events: auto;
+    margin-bottom: 0;
+}
+.toast-host .alert.leaving { opacity: 0; transform: translateY(-6px); transition: opacity .2s, transform .2s; }
+
 /* buttons — theme colors, hover via !important to beat inline styles */
 .btn-green, .btn-blue { background: var(--btn-primary); color: #fff; }
 .btn-green:hover, .btn-blue:hover { background: var(--btn-primary-hover) !important; }

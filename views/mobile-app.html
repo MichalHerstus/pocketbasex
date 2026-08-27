@@ -28,7 +28,7 @@
             <div class="m-group-head">{{if .GroupIcon}}<img src="{{.GroupIcon}}">{{end}}{{.GroupLabel}}</div>
             <ul class="m-app-links">
                 {{range .Links}}
-                <li><a href="{{.URL}}">{{.Label}}</a></li>
+                <li><a href="{{.URL}}">{{.Label}}{{if .Count}} <span style="font-size:.75rem;padding:2px 8px;background:var(--accent-soft);color:var(--accent);border-radius:10px;margin-left:6px;">{{.Count}} {{plural .Count $.Lang (t $.Lang "common.recordWord") (t $.Lang "common.recordFew") (t $.Lang "common.recordMany")}}</span>{{end}}</a></li>
                 {{end}}
             </ul>
         </div>
@@ -38,6 +38,9 @@
             <div class="m-group-head">Assistent</div>
             <ul class="m-app-links">
                 <li><a href="{{.BasePath}}/ai">AI agent</a></li>
+                {{if .IsSuperAdmin}}
+                <li><a href="{{.BasePath}}/pbx-setup" class="btn" style="background:var(--btn-primary);">{{t .Lang "app.config"}}</a></li>
+                {{end}}
             </ul>
         </div>
     </div>

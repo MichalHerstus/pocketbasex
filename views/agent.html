@@ -15,9 +15,12 @@
         #chat { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
         .msg { max-width: 80%; padding: 10px 14px; border-radius: 10px; font-size: .9rem; line-height: 1.45; white-space: pre-wrap; word-wrap: break-word; }
         .msg.user { align-self: flex-end; background: var(--msg-user-bg); }
-        .msg.assistant { align-self: flex-start; background:var(--card-bg); border: 1px solid var(--input-border); }
-        .msg.tool { align-self: center; background:var(--warning-soft); border: 1px solid var(--warning); font-size: .85rem; }
-        .msg.err { align-self: center; background:var(--danger-soft); border: 1px solid var(--danger); color:var(--danger); }
+        .msg.assistant { align-self: flex-start; background:var(--card-bg); border: 1px solid var(--input-border); min-height: 4.35em; }
+        .msg.tool, .msg.err { align-self: center; border-left-width: 4px; display: flex; align-items: center; gap: 8px; max-width: 88%; font-size: .85rem; }
+        .msg.tool .msg-ico, .msg.err .msg-ico { flex-shrink: 0; line-height: 1; }
+        .msg.tool { background:var(--warning-soft); border: 1px solid var(--warning); color: var(--warning-strong); }
+        .msg.err { background:var(--danger-soft); border: 1px solid var(--danger); color:var(--danger-strong); }
+        .msg.tool .msg-body, .msg.err .msg-body { white-space: pre-wrap; word-wrap: break-word; }
         .msg code { background:var(--readonly-bg); border: 1px solid var(--input-border); border-radius: 4px; padding: 1px 5px; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: .85em; }
         .msg.tbl { align-self: flex-start; max-width: 95%; padding: 0; overflow: auto; max-height: 320px; }
         .msg.tbl table { width: max-content; min-width: 100%; border-collapse: collapse; background: var(--card-bg); border-radius: 8px; font-size: .85rem; }
@@ -125,6 +128,8 @@
             div.className = 'msg ' + role;
             if (role === 'assistant') {
                 div.innerHTML = md(text);
+            } else if (role === 'tool' || role === 'err') {
+                div.innerHTML = '<span class="msg-ico">' + (role === 'err' ? '&#10007;' : '&#9888;') + '</span><span class="msg-body">' + esc(text) + '</span>';
             } else {
                 div.textContent = text;
             }
@@ -137,6 +142,23 @@
         // markdown transform, so model output can never inject markup).
         function esc(s) {
             return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        function pbxToast(kind, msg, persist) {
+            var host = document.querySelector(".toast-host");
+            if (!host) { host = document.createElement("div"); host.className = "toast-host"; document.body.appendChild(host); }
+            var t = document.createElement("div");
+            t.className = "alert alert-" + kind + " alert-toast mount";
+            t.setAttribute("role", "alert");
+            var ico = { success: "&#10004;", danger: "&#10007;", warning: "&#9888;", info: "&#8505;" }[kind] || "&#8505;";
+            t.innerHTML = '<span class="a-ico">' + ico + '</span><span class="a-body">' + esc(msg) + '</span>';
+            var dismiss = function() { t.classList.add("leaving"); setTimeout(function() { if (t.parentNode) t.parentNode.removeChild(t); }, 200); };
+            t.addEventListener("click", dismiss);
+            host.appendChild(t);
+            var listed = host.querySelectorAll(".alert");
+            while (listed.length > 3) { listed[0].parentNode.removeChild(listed[0]); }
+            if (!persist) setTimeout(dismiss, 4500);
+            return t;
         }
 
         // md renders a safe subset of markdown in already-escaped text:
@@ -214,7 +236,7 @@
             var f = input.files[0];
             if (!f) return;
             if (f.size > 8 * 1024 * 1024) {
-                alert('File too large (max 8 MB).');
+                pbxToast('warning', 'File too large (max 8 MB).');
                 input.value = '';
                 return;
             }
@@ -240,7 +262,7 @@
             var text = input.value.trim();
             if (!text && !fileData) return;
             if (pendingAction) {
-                alert('Please confirm or reject the pending action first.');
+                pbxToast('warning', 'Please confirm or reject the pending action first.');
                 return;
             }
             if (busy) return;

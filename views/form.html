@@ -41,6 +41,24 @@
         .form-col .file-link:hover { background:var(--th-hover); }
         .field-icon { display: inline-flex; align-items: center; }
         .section-title { margin: 24px 0 12px 0; font-size: 1.1rem; font-weight: 600; color:var(--text); border-bottom:2px solid var(--border); padding-bottom: 6px; }
+        .ai-bar { display:flex; align-items:center; gap:8px; margin-bottom:12px; padding:8px 12px;
+                  background:var(--card-bg); border:2px solid var(--accent); border-radius:8px; }
+        .ai-bar input { flex:1; padding:8px 12px; border:1px solid var(--input-border); border-radius:6px;
+                        font-size:.9rem; outline:none; background:var(--body-bg); color:var(--text); }
+        .ai-bar input:focus { border-color:var(--accent); }
+        .ai-icon { font-size:1.1rem; }
+        .ai-status { padding:6px 12px; margin-bottom:8px; font-size:.85rem; color:var(--muted);
+                     background:var(--card-bg); border-radius:6px; border-left:3px solid var(--accent); display:flex; align-items:center; gap:8px; }
+        .ai-spinner { display:inline-block; width:14px; height:14px; border:2px solid var(--accent); border-top-color:transparent;
+                      border-radius:50%; animation:ai-spin .6s linear infinite; flex-shrink:0; }
+        @keyframes ai-spin { to { transform:rotate(360deg); } }
+        .ai-status.done { border-left-color:var(--success); }
+        .ai-status.err  { border-left-color:var(--danger); }
+        .ai-confirm { padding:10px 14px; margin-bottom:12px; background:var(--accent-soft);
+                      border:1px solid var(--accent); border-radius:8px; display:flex; align-items:center; gap:12px; }
+        .ai-confirm .ai-confirm-text { flex:1; font-size:.9rem; }
+        .modal-overlay { display:none; position:fixed; z-index:1000; left:0; top:0; width:100%; height:100%; background:var(--overlay-bg); align-items:center; justify-content:center; }
+        .modal-overlay.open { display:flex; }
     </style>
     <link rel="stylesheet" href="/assets/theme.css">
     <script src="/api/lang/{{.Lang}}/catalog.js"></script>
@@ -58,6 +76,14 @@
         {{end}}
         <button type="button" onclick="goBack('{{.BasePath}}/app')" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;margin-left:auto;">{{t .Lang "common.close"}}</button>
     </div>
+
+    <div class="ai-bar" id="aiBar">
+        <span class="ai-icon">&#10024;</span>
+        <input type="text" id="aiInput" placeholder="{{t .Lang "ai.placeholder"}}" autocomplete="off">
+        <button id="aiSendBtn" class="btn-sm btn-primary">AI</button>
+    </div>
+    <div id="aiStatus" class="ai-status" style="display:none;"></div>
+    <div id="aiConfirm" class="ai-confirm" style="display:none;"></div>
 
     {{if .Description}}<p>{{.Description}}</p>{{end}}
 
@@ -222,7 +248,30 @@
     </form>
 
     {{if .ID}}
-    <div class="modal-overlay" id="actionResultModal" style="display:none;position:fixed;z-index:1000;left:0;top:0;width:100%;height:100%;background:var(--overlay-bg);align-items:center;justify-content:center;">
+    <div class="modal-overlay" id="aiSearchModal">
+        <div style="background:var(--modal-bg);border-radius:10px;max-width:700px;width:95%;max-height:80vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 4px 24px rgba(0,0,0,.2);">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--border);">
+                <h3 style="margin:0;font-size:1.1rem;">{{t .Lang "ai.searchTitle"}}</h3>
+                <button onclick="closeAISearchModal()" style="background:none;border:none;font-size:1.4rem;cursor:pointer;color:var(--disabled-text);padding:0 6px;">&times;</button>
+            </div>
+            <div id="aiSearchBody" style="padding:16px 20px;overflow-y:auto;flex:1;"></div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="aiConfirmModal">
+        <div style="background:var(--modal-bg);border-radius:10px;max-width:500px;width:95%;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 4px 24px rgba(0,0,0,.2);">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--border);">
+                <h3 style="margin:0;font-size:1.1rem;">{{t .Lang "ai.confirmTitle"}}</h3>
+            </div>
+            <div id="aiConfirmBody" style="padding:16px 20px;font-size:.9rem;"></div>
+            <div style="padding:12px 20px;display:flex;justify-content:flex-end;gap:8px;border-top:1px solid var(--border);">
+                <button onclick="confirmAIApi(false)" style="padding:8px 20px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:.9rem;">{{t .Lang "ai.reject"}}</button>
+                <button onclick="confirmAIApi(true)" style="padding:8px 20px;background:var(--btn-green);color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:.9rem;">{{t .Lang "ai.approve"}}</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="actionResultModal" class="modal-overlay">
         <div style="background:var(--modal-bg);border-radius:10px;max-width:80vw;max-height:80vh;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 4px 24px rgba(0,0,0,.2);">
             <div style="display:flex;align-items:center;justify-content:space-between;padding:14px 20px;border-bottom:1px solid var(--border);">
                 <h3 style="margin:0;font-size:1.1rem;">{{t .Lang "tabulator.actionResult"}}</h3>
@@ -301,7 +350,7 @@
 
     document.getElementById('runActionBtn').addEventListener('click', function() {
         var actionId = document.getElementById('actionSelect').value;
-        if (!actionId) { alert(_t('tabulator.selectActionFirst')); return; }
+        if (!actionId) { pbxToast('warning', _t('tabulator.selectActionFirst')); return; }
         var btn = this;
         var prev = btn.textContent;
         btn.disabled = true;
@@ -317,19 +366,15 @@
             var out = document.getElementById('actionResultOutput');
             var status = document.getElementById('actionResultStatus');
             out.textContent = (body.output || []).join('\n');
-            status.style.background = body.ok === false ? 'var(--danger-soft)' : 'var(--success-soft)';
-            status.style.color = body.ok === false ? 'var(--danger-strong)' : 'var(--success-strong)';
-            status.textContent = body.ok === false
-                ? (_t('common.error') + ': ' + (body.error || _t('common.unknownError')))
-                : (_t('common.success') + (body.affected ? ' — ' + body.affected + ' ' + _t('common.affected') : ''));
-            document.getElementById('actionResultModal').style.display = 'flex';
+            alertEl(status, body.ok === false ? 'danger' : 'success',
+                body.ok === false
+                    ? (_t('common.error') + ': ' + (body.error || _t('common.unknownError')))
+                    : (_t('common.success') + (body.affected ? ' — ' + body.affected + ' ' + _t('common.affected') : '')));
+            document.getElementById('actionResultModal').classList.add('open');
         })
         .catch(function(err) {
-            var status = document.getElementById('actionResultStatus');
-            status.style.background = 'var(--danger-soft)';
-            status.style.color = 'var(--danger-strong)';
-            status.textContent = _t('common.error') + ': ' + String(err);
-            document.getElementById('actionResultModal').style.display = 'flex';
+            alertEl(document.getElementById('actionResultStatus'), 'danger', _t('common.error') + ': ' + String(err));
+            document.getElementById('actionResultModal').classList.add('open');
         })
         .finally(function() {
             btn.disabled = false;
@@ -338,11 +383,254 @@
     });
 
     function closeActionResultModal() {
-        document.getElementById('actionResultModal').style.display = 'none';
+        document.getElementById('actionResultModal').classList.remove('open');
     }
 
     loadActions();
     {{end}}
+
+    // ---- AI view agent ----
+    var aiBusy = false;
+    var aiPendingAction = null;
+    var aiViewCollection = "{{.CollectionName}}";
+    var aiViewConfigName = "{{.ConfigName}}";
+    var aiRecordID = "{{.ID}}";
+
+    document.getElementById("aiSendBtn").addEventListener("click", sendAI);
+    document.getElementById("aiInput").addEventListener("keydown", function(e) {
+        if (e.key === "Enter" && !aiBusy) sendAI();
+    });
+
+    function sendAI() {
+        var input = document.getElementById("aiInput");
+        var text = input.value.trim();
+        if (!text || aiBusy) return;
+        aiBusy = true;
+        input.value = "";
+        document.getElementById("aiSendBtn").disabled = true;
+        document.getElementById("aiConfirm").style.display = "none";
+        setAIStatus(_t("ai.thinking"));
+
+        // Collect editable field names and build label→field map from the form
+        var formFields = [];
+        var labelMap = {};
+        document.querySelectorAll("form[method=POST] label").forEach(function(label) {
+            var span = label.querySelector(".field-label");
+            var inp = label.querySelector("input[name], select[name], textarea[name]");
+            if (inp) {
+                var n = inp.getAttribute("name");
+                if (n && formFields.indexOf(n) === -1) formFields.push(n);
+                if (span && n) labelMap[span.textContent.trim()] = n;
+            }
+        });
+
+        var body = JSON.stringify({
+            messages: [{ role: "user", content: text }],
+            collection: aiViewCollection,
+            configName: aiViewConfigName,
+            formFields: formFields,
+            recordID: aiRecordID,
+            labelMap: labelMap
+        });
+
+        fetch("/ai/view-chat/stream", { method: "POST", headers: { "Content-Type": "application/json" }, body: body })
+        .then(function(resp) {
+            var reader = resp.body.getReader();
+            var decoder = new TextDecoder();
+            var buffer = "";
+            function read() {
+                reader.read().then(function(result) {
+                    if (result.done) { finishAI(); return; }
+                    buffer += decoder.decode(result.value, { stream: true });
+                    var lines = buffer.split("\n");
+                    buffer = lines.pop();
+                    lines.forEach(function(line) {
+                        if (line.startsWith("data: ")) {
+                            try { handleAIEvent(JSON.parse(line.substring(6))); } catch(e) {}
+                        }
+                    });
+                    read();
+                });
+            }
+            read();
+        })
+        .catch(function(err) {
+            setAIStatus(_t("ai.failed").replace("%s", String(err)), "err");
+            finishAI();
+        });
+    }
+
+    function handleAIEvent(ev) {
+        if (ev.type === "text" && ev.delta) {
+            var el = document.getElementById("aiStatus");
+            var msgEl = el.querySelector(".ai-msg");
+            if (msgEl) msgEl.textContent += ev.delta;
+            else setAIStatus(ev.delta);
+        } else if (ev.type === "status" && ev.message) {
+            setAIStatus(ev.message);
+        } else if (ev.type === "done" && ev.result) {
+            applyAIResult(ev.result);
+        } else if (ev.type === "error") {
+            setAIStatus(_t("ai.failed").replace("%s", ev.message || "unknown"), "err");
+            finishAI();
+        }
+    }
+
+    function setAIStatus(msg, cls) {
+        var el = document.getElementById("aiStatus");
+        el.style.display = "flex";
+        el.className = "ai-status" + (cls ? " " + cls : "");
+        el.innerHTML = '<span class="ai-spinner"></span><span class="ai-msg">' + esc(msg) + '</span>';
+    }
+
+    function applyAIResult(result) {
+        // formFill takes priority over pendingAction (LLM sometimes returns both)
+        if (result.finalText) {
+            var text = result.finalText;
+            var jsonMatch = text.match(/\{[\s\S]*"formFill"[\s\S]*\}/);
+            if (jsonMatch) {
+                try {
+                    var parsed = JSON.parse(jsonMatch[0]);
+                    if (parsed.formFill) {
+                        populateForm(parsed.formFill);
+                        setAIStatus(_t("ai.formFilled") || "Form filled — review and submit.", "done");
+                        finishAI();
+                        return;
+                    }
+                } catch(e) {}
+            }
+        }
+        if (result.pendingAction) {
+            aiPendingAction = result.pendingAction;
+            showAIConfirmModal(result.pendingAction.summary);
+            setAIStatus(_t("ai.confirmTitle"), "done");
+            finishAI();
+        } else if (result.records && result.records.length > 0) {
+            showAISearchModal(result.records);
+            setAIStatus(_t("ai.searchTitle"), "done");
+            finishAI();
+        } else if (result.finalText) {
+            setAIStatus(result.finalText || "(no result)", "done");
+            finishAI();
+        }
+    }
+
+    function showAISearchModal(records) {
+        var body = document.getElementById("aiSearchBody");
+        var html = '<table style="width:100%;border-collapse:collapse;font-size:.85rem;">';
+        html += '<thead><tr>';
+        if (records.length > 0) {
+            Object.keys(records[0]).forEach(function(k) { if (k !== "id") html += '<th style="text-align:left;padding:6px 8px;border-bottom:2px solid var(--border);">' + esc(k) + '</th>'; });
+        }
+        html += '<th style="width:60px;"></th></tr></thead><tbody>';
+        records.forEach(function(r) {
+            html += '<tr>';
+            Object.keys(r).forEach(function(k) {
+                if (k === "id") return;
+                var val = r[k];
+                if (typeof val === "object" && val !== null) val = JSON.stringify(val);
+                html += '<td style="padding:6px 8px;border-bottom:1px solid var(--border);">' + esc(String(val != null ? val : "")) + '</td>';
+            });
+            html += '<td><a href="' + esc("{{.BasePath}}/form/" + aiViewConfigName + "/" + r.id) + '" style="padding:4px 10px;background:var(--btn-primary);border-radius:4px;color:#fff;text-decoration:none;font-size:.8rem;">' + _t("ai.select") + '</a></td>';
+            html += '</tr>';
+        });
+        html += '</tbody></table>';
+        body.innerHTML = html;
+        document.getElementById("aiSearchModal").classList.add("open");
+    }
+
+    function closeAISearchModal() {
+        document.getElementById("aiSearchModal").classList.remove("open");
+    }
+
+    function showAIConfirmModal(summary) {
+        document.getElementById("aiConfirmBody").textContent = summary;
+        document.getElementById("aiConfirmModal").classList.add("open");
+    }
+
+    function closeAIConfirmModal() {
+        document.getElementById("aiConfirmModal").classList.remove("open");
+    }
+
+    function confirmAIApi(approved) {
+        closeAIConfirmModal();
+        if (!aiPendingAction) return;
+        var actionId = aiPendingAction.id;
+        setAIStatus(_t("ai.thinking"));
+        fetch("/ai/confirm", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ actionID: actionId, approved: approved })
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(res) {
+            setAIStatus(res.ok ? _t("ai.done").replace("%s", res.message) : _t("ai.failed").replace("%s", res.message), res.ok ? "done" : "err");
+            aiPendingAction = null;
+            finishAI();
+        })
+        .catch(function(err) {
+            setAIStatus(_t("ai.failed").replace("%s", String(err)), "err");
+            aiPendingAction = null;
+            finishAI();
+        });
+    }
+
+    function populateForm(values) {
+        Object.keys(values).forEach(function(fieldName) {
+            var val = values[fieldName];
+            if (val === null || val === undefined) return;
+            var el = document.querySelector("form[method=POST] [name=\"" + fieldName + "\"]");
+            if (!el) return;
+            var strVal = typeof val === "object" ? JSON.stringify(val) : String(val);
+            if (el.tagName === "SELECT") {
+                el.value = strVal;
+            } else if (el.type === "checkbox") {
+                el.checked = !!val;
+            } else {
+                el.value = strVal;
+            }
+            el.dispatchEvent(new Event("change", { bubbles: true }));
+        });
+    }
+
+    function finishAI() {
+        aiBusy = false;
+        document.getElementById("aiSendBtn").disabled = false;
+    }
+
+    function esc(s) {
+        var d = document.createElement("div");
+        d.appendChild(document.createTextNode(s));
+        return d.innerHTML;
+    }
+
+    var toastTimer = null;
+    function pbxToast(kind, msg, persist) {
+        var host = document.querySelector(".toast-host");
+        if (!host) { host = document.createElement("div"); host.className = "toast-host"; document.body.appendChild(host); }
+        var t = document.createElement("div");
+        t.className = "alert alert-" + kind + " alert-toast mount";
+        t.setAttribute("role", "alert");
+        var ico = { success: "&#10004;", danger: "&#10007;", warning: "&#9888;", info: "&#8505;" }[kind] || "&#8505;";
+        t.innerHTML = '<span class="a-ico">' + ico + '</span><span class="a-body">' + esc(msg) + '</span>';
+        var dismiss = function() {
+            t.classList.add("leaving");
+            setTimeout(function() { if (t.parentNode) t.parentNode.removeChild(t); }, 200);
+        };
+        t.addEventListener("click", dismiss);
+        host.appendChild(t);
+        var listed = host.querySelectorAll(".alert");
+        while (listed.length > 3) { listed[0].parentNode.removeChild(listed[0]); }
+        if (!persist) setTimeout(dismiss, 4500);
+        return t;
+    }
+    function alertEl(el, kind, msg) {
+        var ico = { success: "&#10004;", danger: "&#10007;", warning: "&#9888;", info: "&#8505;" }[kind] || "&#8505;";
+        el.className = "alert alert-" + kind;
+        el.setAttribute("role", "alert");
+        el.innerHTML = '<span class="a-ico">' + ico + '</span><span class="a-body">' + esc(msg) + '</span>';
+        return el;
+    }
     </script>
 </body>
 </html>

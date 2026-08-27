@@ -6,6 +6,7 @@ package i18n
 import (
 	"embed"
 	"encoding/json"
+	"log"
 	"strings"
 	"sync"
 )
@@ -26,9 +27,11 @@ func load() {
 			continue
 		}
 		m := map[string]string{}
-		if json.Unmarshal(data, &m) == nil {
-			catalogs[lang] = m
+		if err := json.Unmarshal(data, &m); err != nil {
+			log.Printf("i18n: failed to load %s.json: %v", lang, err)
+			continue
 		}
+		catalogs[lang] = m
 	}
 	if catalogs["en"] == nil {
 		catalogs["en"] = map[string]string{}

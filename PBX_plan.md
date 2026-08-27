@@ -1174,8 +1174,227 @@ Context: Full codebase audit performed after Phases 1–13. Found critical vulne
 - Login flow works; redirects validated; cookies secure in HTTPS
 - AI agent streaming works; history persisted across prompts
 
-# PBX Development Plan - Phase 17
+## Phase 15 — Setup consolidation: move config files to DB
+### planned
 
+**Context:** Currently three JSON files live in `pb_data/`:
+- `mssql.json` — global MSSQL DSN (read: `getMssqlDSN` via `mssqlConfigPath`; write: `POST /api/mssql-dsn` → `setMssqlDSN`)
+- `theme.json` — global theme mode (read: `getThemeMode`; write: `POST /api/theme/{mode}` → `setThemeMode`; used by 13 page handlers)
+- `lang.json` — global default language (read: `getLangCode`; write: `POST /api/lang/{code}` → `setLangCode`; used by 16 page handlers + 21 i18n lookups)
+
+Goal: unify into a single `_global_setup` collection record (`_name="default"`) so all PBX configuration lives in the database and obeys PocketBase rules.
+
+**Decisions confirmed with user:**
+- Single record (`_name = "default"`) — no multi-environment support needed
+- Superadmin-only write; read access for page rendering (non-superusers read via handlers)
+- One-time migration on first run: if `pb_data/*.json` exist, migrate values into the new record
+- Concurrency: `app.Dao().RunInTransaction()` for writes
+- Fallback to defaults if DB unavailable during read
+
+---
+
+### 15.1 Schema (`_global_setup` collection)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | text (required, unique) | Fixed value `"default"` |
+| `description` | text | Human-readable description |
+| `_dsn` | json | `{dsn: "..."}` |
+| `_theme` | json | `{mode: "light"|"dark"}` |
+| `_lang` | json | `{lang: "en"|"cs"}` |
+
+**API Rules:**
+- `listRule: null`, `viewRule: null`
+- `createRule`: superuser only
+- `updateRule`: superuser only
+- `deleteRule`: superuser only
+
+---
+
+### 15.2 Bootstrap & migration (`main.go`)
+
+```go
+func ensureGlobalSetup(app core.App) error {
+    coll, err := app.Dao().FindCollectionByNameOrId("_global_setup")
+    if err != nil {
+        coll = core.NewBaseCollection("_global_setup")
+        // add fields, set rules per above
+        if err := app.Dao().SaveCollection(coll); err != nil {
+            return err
+        }
+    }
+    recs, _ := app.Dao().FindRecordsByFilter("_global_setup", "name = 'default'", "", 1, 0)
+    if len(recs) == 0 {
+        rec := core.NewRecord(coll)
+        rec.Set("name", "default")
+        rec.Set("description", "Global PBX configuration")
+        migrateFromFiles(app, rec)
+        return app.Dao().SaveRecord(rec)
+    }
+    return nil
+}
+
+func migrateFromFiles(app core.App, rec *core.Record) {
+    // mssql.json
+    if data, _ := os.ReadFile(mssqlConfigPath(app)); len(data) > 0 {
+        var m struct{ DSN string `json:"dsn"` }
+        if json.Unmarshal(data, &m) == nil && m.DSN != "" {
+            rec.Set("_dsn", map[string]string{"dsn": m.DSN})
+        }
+    }
+    // theme.json
+    if data, _ := os.ReadFile(themeFilePath(app)); len(data) > 0 {
+        var m struct{ Mode string `json:"mode"` }
+        if json.Unmarshal(data, &m) == nil && (m.Mode == "light" || m.Mode == "dark") {
+            rec.Set("_theme", map[string]string{"mode": m.Mode})
+        }
+    }
+    // lang.json
+    if data, _ := os.ReadFile(langFilePath(app)); len(data) > 0 {
+        var m struct{ Lang string `json:"lang"` }
+        if json.Unmarshal(data, &m) == nil && i18n.IsValid(m.Lang) {
+            rec.Set("_lang", map[string]string{"lang": m.Lang})
+        }
+    }
+}
+```
+
+Call `ensureGlobalSetup(app)` in `OnServe` hook after `app.Bootstrap()`.
+
+---
+
+### 15.3 New helpers (`main.go`) — replace file I/O
+
+```go
+func getGlobalSetup(app core.App) (*core.Record, error) {
+    return app.Dao().FindFirstRecordByFilter("_global_setup", "name = 'default'")
+}
+
+func getThemeMode(app core.App) string {
+    rec, _ := getGlobalSetup(app)
+    if rec == nil { return "light" }
+    if v, ok := rec.Get("_theme").(map[string]any); ok {
+        if m, ok := v["mode"].(string); ok && (m == "light" || m == "dark") {
+            return m
+        }
+    }
+    return "light"
+}
+
+func setThemeMode(app core.App, mode string) error {
+    return app.Dao().RunInTransaction(func(txDao *core.Dao) error {
+        rec, _ := getGlobalSetup(app)
+        rec.Set("_theme", map[string]string{"mode": mode})
+        return txDao.SaveRecord(rec)
+    })
+}
+
+func getLangCode(app core.App, r *http.Request) string {
+    if r != nil {
+        if c, err := r.Cookie("pb_lang"); err == nil && i18n.IsValid(c.Value) {
+            return c.Value
+        }
+    }
+    if cliLangOverride && i18n.IsValid(cliLang) {
+        return cliLang
+    }
+    rec, _ := getGlobalSetup(app)
+    if rec == nil { return "en" }
+    if v, ok := rec.Get("_lang").(map[string]any); ok {
+        if l, ok := v["lang"].(string); ok && i18n.IsValid(l) {
+            return l
+        }
+    }
+    return "en"
+}
+
+func setLangCode(app core.App, code string) error {
+    code = i18n.Normalize(code)
+    if !i18n.IsValid(code) { return fmt.Errorf("invalid language %q", code) }
+    return app.Dao().RunInTransaction(func(txDao *core.Dao) error {
+        rec, _ := getGlobalSetup(app)
+        rec.Set("_lang", map[string]string{"lang": code})
+        return txDao.SaveRecord(rec)
+    })
+}
+
+func getMssqlDSN(app core.App) string {
+    rec, _ := getGlobalSetup(app)
+    if rec == nil { return "" }
+    if v, ok := rec.Get("_dsn").(map[string]any); ok {
+        if d, ok := v["dsn"].(string); ok {
+            return d
+        }
+    }
+    return ""
+}
+
+func setMssqlDSN(app core.App, dsn string) error {
+    return app.Dao().RunInTransaction(func(txDao *core.Dao) error {
+        rec, _ := getGlobalSetup(app)
+        rec.Set("_dsn", map[string]string{"dsn": dsn})
+        return txDao.SaveRecord(rec)
+    })
+}
+```
+
+---
+
+### 15.4 Update API endpoints (`routes.go`)
+
+| Endpoint | Add superadmin check |
+|----------|---------------------|
+| `POST /api/theme/{mode}` | `if err := requireSuperAdmin(e); err != nil { return err }` |
+| `POST /api/lang/{code}` | `if err := requireSuperAdmin(e); err != nil { return err }` |
+| `POST /api/mssql-dsn` | `if err := requireSuperAdmin(e); err != nil { return err }` |
+
+(Already have `requireSuperAdmin` from Phase 14 — reuse it.)
+
+---
+
+### 15.5 Page handlers (`main.go`)
+
+**No changes needed** — all 13 theme handlers and 16+ lang handlers already call `getThemeMode(e.App)` / `getLangCode(e.App, e.Request)` / `langData(e)` which now read from DB.
+
+Templates continue to receive `.Theme` and `.Lang` fields unchanged.
+
+---
+
+### 15.6 Cleanup (after verification)
+
+- Delete `themeFilePath()`, `langFilePath()`, `mssqlConfigPath()`
+- Delete old `setThemeMode()`, `setLangCode()`, `setMssqlDSN()` file-based implementations
+- Remove `theme.json`, `lang.json`, `mssql.json` from `.gitignore`
+- Optionally delete physical files from `pb_data/`
+
+---
+
+### 15.7 File change summary
+
+| File | Action | Lines (est.) |
+|------|--------|-------------|
+| `main.go` | Add `ensureGlobalSetup`, new helpers, remove old file I/O | +80 |
+| `routes.go` | Add superadmin checks to 3 POST endpoints | +6 |
+| `pb_data/` | (runtime) files removed after migration | — |
+
+Total: ~86 new lines, ~50 removed lines.
+
+---
+
+### 15.8 Verification
+
+- `go build ./... && go vet ./... && go test ./...`
+- Theme toggle persists across reloads (DB read/write)
+- Language toggle persists across reloads (DB read/write)
+- MSSQL DSN save/load works in export/import modals
+- Non-superadmin POST to config endpoints → 403
+- Fresh DB with existing `pb_data/*.json` → values migrated on first run
+- Delete `_global_setup` record → app falls back to defaults (light/en)
+
+---
+
+# PBX Development Plan - Phase 17
+### done!
 ## Extend AI Agent Toolset for Collections, Views, and Records
 
 ### Objective
@@ -1323,3 +1542,255 @@ if len(recs) > 0 && !force {
 - Phase 17 follows Phase 14 (Security posture - CSRF/rate limiting) and precedes future phases
 - Tools use existing pending action pattern (write=true, confirmation required)
 - All write operations respect collection rules via existing `pbrules` package patterns
+
+---
+
+## Phase 18 — AI Agent Integration in Tabular & Form Views
+### done!
+
+Context: The existing AI agent lives at `/ai` in a dedicated chat interface. Users want to interact with AI directly from the data views (`/tabular/{name}` and `/form/{name}`) to search, filter, add, edit, and delete records without leaving the view. The AI manipulates the view directly — search results filter the existing table, writes show inline confirmations. The existing `/ai` chat agent remains completely untouched.
+
+Decisions confirmed with user:
+- UI placement: input bar at the top of the view (below toolbar/title)
+- Write safety: inline confirmation (approve/reject) before executing writes
+- Result display (tabular): filter existing table in-place — replace `allRecords` and re-render
+- Result display (form): search results shown in a modal overlay within the form (not a redirect)
+- Restricted tool set: query_records, insert_records, update_records, delete_records only (no collection/schema operations)
+
+### 18.1 Backend — Agent tool filtering (`pbai/agent.go`)
+
+Add to `Agent` struct:
+```go
+allowedTools []string  // nil = all tools (existing behavior); set = view agent mode
+viewCollection string  // collection context for view agent
+viewConfigName string  // config name for view agent
+```
+
+New constructor:
+```go
+func NewViewAgent(app core.App, info *core.Record, cfg AgentConfig, collection, configName string) *Agent
+```
+Sets `allowedTools` to `[]string{"query_records", "insert_records", "update_records", "delete_records"}`.
+
+New method `viewSystemMessages()` — generates a focused system prompt:
+- "You are embedded in a data view of collection `{collection}` (config: `{configName}`)."
+- Tools: query_records (read), insert/update/delete_records (write, confirmation required).
+- For **search/filter** requests: call `query_records` — the UI displays returned records directly as table rows. Keep text answers minimal.
+- For **write** requests: call the appropriate tool — the system will ask for user confirmation before executing.
+- Enforce collection rules; respect the caller's permissions.
+- Answer in the user's language.
+- Do not invent record contents.
+
+Modify `RunStream` to:
+- Use `viewSystemMessages()` when `allowedTools` is set (instead of `systemMessages()`)
+- Filter `toolDefs()` to only include tools named in `allowedTools`
+- Otherwise identical loop logic
+
+**Existing agent untouched**: `NewAgent()` sets `allowedTools = nil`, all existing behavior preserved.
+
+### 18.2 Backend — View chat endpoint (`main.go`)
+
+New handler `handleViewChatStream` (~70 lines):
+
+```
+POST /ai/view-chat/stream
+Request:  { messages: [{role,content}], collection: "collName", configName: "viewName" }
+Response: SSE stream — text | status | done { records?, pendingAction?, finalText? }
+```
+
+- Same auth pattern as existing `handleAgentChatStream` (cookie auth via `agentRequestInfo`)
+- Creates `pbai.NewViewAgent(app, info, cfg, collection, configName)`
+- Streams SSE identically to existing endpoint
+- The `done` event carries `records` (from `query_records` results) and/or `pendingAction` (from write tools)
+
+Key difference from chat agent: Write tools **do not halt the loop**. Instead, when a write tool is called:
+1. The pending action is created and returned in the `done` event
+2. The loop stops (same as current behavior — the `done` event is emitted)
+3. The user confirms via the existing `POST /ai/confirm` endpoint
+4. On confirm, the write executes and returns a result message
+
+This means **at most one write per request**, same as the chat agent. The LLM is instructed in the system prompt to do one operation at a time.
+
+### 18.3 Backend — Route registration (`routes.go`)
+
+Add to `registerAIRoutes()`:
+```go
+se.Router.POST("/ai/view-chat/stream", rateLimitMiddleware(aiChatRateLimiter)(handleViewChatStream))
+```
+
+The existing `POST /ai/confirm` endpoint works unchanged — it already resolves the pending action and executes it.
+
+### 18.4 Frontend — Tabular view (`views/tabulator.html`)
+
+#### HTML additions
+
+**AI input bar** — inserted between toolbar row (line 121) and table (line 123):
+```html
+<div class="ai-bar" id="aiBar">
+    <span class="ai-icon">✨</span>
+    <input type="text" id="aiInput" placeholder="..." autocomplete="off">
+    <button id="aiSendBtn" class="btn-sm btn-primary">AI</button>
+    <button id="aiClearBtn" class="btn-sm btn-neutral" style="display:none;">✕</button>
+</div>
+<div id="aiStatus" class="ai-status" style="display:none;"></div>
+<div id="aiConfirm" class="ai-confirm" style="display:none;"></div>
+```
+
+#### CSS additions (to `<style>` block)
+
+```css
+.ai-bar { display:flex; align-items:center; gap:8px; margin-bottom:12px; padding:8px 12px;
+          background:var(--card-bg); border:2px solid var(--accent); border-radius:8px; }
+.ai-bar input { flex:1; padding:8px 12px; border:1px solid var(--input-border); border-radius:6px;
+                font-size:.9rem; outline:none; background:var(--body-bg); color:var(--text); }
+.ai-bar input:focus { border-color:var(--accent); }
+.ai-icon { font-size:1.1rem; }
+.ai-status { padding:6px 12px; margin-bottom:8px; font-size:.85rem; color:var(--muted);
+             background:var(--card-bg); border-radius:6px; border-left:3px solid var(--accent); }
+.ai-confirm { padding:10px 14px; margin-bottom:12px; background:var(--accent-soft);
+              border:1px solid var(--accent); border-radius:8px; display:flex; align-items:center; gap:12px; }
+.ai-confirm .ai-confirm-text { flex:1; font-size:.9rem; }
+.ai-confirm button { padding:6px 16px; border:none; border-radius:6px; font-size:.85rem; cursor:pointer; }
+```
+
+#### JS additions
+
+State variables:
+```js
+var aiBusy = false;
+var aiPendingAction = null;
+var aiOriginalRecords = null;  // saved before AI filter
+```
+
+Functions:
+- **`sendAI()`** — Reads `#aiInput` value, builds `[{role:"user", content:text}]`, POSTs to `/ai/view-chat/stream` with `{messages, collection:"{{.CollectionName}}", configName:"{{.ConfigName}}"}`, parses SSE stream via `ReadableStream` (same pattern as `agent.html`). Shows spinner in `#aiStatus`.
+- **`handleAIEvent(ev)`** — Dispatches: `text` → updates `#aiStatus` with streaming text; `status` → shows tool execution notice; `done` → calls `applyAIResult(ev.result)`; `error` → shows error.
+- **`applyAIResult(result)`** — If `result.records`: saves original `allRecords` on first filter, replaces with AI records, calls `render()`, shows "AI filtered • N records • Clear" in `#aiStatus`, shows clear button. If `result.pendingAction`: shows inline confirm bar.
+- **`showAIConfirm(action)`** — Populates `#aiConfirm` with summary text + Approve/Reject buttons.
+- **`confirmAI(approved)`** — POSTs to `/ai/confirm`, on success shows result in `#aiStatus`, clears `aiPendingAction`, if write succeeded refreshes table via `fetchTabulatorPage()`.
+- **`clearAIFilter()`** — Restores `aiOriginalRecords` to `allRecords`, calls `render()`, hides status and clear button.
+- **`fetchTabulatorPage()`** — Refetches page data from `/api/tabulator-data/{configName}` and refreshes `allRecords` + `render()`. Needed after AI writes to show the updated data.
+
+Enter key on `#aiInput` triggers `sendAI()`.
+
+### 18.5 Frontend — Form view (`views/form.html`)
+
+#### HTML additions
+
+Same AI bar as tabular, inserted after the title row (line 60), before the description.
+
+#### CSS additions
+
+Same as tabular (duplicated inline — matches existing template pattern).
+
+#### JS additions
+
+Similar to tabular but with form-specific behavior:
+
+- **`sendAI()`** — Same SSE flow, sends `collection:"{{.CollectionName}}"`, `configName:"{{.ConfigName}}"`.
+- **`handleAIEvent(ev)`** — Same text/status/done dispatch.
+- **`applyAIResult(result)`**:
+  - **Search results (records)**: Opens a modal overlay displaying the records as a scrollable table. The modal uses the existing `.modal-overlay` pattern. Each row has a "Select" button that navigates to `/form/{configName}/{recordId}` for editing. Modal has a Close button.
+  - **Write results**: Shows success/error in `#aiStatus`. For insert: shows "Created. View in table" link. For update: shows "Updated" with the record data. For delete: shows "Deleted" with a link to table.
+  - **Pending action**: Shows inline confirm bar (same as tabular).
+
+#### Search results modal
+
+```html
+<div class="modal-overlay" id="aiSearchModal">
+    <div class="modal-content" style="max-width:90vw;">
+        <div class="modal-header">
+            <h3 id="aiSearchTitle">AI Search Results</h3>
+            <button class="modal-close" onclick="closeAISearchModal()">&times;</button>
+        </div>
+        <div class="modal-body" id="aiSearchBody" style="max-height:70vh;overflow-y:auto;"></div>
+    </div>
+</div>
+```
+
+The `openAISearchModal(records)` function builds a table from the records (using the same `renderCell`-like logic) and displays it. Each row has a link `<a href="/form/{configName}/{id}">Edit</a>`.
+
+### 18.6 Mobile variants (`views/mobile-tabulator.html`, `views/mobile-form.html`)
+
+Same AI bar HTML + CSS + JS logic adapted for mobile layout. The mobile tabulator uses cards instead of tables, so AI search results render as cards. The mobile form modal is full-width.
+
+### 18.7 i18n keys
+
+**`i18n/en.json`** additions:
+```json
+"tabulator.aiPlaceholder": "Ask AI to search, add, edit or delete records\u2026",
+"tabulator.aiThinking": "AI is thinking\u2026",
+"tabulator.aiFiltered": "AI filtered \u2022 %d records",
+"tabulator.aiClear": "Clear AI filter",
+"tabulator.aiConfirmTitle": "AI wants to modify data",
+"tabulator.aiApprove": "Approve",
+"tabulator.aiReject": "Reject",
+"tabulator.aiDone": "Done: %s",
+"tabulator.aiFailed": "AI action failed: %s",
+"tabulator.aiSearchTitle": "AI Search Results",
+"form.aiPlaceholder": "Ask AI to fill fields, search or save\u2026",
+"form.aiThinking": "AI is thinking\u2026",
+"form.aiSearchTitle": "AI Search Results",
+"form.aiSelect": "Select",
+"form.aiCreated": "Record created.",
+"form.aiUpdated": "Record updated.",
+"form.aiDeleted": "Record deleted.",
+"form.aiToTable": "View in table"
+```
+
+**`i18n/cs.json`** — corresponding Czech translations.
+
+### 18.8 File change summary
+
+| File | Action | Lines (est.) |
+|------|--------|-------------|
+| `pbai/agent.go` | Edit — `allowedTools` field, `NewViewAgent()`, `viewSystemMessages()`, tool filtering in `RunStream` | +80 |
+| `main.go` | Edit — `handleViewChatStream` handler | +70 |
+| `routes.go` | Edit — register `POST /ai/view-chat/stream` | +1 |
+| `views/tabulator.html` | Edit — AI bar HTML + CSS + JS | +120 |
+| `views/form.html` | Edit — AI bar HTML + CSS + JS + search results modal | +150 |
+| `views/mobile-tabulator.html` | Edit — mobile AI bar variant | +100 |
+| `views/mobile-form.html` | Edit — mobile AI bar variant | +100 |
+| `i18n/en.json` | Edit — ~18 new keys | +18 |
+| `i18n/cs.json` | Edit — ~18 new keys | +18 |
+
+Total: ~657 new lines, ~20 modified lines.
+
+### 18.9 What stays completely untouched
+
+- `views/agent.html` — existing chat UI
+- `main.go` handlers: `handleAgentChatStream`, `handleAgentConfirm`, `handleAgentChat`, `handleAgent` — all unchanged
+- `pbai/tools.go` — all 15 tools unchanged
+- `pbai/render.go` — server-side HTML rendering unchanged
+- `pbai/llm.go`, `pbai/ingest.go` — unchanged
+
+### 18.10 Implementation order
+
+1. `pbai/agent.go` (backend foundation — tool filtering + view system prompt)
+2. `main.go` + `routes.go` (new endpoint)
+3. `i18n/en.json` + `i18n/cs.json` (translations)
+4. `views/tabulator.html` (tabular UI)
+5. `views/form.html` (form UI + search modal)
+6. `views/mobile-tabulator.html` + `views/mobile-form.html` (mobile)
+7. Build & test: `go build ./... && go vet ./...`
+
+### 18.11 Verification
+
+- `go build ./... && go vet ./...`
+- Navigate to `/tabular/{name}` → AI input bar visible below toolbar
+- Type "show me all records" → table filtered to AI results, status bar shows count, clear button visible
+- Click "Clear AI filter" → original records restored
+- Type "add a record with name=Test" → inline confirm bar appears, approve → record created, table refreshes
+- Type "delete record with id=xxx" → inline confirm bar, approve → record deleted, table refreshes
+- Navigate to `/form/{name}` → AI input bar visible
+- Type "show me all customers" → modal opens with records table, click "Select" → navigates to that record's form
+- Type "save this record" (on a new form with data filled) → inline confirm, approve → record created
+- Mobile: `/mobile/tabular/{name}` and `/mobile/form/{name}` → AI bar renders correctly
+- Non-superuser: AI respects collection rules (cannot query collections they can't list, cannot write without create/update/delete rules)
+- Existing `/ai` chat agent: completely unchanged and functional
+
+### 18.12 Dependencies
+
+- Depends on Phase 17 (update_records, delete_records tools must exist)
+- Depends on Phase 12 (i18n — for translation keys)
+- Depends on Phase 8 (mobile templates — for mobile variants)

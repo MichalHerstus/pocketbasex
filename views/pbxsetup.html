@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PBX Setup</title>
+    <title>{{t .Lang "setup.title"}}</title>
     <style>
         * { box-sizing: border-box; }
         body { font-family: sans-serif; margin: 0; padding: 20px; background: var(--body-bg); color:var(--text); }
@@ -48,6 +48,48 @@
         .modal-body table { font-size: .85rem; }
         .modal-body th { font-size: .75rem; }
         .modal-body td, .modal-body th { padding: 6px 10px; }
+
+        /* Tab bar */
+        .tab-bar { display: flex; gap: 2px; border-bottom: 2px solid var(--border); margin-bottom: 24px; flex-wrap: wrap; }
+        .tab-btn { padding: 10px 20px; background: none; border: none; border-bottom: 2px solid transparent; cursor: pointer; font-size: .95rem; color:var(--muted); margin-bottom: -2px; transition: all .15s; }
+        .tab-btn:hover { color:var(--text); background:var(--row-hover); }
+        .tab-btn.active { border-bottom-color: var(--accent); color: var(--accent); font-weight: 600; }
+        .tab-panel { display: none; }
+        .tab-panel.active { display: block; animation: fadeIn .2s; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+        /* Import cards */
+        .import-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 16px; }
+        .import-card { display: block; background:var(--card-bg); border: 2px solid var(--border); border-radius: 10px; padding: 20px; text-decoration: none; color:var(--text); transition: all .15s; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+        .import-card h3 { margin: 0 0 6px 0; font-size: 1.1rem; color:var(--accent); }
+        .import-card p { margin: 0; font-size: .9rem; color:var(--muted); }
+        .import-card:hover { border-color: var(--accent); box-shadow: 0 4px 12px rgba(0,0,0,.15); }
+        .import-card { cursor: pointer; text-align: left; font-family: inherit; }
+
+        /* embedded import wizard */
+        .import-back { margin-bottom: 12px; }
+        .imp-source form, .wiz-card, #tab-import form { background:var(--card-bg); border-radius: 8px; padding: 20px; max-width: 860px; box-shadow: 0 1px 3px rgba(0,0,0,.1); }
+        .wiz-card { margin-top: 8px; }
+        .stepbar { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+        .stepbar .step { padding: 6px 14px; border-radius: 16px; font-size: .85rem; font-weight: 600; background: var(--btn-neutral); color: #fff; }
+        .stepbar .step.active { background: var(--btn-primary); }
+        .imp-source label, #tab-import form label { display: block; font-weight: 600; font-size: .85rem; margin: 14px 0 4px; }
+        .imp-source form input[type=text], .imp-source form select, #tab-import form input[type=text], #tab-import form select { width: 100%; padding: 8px; border: 1px solid var(--input-border); border-radius: 6px; font-size: .9rem; outline: none; font-family: monospace; }
+        .imp-source form input[type=text]:focus, .imp-source form select:focus, #tab-import form input[type=text]:focus, #tab-import form select:focus { border-color: var(--accent); }
+        .imp-source .hint, #tab-import form .hint { font-size: .8rem; color: var(--muted); margin: 4px 0 0; }
+        .imp-source .actions, #tab-import form .actions { margin-top: 20px; display: flex; gap: 12px; flex-wrap: wrap; }
+        .btn { padding: 10px 20px; border-radius: 6px; text-decoration: none; font-size: .95rem; display: inline-block; border: none; cursor: pointer; }
+        .btn-green { background: var(--btn-primary); color: #fff; }
+        .btn-gray { background: var(--btn-neutral); color: #fff; }
+        .btn-blue { background: var(--btn-primary); color: #fff; }
+        .imp-source form .checkbox-row, #tab-import form .checkbox-row { display: flex; align-items: center; gap: 8px; margin-top: 14px; font-size: .9rem; }
+        .imp-source form .checkbox-row input, #tab-import form .checkbox-row input { width: auto; }
+        .imp-source table, #tab-import form table { background: var(--card2-bg); border-radius: 6px; }
+        .imp-source .col input, .imp-source .col select, #tab-import form .col input, #tab-import form .col select { padding: 6px; }
+        .imp-source .samples, #tab-import form .samples { color: var(--muted); font-size: .8rem; max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+        /* sub-headings within tabs */
+        .sub-tab { margin: 28px 0 12px 0; font-size: 1.1rem; font-weight: 600; color:var(--text); padding-bottom: 6px; border-bottom: 1px solid var(--border); }
     </style>
     <link rel="stylesheet" href="/assets/theme.css">
     <script src="/api/lang/{{.Lang}}/catalog.js"></script>
@@ -55,116 +97,156 @@
 <body data-theme="{{.Theme}}">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">
         <h1 style="margin:0">{{t .Lang "setup.title"}}</h1>
-        <button type="button" onclick="goBack('/app')" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;margin-left:auto;">{{t .Lang "common.close"}}</button>
         <button type="button" id="themeBtn" onclick="toggleTheme()" class="pbx-icon-btn">🌙</button>
         <button type="button" onclick="toggleLang()" class="pbx-icon-btn">{{if eq .Lang "cs"}}EN{{else}}CS{{end}}</button>
-        <a href="/app" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">{{t .Lang "setup.applications"}}</a>
-        <a href="/pbx-config" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">{{t .Lang "setup.configEditor"}}</a>
+        <a href="/app" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;margin-left:auto;">{{t .Lang "app.backToApps"}}</a>
         <a href="/_/" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">{{t .Lang "setup.administration"}}</a>
     </div>
     <p class="subtitle">{{t .Lang "setup.subtitle"}}</p>
 
-    <div class="section">
-        <h2>{{t .Lang "setup.theme"}}</h2>
-        <div class="subtitle">{{t .Lang "setup.themeSubtitle"}}</div>
-        <div class="toolbar" style="margin-bottom:0;">
-            <button type="button" onclick="setTheme('light')" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">☀️ {{t .Lang "setup.light"}}</button>
-            <button type="button" onclick="setTheme('dark')" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">🌙 {{t .Lang "setup.dark"}}</button>
-            <span id="themeStatus" style="font-size:.9rem;color:var(--muted);">{{t .Lang "setup.current"}} {{.Theme}}</span>
-        </div>
+    <!-- Tab bar -->
+    <div class="tab-bar" role="tablist">
+        <button role="tab" data-tab="global" class="tab-btn active">{{t .Lang "tab.global"}}</button>
+        <button role="tab" data-tab="import" class="tab-btn">{{t .Lang "tab.import"}}</button>
+        <button role="tab" data-tab="apps" class="tab-btn">{{t .Lang "tab.apps"}}</button>
+        <button role="tab" data-tab="views" class="tab-btn">{{t .Lang "tab.views"}}</button>
     </div>
 
-    <div class="section">
-        <h2>{{t .Lang "setup.mssql"}}</h2>
-        <div class="subtitle">{{t .Lang "setup.mssqlSubtitle"}}</div>
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-            <input type="text" id="mssqlDsn" value="{{.MssqlDSN}}" placeholder="sqlserver://user:pass@host:1433?database=db&amp;encrypt=disable" style="flex:1;min-width:300px;padding:8px;border:1px solid var(--input-border);border-radius:6px;font-size:.9rem;outline:none;font-family:monospace;">
-            <button type="button" onclick="saveMssqlDsn()" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">{{t .Lang "setup.saveDsn"}}</button>
-            <span id="mssqlDsnStatus" style="font-size:.9rem;color:var(--muted);"></span>
-        </div>
-    </div>
-
-    <div class="section">
-        <h2>{{t .Lang "setup.aiAgent"}}</h2>
-        <div class="subtitle">{{t .Lang "setup.aiSubtitle"}}</div>
-        <div style="display:flex;flex-direction:column;gap:10px;max-width:700px;">
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                <label style="font-size:.9rem;font-weight:600;width:130px;">{{t .Lang "setup.provider"}}</label>
-                <select id="aiProvider" onchange="aiProviderChanged()" style="flex:1;min-width:200px;padding:8px;border:1px solid var(--input-border);border-radius:6px;font-size:.9rem;outline:none;">
-                    <option value="openrouter" {{if eq .Agent.Provider "openrouter"}}selected{{end}}>OpenRouter</option>
-                    <option value="lmstudio" {{if eq .Agent.Provider "lmstudio"}}selected{{end}}>{{t .Lang "setup.lmstudioLocal"}}</option>
-                </select>
-            </div>
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                <label style="font-size:.9rem;font-weight:600;width:130px;">{{t .Lang "setup.baseUrl"}}</label>
-                <input type="text" id="aiBaseURL" value="{{.Agent.BaseURL}}" placeholder="http://127.0.0.1:1234/v1 or https://openrouter.ai/api/v1" style="flex:1;min-width:300px;padding:8px;border:1px solid var(--input-border);border-radius:6px;font-size:.9rem;outline:none;font-family:monospace;">
-            </div>
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                <label style="font-size:.9rem;font-weight:600;width:130px;">{{t .Lang "setup.apiKey"}}</label>
-                <input type="password" id="aiApiKey" value="{{.Agent.APIKey}}" placeholder="sk-…" style="flex:1;min-width:300px;padding:8px;border:1px solid var(--input-border);border-radius:6px;font-size:.9rem;outline:none;font-family:monospace;">
-            </div>
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                <label style="font-size:.9rem;font-weight:600;width:130px;">{{t .Lang "setup.model"}}</label>
-                <input type="text" id="aiModel" value="{{.Agent.Model}}" placeholder="openai/gpt-4o-mini" style="flex:1;min-width:300px;padding:8px;border:1px solid var(--input-border);border-radius:6px;font-size:.9rem;outline:none;font-family:monospace;">
-            </div>
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                <label style="font-size:.9rem;font-weight:600;width:130px;">{{t .Lang "setup.timeout"}}</label>
-                <input type="number" id="aiTimeout" value="{{if .Agent.TimeoutSeconds}}{{.Agent.TimeoutSeconds}}{{else}}90{{end}}" min="5" max="600" style="width:120px;padding:8px;border:1px solid var(--input-border);border-radius:6px;font-size:.9rem;outline:none;">
-            </div>
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                <label style="display:inline-flex;align-items:center;gap:6px;font-size:.9rem;cursor:pointer;">
-                    <input type="checkbox" id="aiEnabled" {{if .Agent.Enabled}}checked{{end}}> {{t .Lang "setup.enabled"}}
-                </label>
-                <span id="aiConfigStatus" style="font-size:.9rem;color:var(--muted);"></span>
-            </div>
-            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                <button type="button" onclick="saveAiConfig()" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">{{t .Lang "setup.saveConfig"}}</button>
+    <!-- Tab: Global setup -->
+    <section id="tab-global" class="tab-panel active" role="tabpanel">
+        <div class="section">
+            <h2>{{t .Lang "setup.theme"}}</h2>
+            <div class="subtitle">{{t .Lang "setup.themeSubtitle"}}</div>
+            <div class="toolbar" style="margin-bottom:0;">
+                <button type="button" onclick="setTheme('light')" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">☀️ {{t .Lang "setup.light"}}</button>
+                <button type="button" onclick="setTheme('dark')" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">🌙 {{t .Lang "setup.dark"}}</button>
+                <span id="themeStatus" style="font-size:.9rem;color:var(--muted);">{{t .Lang "setup.current"}} {{.Theme}}</span>
             </div>
         </div>
-    </div>
 
-    {{range $sid, $s := .Sections}}
-    <div class="section">
-        <h2>{{if $s.Config.PageTitle}}{{$s.Config.PageTitle}}{{else}}{{$s.CollectionName}}{{end}}</h2>
-        <div class="subtitle">{{$s.TotalRecords}} {{if eq $s.TotalRecords 1}}{{t $.Lang "common.recordWord"}}{{else}}{{t $.Lang "common.recordsWord"}}{{end}}</div>
-        {{if $s.Config.CollectionDescr}}<div class="descr">{{$s.Config.CollectionDescr}}</div>{{end}}
-
-        <div class="toolbar">
-            <a href="{{if $s.SetupLinks}}/pbx-setup/record/{{$s.CollectionName}}/new{{else}}/form/{{$s.CollectionName}}{{end}}" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">{{t $.Lang "tabulator.addNew"}}</a>
+        <div class="section">
+            <h2>{{t .Lang "setup.mssql"}}</h2>
+            <div class="subtitle">{{t .Lang "setup.mssqlSubtitle"}}</div>
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                <input type="text" id="mssqlDsn" value="{{.MssqlDSN}}" placeholder="sqlserver://user:pass@host:1433?database=db&amp;encrypt=disable" style="flex:1;min-width:300px;padding:8px;border:1px solid var(--input-border);border-radius:6px;font-size:.9rem;outline:none;font-family:monospace;">
+                <button type="button" onclick="saveMssqlDsn()" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">{{t .Lang "setup.saveDsn"}}</button>
+                <span id="mssqlDsnStatus" style="font-size:.9rem;color:var(--muted);"></span>
+            </div>
         </div>
 
-        <div class="table-wrap">
-            <table>
-                <thead>
-                    <tr>
-                        {{range $i, $h := $s.ColumnHeaders}}
-                        <th class="{{if $s.Config.ColumnSorting}}sortable{{end}}" data-field="{{index $s.Fields $i}}" data-sid="{{$sid}}">
-                            {{$h}}
-                            {{if $s.Config.ColumnSorting}}<span class="sort-icon">↕</span>{{end}}
-                        </th>
-                        {{end}}
-                        <th style="width:130px">{{t $.Lang "common.actions"}}</th>
-                    </tr>
-                </thead>
-                <tbody id="tableBody{{$sid}}"></tbody>
-            </table>
+        <div class="section">
+            <h2>{{t .Lang "setup.aiAgent"}}</h2>
+            <div class="subtitle">{{t .Lang "setup.aiSubtitle"}}</div>
+            <div style="display:flex;flex-direction:column;gap:10px;max-width:700px;">
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                    <label style="font-size:.9rem;font-weight:600;width:130px;">{{t .Lang "setup.provider"}}</label>
+                    <select id="aiProvider" onchange="aiProviderChanged()" style="flex:1;min-width:200px;padding:8px;border:1px solid var(--input-border);border-radius:6px;font-size:.9rem;outline:none;">
+                        <option value="openrouter" {{if eq .Agent.Provider "openrouter"}}selected{{end}}>OpenRouter</option>
+                        <option value="lmstudio" {{if eq .Agent.Provider "lmstudio"}}selected{{end}}>{{t .Lang "setup.lmstudioLocal"}}</option>
+                    </select>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                    <label style="font-size:.9rem;font-weight:600;width:130px;">{{t .Lang "setup.baseUrl"}}</label>
+                    <input type="text" id="aiBaseURL" value="{{.Agent.BaseURL}}" placeholder="http://127.0.0.1:1234/v1 or https://openrouter.ai/api/v1" style="flex:1;min-width:300px;padding:8px;border:1px solid var(--input-border);border-radius:6px;font-size:.9rem;outline:none;font-family:monospace;">
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                    <label style="font-size:.9rem;font-weight:600;width:130px;">{{t .Lang "setup.apiKey"}}</label>
+                    <input type="password" id="aiApiKey" value="{{.Agent.APIKey}}" placeholder="sk-…" style="flex:1;min-width:300px;padding:8px;border:1px solid var(--input-border);border-radius:6px;font-size:.9rem;outline:none;font-family:monospace;">
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                    <label style="font-size:.9rem;font-weight:600;width:130px;">{{t .Lang "setup.model"}}</label>
+                    <input type="text" id="aiModel" value="{{.Agent.Model}}" placeholder="openai/gpt-4o-mini" style="flex:1;min-width:300px;padding:8px;border:1px solid var(--input-border);border-radius:6px;font-size:.9rem;outline:none;font-family:monospace;">
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                    <label style="font-size:.9rem;font-weight:600;width:130px;">{{t .Lang "setup.timeout"}}</label>
+                    <input type="number" id="aiTimeout" value="{{if .Agent.TimeoutSeconds}}{{.Agent.TimeoutSeconds}}{{else}}90{{end}}" min="5" max="600" style="width:120px;padding:8px;border:1px solid var(--input-border);border-radius:6px;font-size:.9rem;outline:none;">
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                    <label style="display:inline-flex;align-items:center;gap:6px;font-size:.9rem;cursor:pointer;">
+                        <input type="checkbox" id="aiEnabled" {{if .Agent.Enabled}}checked{{end}}> {{t .Lang "setup.enabled"}}
+                    </label>
+                    <span id="aiConfigStatus" style="font-size:.9rem;color:var(--muted);"></span>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                    <button type="button" onclick="saveAiConfig()" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">{{t .Lang "setup.saveConfig"}}</button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Tab: Import collection -->
+    <section id="tab-import" class="tab-panel" role="tabpanel">
+        {{if eq .ImportSource "excel"}}
+        {{template "importWizard" dict "W" .Wizard "Lang" .Lang "Theme" .Theme}}
+        {{else if eq .ImportSource "mssql"}}
+        {{template "importWizard" dict "W" .Wizard "Lang" .Lang "Theme" .Theme}}
+        {{else}}
+        <div class="import-cards">
+            <button type="button" class="import-card" onclick="showImportSource('excel')">
+                <h3>{{t .Lang "config.fromExcel"}}</h3>
+                <p>{{t .Lang "import.excelDesc"}}</p>
+            </button>
+            <button type="button" class="import-card" onclick="showImportSource('mssql')">
+                <h3>{{t .Lang "config.fromMssql"}}</h3>
+                <p>{{t .Lang "import.mssqlDesc"}}</p>
+            </button>
         </div>
 
-        {{if $s.Config.Pagination}}
-        <div class="pagination" id="pagination{{$sid}}">
-            <button id="firstBtn{{$sid}}">«</button>
-            <button id="prevBtn{{$sid}}">‹</button>
-            <input type="text" class="page-input" id="pageInput{{$sid}}" inputmode="numeric">
-            <button id="nextBtn{{$sid}}">›</button>
-            <button id="lastBtn{{$sid}}">»</button>
-            <span class="info" id="pageInfo{{$sid}}"></span>
+        <div id="imp-excel" class="imp-source" style="display:none;margin-top:20px;">
+            <div class="import-back"><button type="button" class="raw-toggle" onclick="showImportSource('')">← {{t .Lang "common.back"}}</button></div>
+            {{$w := dict "Action" "/pbx-setup/import" "Source" "excel"}}
+            {{$ctx := dict "W" $w "Lang" .Lang "Theme" .Theme}}
+            {{template "importWizardSourceForm" $ctx}}
+        </div>
+        <div id="imp-mssql" class="imp-source" style="display:none;margin-top:20px;">
+            <div class="import-back"><button type="button" class="raw-toggle" onclick="showImportSource('')">← {{t .Lang "common.back"}}</button></div>
+            {{$w := dict "Action" "/pbx-setup/import" "Source" "mssql"}}
+            {{$ctx := dict "W" $w "Lang" .Lang "Theme" .Theme}}
+            {{template "importWizardSourceForm" $ctx}}
         </div>
         {{end}}
-    </div>
-    {{end}}
+    </section>
 
-    <div class="section">
-        <h2>{{t .Lang "setup.rules"}}</h2>
+    <!-- Tab: Applications -->
+    <section id="tab-apps" class="tab-panel" role="tabpanel">
+        {{if gt (len .Sections) 0}}
+        <div class="section">
+            <h2>{{t .Lang "tab.apps"}}</h2>
+            <div class="subtitle">{{t .Lang "setup.appsSubtitle"}}</div>
+            {{$s := index .Sections 0}}
+            <div class="toolbar">
+                <a href="/pbx-setup/record/{{$s.CollectionName}}/new" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">{{t $.Lang "tabulator.addNew"}}</a>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            {{range $i, $h := $s.ColumnHeaders}}
+                            <th class="{{if $s.Config.ColumnSorting}}sortable{{end}}" data-field="{{index $s.Fields $i}}" data-sid="0">
+                                {{$h}}
+                                {{if $s.Config.ColumnSorting}}<span class="sort-icon">↕</span>{{end}}
+                            </th>
+                            {{end}}
+                            <th style="width:130px">{{t $.Lang "common.actions"}}</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody0"></tbody>
+                </table>
+            </div>
+            {{if $s.Config.Pagination}}
+            <div class="pagination" id="pagination0">
+                <button id="firstBtn0">«</button>
+                <button id="prevBtn0">‹</button>
+                <input type="text" class="page-input" id="pageInput0" inputmode="numeric">
+                <button id="nextBtn0">›</button>
+                <button id="lastBtn0">»</button>
+                <span class="info" id="pageInfo0"></span>
+            </div>
+            {{end}}
+        </div>
+        {{end}}
+
+        <div class="sub-tab">{{t .Lang "setup.rules"}}</div>
         <div class="subtitle">{{t .Lang "setup.rulesSubtitle"}}</div>
         <form method="POST" action="/pbx-setup/rules">
             <div class="table-wrap">
@@ -219,7 +301,120 @@
                 <span id="rulesStatus" style="font-size:.9rem;color:var(--muted);margin-left:10px;"></span>
             </div>
         </form>
-    </div>
+    </section>
+
+    <!-- Tab: Views -->
+    <section id="tab-views" class="tab-panel" role="tabpanel">
+        {{if gt (len .Sections) 1}}
+        <div class="sub-tab">{{t .Lang "views.tabular"}}</div>
+        {{range $sid, $s := .Sections}}
+        {{if eq $sid 1}}
+        <div class="section">
+            <div class="toolbar">
+                <a href="/pbx-setup/record/{{$s.CollectionName}}/new" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">{{t $.Lang "tabulator.addNew"}}</a>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            {{range $i, $h := $s.ColumnHeaders}}
+                            <th class="{{if $s.Config.ColumnSorting}}sortable{{end}}" data-field="{{index $s.Fields $i}}" data-sid="{{$sid}}">
+                                {{$h}}
+                                {{if $s.Config.ColumnSorting}}<span class="sort-icon">↕</span>{{end}}
+                            </th>
+                            {{end}}
+                            <th style="width:130px">{{t $.Lang "common.actions"}}</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody{{$sid}}"></tbody>
+                </table>
+            </div>
+            {{if $s.Config.Pagination}}
+            <div class="pagination" id="pagination{{$sid}}">
+                <button id="firstBtn{{$sid}}">«</button>
+                <button id="prevBtn{{$sid}}">‹</button>
+                <input type="text" class="page-input" id="pageInput{{$sid}}" inputmode="numeric">
+                <button id="nextBtn{{$sid}}">›</button>
+                <button id="lastBtn{{$sid}}">»</button>
+                <span class="info" id="pageInfo{{$sid}}"></span>
+            </div>
+            {{end}}
+        </div>
+        {{end}}
+        {{end}}
+        {{end}}
+
+        {{if .Filters}}
+        {{$fid := len .Sections}}
+        <div class="sub-tab">{{t .Lang "views.filters"}}</div>
+        <div class="section">
+            <div class="toolbar">
+                <a href="/pbx-setup/record/_filters/new" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">{{t $.Lang "tabulator.addNew"}}</a>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            {{range $i, $h := .Filters.ColumnHeaders}}
+                            <th class="{{if $.Filters.Config.ColumnSorting}}sortable{{end}}" data-field="{{index $.Filters.Fields $i}}" data-sid="{{$fid}}">
+                                {{$h}}
+                                {{if $.Filters.Config.ColumnSorting}}<span class="sort-icon">↕</span>{{end}}
+                            </th>
+                            {{end}}
+                            <th style="width:130px">{{t $.Lang "common.actions"}}</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody{{$fid}}"></tbody>
+                </table>
+            </div>
+            {{if .Filters.Config.Pagination}}
+            <div class="pagination" id="pagination{{$fid}}">
+                <button id="firstBtn{{$fid}}">«</button>
+                <button id="prevBtn{{$fid}}">‹</button>
+                <input type="text" class="page-input" id="pageInput{{$fid}}" inputmode="numeric">
+                <button id="nextBtn{{$fid}}">›</button>
+                <button id="lastBtn{{$fid}}">»</button>
+                <span class="info" id="pageInfo{{$fid}}"></span>
+            </div>
+            {{end}}
+        </div>
+        {{end}}
+
+        {{if gt (len .Sections) 2}}
+        <div class="sub-tab">{{t .Lang "views.actions"}}</div>
+        <div class="section">
+            <div class="toolbar">
+                <a href="/pbx-setup/record/_actions/new" style="padding:8px 16px;background:var(--btn-primary);color:#fff;border-radius:6px;text-decoration:none;font-size:.9rem;">{{t $.Lang "tabulator.addNew"}}</a>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr>
+                            {{range $i, $h := (index .Sections 2).ColumnHeaders}}
+                            <th class="{{if (index $.Sections 2).Config.ColumnSorting}}sortable{{end}}" data-field="{{index (index $.Sections 2).Fields $i}}" data-sid="2">
+                                {{$h}}
+                                {{if (index $.Sections 2).Config.ColumnSorting}}<span class="sort-icon">↕</span>{{end}}
+                            </th>
+                            {{end}}
+                            <th style="width:130px">{{t $.Lang "common.actions"}}</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tableBody2"></tbody>
+                </table>
+            </div>
+            {{if (index .Sections 2).Config.Pagination}}
+            <div class="pagination" id="pagination2">
+                <button id="firstBtn2">«</button>
+                <button id="prevBtn2">‹</button>
+                <input type="text" class="page-input" id="pageInput2" inputmode="numeric">
+                <button id="nextBtn2">›</button>
+                <button id="lastBtn2">»</button>
+                <span class="info" id="pageInfo2"></span>
+            </div>
+            {{end}}
+        </div>
+        {{end}}
+    </section>
 
     <!-- Relation modal -->
     <div class="modal-overlay" id="relModal">
@@ -233,9 +428,28 @@
     </div>
 
     <script>
-        const sections = [
+        // Import source buttons toggle the inline step-1 form (Excel / MSSQL).
+        function showImportSource(src) {
+            document.querySelectorAll('.import-card').forEach(function(c) { c.style.display = src === '' ? '' : 'none'; });
+            var ex = document.getElementById('imp-excel');
+            var ms = document.getElementById('imp-mssql');
+            if (ex) ex.style.display = (src === 'excel') ? 'block' : 'none';
+            if (ms) ms.style.display = (src === 'mssql') ? 'block' : 'none';
+        }
 
-    {{range $sid, $s := .Sections}}
+        // Tab switching — registered first so tabs always work, even if the
+        // data-driven table rendering below fails for any collection.
+        function switchTab(tab) {
+            document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.toggle('active', b.dataset.tab === tab); });
+            document.querySelectorAll('.tab-panel').forEach(function(p) { p.classList.toggle('active', p.id === 'tab-' + tab); });
+        }
+        document.querySelectorAll('.tab-btn').forEach(function(btn) {
+            btn.addEventListener('click', function() { switchTab(this.dataset.tab); });
+        });
+
+        // Build sections array from the tabular data. Include _app (0), _views (1), _actions (2) and filters.
+        const sections = [
+        {{range $sid, $s := .Sections}}
             {
                 fields: {{$s.FieldsJSON | safeJS}},
                 fieldTypes: {{$s.FieldTypesJSON | safeJS}},
@@ -246,7 +460,19 @@
                 pagination: {{$s.Config.Pagination}},
                 setupLinks: {{$s.SetupLinks}},
             },
-            {{end}}
+        {{end}}
+        {{if .Filters}}
+            {
+                fields: {{.Filters.FieldsJSON | safeJS}},
+                fieldTypes: {{.Filters.FieldTypesJSON | safeJS}},
+                headers: {{.Filters.HeadersJSON | safeJS}},
+                allRecords: {{.Filters.RecordsJSON | safeJS}},
+                collName: "_filters",
+                columnSorting: {{.Filters.Config.ColumnSorting}},
+                pagination: {{.Filters.Config.Pagination}},
+                setupLinks: true,
+            },
+        {{end}}
         ];
 
         const perPage = 20;
@@ -259,6 +485,79 @@
             const d = document.createElement("div");
             d.textContent = String(s);
             return d.innerHTML;
+        }
+
+        function pbxToast(kind, msg, persist) {
+            var host = document.querySelector(".toast-host");
+            if (!host) { host = document.createElement("div"); host.className = "toast-host"; document.body.appendChild(host); }
+            var t = document.createElement("div");
+            t.className = "alert alert-" + kind + " alert-toast mount";
+            t.setAttribute("role", "alert");
+            var ico = { success: "&#10004;", danger: "&#10007;", warning: "&#9888;", info: "&#8505;" }[kind] || "&#8505;";
+            t.innerHTML = '<span class="a-ico">' + ico + '</span><span class="a-body">' + esc(msg) + '</span>';
+            var dismiss = function() { t.classList.add("leaving"); setTimeout(function() { if (t.parentNode) t.parentNode.removeChild(t); }, 200); };
+            t.addEventListener("click", dismiss);
+            host.appendChild(t);
+            var listed = host.querySelectorAll(".alert");
+            while (listed.length > 3) { listed[0].parentNode.removeChild(listed[0]); }
+            if (!persist) setTimeout(dismiss, 4500);
+            return t;
+        }
+
+        function pbxConfirm(message, opts) {
+            opts = opts || {};
+            var host = document.querySelector(".pbx-confirm-host");
+            if (!host) {
+                host = document.createElement("div");
+                host.className = "pbx-confirm-host" + (opts.mobile ? " mobile" : "");
+                document.body.appendChild(host);
+            }
+            function escHtml(s) {
+                return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+            }
+            var danger = !!opts.danger;
+            var t = function(k, fb) { return typeof _t === "function" ? (_t(k) || fb) : fb; };
+            var title = opts.title || t("common.confirm", "Confirm");
+            var confirmText = opts.confirmText || t("common.confirm", "Confirm");
+            var cancelText = opts.cancelText || t("common.cancel", "Cancel");
+            var overlay = document.createElement("div");
+            overlay.className = "pbx-confirm-overlay";
+            overlay.innerHTML =
+                '<div class="pbx-confirm" role="dialog" aria-modal="true">' +
+                    '<div class="pbx-confirm-head">' +
+                        '<span class="pbx-confirm-ico">' + (danger ? "&#9888;" : "&#10067;") + '</span>' +
+                        '<span class="pbx-confirm-title">' + escHtml(title) + '</span>' +
+                    '</div>' +
+                    '<div class="pbx-confirm-msg">' + escHtml(message) + '</div>' +
+                    '<div class="pbx-confirm-actions">' +
+                        '<button type="button" class="pbx-confirm-cancel">' + escHtml(cancelText) + '</button>' +
+                        '<button type="button" class="pbx-confirm-ok ' + (danger ? "danger" : "primary") + '">' + escHtml(confirmText) + '</button>' +
+                    '</div>' +
+                '</div>';
+            host.appendChild(overlay);
+            requestAnimationFrame(function() { overlay.classList.add("show"); });
+            return new Promise(function(resolve) {
+                var settled = false;
+                function done(val) {
+                    if (settled) return;
+                    settled = true;
+                    document.removeEventListener("keydown", onKey);
+                    overlay.classList.remove("show");
+                    setTimeout(function() { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 180);
+                    resolve(val);
+                }
+                function onKey(e) {
+                    if (e.key === "Escape") done(false);
+                    else if (e.key === "Enter") done(true);
+                }
+                var ok = overlay.querySelector(".pbx-confirm-ok");
+                var cancel = overlay.querySelector(".pbx-confirm-cancel");
+                ok.focus();
+                ok.addEventListener("click", function() { done(true); });
+                cancel.addEventListener("click", function() { done(false); });
+                overlay.addEventListener("click", function(e) { if (e.target === overlay) done(false); });
+                document.addEventListener("keydown", onKey);
+            });
         }
 
         function renderCell(val, ft) {
@@ -337,6 +636,7 @@
         function render(sid) {
             var sec = sections[sid];
             var st = state[sid];
+            if (!sec || !st) return;
             var filtered = getFiltered(sid);
             var totalPages = Math.max(1, Math.ceil(filtered.length / perPage));
             if (st.currentPage > totalPages) st.currentPage = totalPages;
@@ -346,6 +646,7 @@
             var pageRecords = filtered.slice(start, start + perPage);
 
             var tbody = document.getElementById("tableBody" + sid);
+            if (!tbody) return;
             if (!pageRecords.length) {
                 tbody.innerHTML = '<tr><td class="empty" colspan="' + (sec.fields.length + 1) + '">' + _t('common.noRecords') + '</td></tr>';
             } else {
@@ -365,7 +666,7 @@
                 }).join("");
             }
 
-            if (sec.pagination) {
+            if (sec.pagination && document.getElementById("firstBtn" + sid)) {
                 document.getElementById("firstBtn" + sid).disabled = st.currentPage <= 1;
                 document.getElementById("prevBtn" + sid).disabled = st.currentPage <= 1;
                 document.getElementById("nextBtn" + sid).disabled = st.currentPage >= totalPages;
@@ -408,17 +709,22 @@
 
             // pagination
             if (sec.pagination) {
-                document.getElementById("firstBtn" + sid).addEventListener("click", function() { state[sid].currentPage = 1; render(sid); });
-                document.getElementById("prevBtn" + sid).addEventListener("click", function() { if (state[sid].currentPage > 1) { state[sid].currentPage--; render(sid); } });
-                document.getElementById("nextBtn" + sid).addEventListener("click", function() {
+                var firstBtn = document.getElementById("firstBtn" + sid);
+                var prevBtn = document.getElementById("prevBtn" + sid);
+                var nextBtn = document.getElementById("nextBtn" + sid);
+                var lastBtn = document.getElementById("lastBtn" + sid);
+                var pageInput = document.getElementById("pageInput" + sid);
+                if (firstBtn) firstBtn.addEventListener("click", function() { state[sid].currentPage = 1; render(sid); });
+                if (prevBtn) prevBtn.addEventListener("click", function() { if (state[sid].currentPage > 1) { state[sid].currentPage--; render(sid); } });
+                if (nextBtn) nextBtn.addEventListener("click", function() {
                     var total = Math.max(1, Math.ceil(getFiltered(sid).length / perPage));
                     if (state[sid].currentPage < total) { state[sid].currentPage++; render(sid); }
                 });
-                document.getElementById("lastBtn" + sid).addEventListener("click", function() {
+                if (lastBtn) lastBtn.addEventListener("click", function() {
                     state[sid].currentPage = Math.max(1, Math.ceil(getFiltered(sid).length / perPage));
                     render(sid);
                 });
-                document.getElementById("pageInput" + sid).addEventListener("keydown", function(e) {
+                if (pageInput) pageInput.addEventListener("keydown", function(e) {
                     if (e.key === "Enter") {
                         var v = parseInt(this.value, 10);
                         var total = Math.max(1, Math.ceil(getFiltered(sid).length / perPage));
@@ -437,14 +743,14 @@
 
         // delete record
         async function deleteRecord(sid, collName, setupLinks, id) {
-            if (!confirm(_t('common.confirmDeleteRecord'))) return;
+            if (!(await pbxConfirm(_t('common.confirmDeleteRecord'), { danger: true }))) return;
             var url = setupLinks ? "/pbx-setup/record/" + collName + "/" + id + "/delete" : "/form/" + collName + "/" + id + "/delete";
             var res = await fetch(url, { method: "POST" });
-            if (!res.ok) { alert(_t('common.deleteFailed')); return; }
+            if (!res.ok) { pbxToast('danger', _t('common.deleteFailed')); return; }
             var idx = sections[sid].allRecords.findIndex(function(r) { return r.id === id; });
             if (idx !== -1) sections[sid].allRecords.splice(idx, 1);
             render(sid);
-            alert(_t('common.recordDeleted'));
+            pbxToast('success', _t('common.recordDeleted'));
         }
 
         // relation modal
@@ -508,6 +814,8 @@
             if (e.target === this) closeRelModal();
         });
 
+        // Tab switching (registered above the table render loop)
+
         function goBack(fallback) {
             if (window.history.length > 1) {
                 window.history.back();
@@ -552,7 +860,7 @@
         function saveMssqlDsn() {
             var dsn = document.getElementById('mssqlDsn').value.trim();
             if (!dsn) {
-                alert(_t('setup.dsnRequired'));
+                pbxToast('warning', _t('setup.dsnRequired'));
                 return;
             }
             var fd = new FormData();

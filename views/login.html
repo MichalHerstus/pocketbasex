@@ -84,12 +84,7 @@
       .login-card button[type="reset"]:hover {
         background: var(--th-hover);
       }
-      .error {
-        color: var(--danger);
-        text-align: center;
-        margin: 12px 0 0 0;
-        font-size: 0.9rem;
-      }
+      .alert { text-align: left; margin: 14px 0 0; }
     </style>
     <link rel="stylesheet" href="/assets/theme.css">
   </head>
@@ -108,7 +103,10 @@
         <input id="password" name="password" type="password" placeholder="{{t .Lang "login.password"}}" required />
 
         {{if .Error}}
-        <p class="error">{{.Error}}</p>
+        <div class="alert alert-danger" role="alert">
+          <span class="a-ico">&#10007;</span>
+          <span class="a-body">{{.Error}}</span>
+        </div>
         {{end}}
 
         <div class="actions">

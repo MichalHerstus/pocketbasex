@@ -32,14 +32,17 @@ func (w *statusWriter) WriteHeader(code int) {
 }
 
 // requestLogger wraps the PB mux (assigned to Server.Handler after se.Next()
-// builds it) and emits one structured log line per request.
-func requestLogger(next http.Handler) http.Handler {
+// builds it) and emits one structured log line per request. In dev mode every
+// request is logged; in production only errors (status >= 400) are logged.
+func requestLogger(next http.Handler, devMode bool) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 		sw := &statusWriter{ResponseWriter: w, status: http.StatusOK}
 		next.ServeHTTP(sw, r)
-		log.Printf("method=%s path=%q status=%d dur=%s remote=%s",
-			r.Method, r.URL.Path, sw.status, time.Since(start).Round(time.Microsecond), r.RemoteAddr)
+		if devMode || sw.status >= 400 {
+			log.Printf("method=%s path=%q status=%d dur=%s remote=%s",
+				r.Method, r.URL.Path, sw.status, time.Since(start).Round(time.Microsecond), r.RemoteAddr)
+		}
 	})
 }
 
@@ -78,6 +81,7 @@ func registerAppRoutes(se *core.ServeEvent) {
 // registerSetupRoutes registers the super-admin /pbx-setup hub and its record editors.
 func registerSetupRoutes(se *core.ServeEvent) {
 	se.Router.GET("/pbx-setup", func(e *core.RequestEvent) error { return handlePbxSetup(e) })
+	se.Router.POST("/pbx-setup/import", func(e *core.RequestEvent) error { return handleSetupImport(e) })
 	se.Router.GET("/pbx-setup/record/{coll}/new", func(e *core.RequestEvent) error { return handleSetupRecord(e) })
 	se.Router.GET("/pbx-setup/record/{coll}/{id}", func(e *core.RequestEvent) error { return handleSetupRecord(e) })
 	se.Router.POST("/pbx-setup/record/{coll}", func(e *core.RequestEvent) error { return handleSetupRecordPost(e) })
@@ -254,6 +258,7 @@ func registerAIRoutes(se *core.ServeEvent) {
 	se.Router.GET("/mobile/ai", func(e *core.RequestEvent) error { return handleMobileAi(e) })
 	se.Router.POST("/ai/chat", rateLimitMiddleware(aiChatRateLimiter)(handleAgentChat))
 	se.Router.POST("/ai/chat/stream", rateLimitMiddleware(aiStreamRateLimiter)(handleAgentChatStream))
+	se.Router.POST("/ai/view-chat/stream", rateLimitMiddleware(aiStreamRateLimiter)(handleViewChatStream))
 	se.Router.POST("/ai/confirm", func(e *core.RequestEvent) error { return handleAgentConfirm(e) })
 }
 

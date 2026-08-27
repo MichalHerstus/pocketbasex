@@ -174,6 +174,7 @@ type AppLink struct {
 	Collection string
 	Label      string
 	URL        string
+	Count      int
 }
 
 type AppGroup struct {
@@ -184,21 +185,26 @@ type AppGroup struct {
 
 type AppPageData struct {
 	LangData
-	Theme    string
-	BasePath string
-	Name     string
-	Error    string
-	Groups   []AppGroup
+	Theme        string
+	BasePath     string
+	Name         string
+	Error        string
+	Groups       []AppGroup
+	IsSuperAdmin bool
 }
 
 type PbxSetupPageData struct {
 	LangData
-	Theme    string
-	MssqlDSN string
-	Agent    AgentConfig
-	Sections []TabulatorPageData
-	Rules    []SetupCollectionRules
-	Users    []SetupUser
+	Theme       string
+	MssqlDSN    string
+	Agent       AgentConfig
+	Sections    []TabulatorPageData // _app, _views, _actions
+	Rules       []SetupCollectionRules
+	Users       []SetupUser
+	Filters     *TabulatorPageData // _filters for Views tab
+	ActiveTab   string             // default "global"
+	ImportSource string            // "" | "excel" | "mssql" (embedded import wizard)
+	Wizard      ImportWizardPageData
 }
 
 // SetupUser is a user record shown in the rules editor's user checkbox list.
@@ -292,15 +298,30 @@ type ConfigEditorPageData struct {
 // FieldOpt is a single option of a structured JSON field (checkbox option or
 // dynamic row) in the schema-driven setup record editor.
 type FieldOpt struct {
-	Index   int    // 1-based index (absolute field index for fieldMulti/fieldLabels)
-	Name    string // field name (or DB column for mapping rows)
-	Label   string // display label / title
-	Checked bool
-	Value   string // value when present (e.g. per-field label for fieldLabels)
+	Index      int    // 1-based index (absolute field index for fieldMulti/fieldLabels)
+	Name       string // field name (or DB column for mapping rows)
+	Label      string // display label / title
+	Checked    bool
+	Value      string // value when present (e.g. per-field label for fieldLabels)
+	ColumnSortable   bool // columnPicker: column is sortable
+	ColumnSearchable bool // columnPicker: column is searchable
+	ColumnOrder      int  // columnPicker: 1-based display order (0 = use Index)
+}
+
+// LayoutCell describes one field cell within a form-layout row (formLayoutGrid).
+type LayoutCell struct {
+	Field string // target-collection field name
+	Label string // display label override
+}
+
+// LayoutRow is one visual row of the form layout grid (formLayoutGrid).
+type LayoutRow struct {
+	Cells []LayoutCell
 }
 
 // JsonFormField is a single structured input in a schema-driven JSON editor.
-// Type is one of: text, number, bool, select, fieldMulti, fieldLabels, mapping, columns.
+// Type is one of: text, number, bool, select, fieldMulti, fieldLabels, mapping,
+// columns, columnPicker, formLayoutGrid.
 type JsonFormField struct {
 	Key          string
 	Label        string
@@ -309,6 +330,8 @@ type JsonFormField struct {
 	Checked      bool
 	Options      []string
 	FieldOptions []FieldOpt
+	LayoutRows   []LayoutRow
+	TargetFields []string
 }
 
 // JsonFormSection groups the structured inputs for one JSON record field
@@ -347,7 +370,8 @@ type WizardColumn struct {
 	Values  string
 }
 
-// ImportWizardPageData backs the /pbx-config/import-* wizard.
+// ImportWizardPageData backs the /pbx-config/import-* wizard and the embedded
+// import step on /pbx-setup.
 type ImportWizardPageData struct {
 	LangData
 	Theme     string
@@ -363,4 +387,6 @@ type ImportWizardPageData struct {
 	Message   string
 	Created   string // created collection name (step 3)
 	CreatedID string
+	Action    string // form action URL (differs between standalone & embedded)
+	BackURL   string // "back" link target (step 2/3)
 }

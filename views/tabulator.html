@@ -69,9 +69,9 @@
         .f-op { flex: .5; }
         .action-result-out { background:var(--readonly-bg); border: 1px solid var(--input-border); border-radius: 6px; padding: 10px 12px; font-family: monospace; font-size: .85rem; line-height: 1.5; white-space: pre-wrap; max-height: 320px; overflow-y: auto; margin-bottom: 12px; }
         .action-result-out:empty { display: none; }
-        .action-status { padding: 8px 12px; border-radius: 6px; font-size: .9rem; font-weight: 600; }
-        .action-status.ok { background:var(--success-soft); color:var(--success-strong); }
-        .action-status.err { background:var(--danger-soft); color:var(--danger-strong); }
+        .action-status { font-weight: 600; }
+        .action-result-out:has(+ .alert-success) { border-color: var(--success); }
+        .action-result-out:has(+ .alert-danger) { border-color: var(--danger); }
         .row-check { width: 34px; text-align: center; cursor: pointer; }
         .f-val { flex: 1; }
         .f-val input, .f-val select { width: 100%; box-sizing: border-box; }
@@ -82,9 +82,38 @@
         .f-conn { display: flex; align-items: center; justify-content: center; margin-bottom: 8px; }
         .f-conn select { padding: 5px 8px; border: 1px solid var(--input-border); border-radius: 6px; font-size: .8rem; font-weight: 600; color:var(--text); background:var(--body-bg); outline: none; cursor: pointer; }
         .filter-note { font-size: .8rem; color:var(--warning); margin-top: 4px; }
+        .ai-bar { display:flex; align-items:center; gap:8px; margin-bottom:12px; padding:8px 12px;
+                  background:var(--card-bg); border:2px solid var(--accent); border-radius:8px; }
+        .ai-bar input { flex:1; padding:8px 12px; border:1px solid var(--input-border); border-radius:6px;
+                        font-size:.9rem; outline:none; background:var(--body-bg); color:var(--text); }
+        .ai-bar input:focus { border-color:var(--accent); }
+        .ai-icon { font-size:1.1rem; }
+        .ai-status { padding:6px 12px; margin-bottom:8px; font-size:.85rem; color:var(--muted);
+                     background:var(--card-bg); border-radius:6px; border-left:3px solid var(--accent); display:flex; align-items:center; gap:8px; }
+        .ai-spinner { display:inline-block; width:14px; height:14px; border:2px solid var(--accent); border-top-color:transparent;
+                      border-radius:50%; animation:ai-spin .6s linear infinite; flex-shrink:0; }
+        @keyframes ai-spin { to { transform:rotate(360deg); } }
+        .ai-status.done { border-left-color:var(--success); }
+        .ai-status.err  { border-left-color:var(--danger); }
+        .ai-confirm { padding:10px 14px; margin-bottom:12px; background:var(--accent-soft);
+                      border:1px solid var(--accent); border-radius:8px; display:flex; align-items:center; gap:12px; }
+        .ai-confirm .ai-confirm-text { flex:1; font-size:.9rem; }
     </style>
     <link rel="stylesheet" href="/assets/theme.css">
     <script src="/api/lang/{{.Lang}}/catalog.js"></script>
+    <script>
+        var _pluralWord = ["{{t .Lang "common.recordWord"}}", "{{t .Lang "common.recordFew"}}", "{{t .Lang "common.recordMany"}}"];
+        var _pluralLang = "{{.Lang}}";
+        function _pluralCount(n) {
+            var an = Math.abs(n), l2 = an % 100, l1 = an % 10;
+            if (_pluralLang === "cs") {
+                if (l1 === 1 && l2 !== 11) return 0;
+                if (l1 >= 2 && l1 <= 4 && (l2 < 12 || l2 > 14)) return 1;
+                return 2;
+            }
+            return an === 1 ? 0 : 1;
+        }
+    </script>
 </head>
 <body data-theme="{{.Theme}}">
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:4px;">
@@ -93,7 +122,7 @@
         <button type="button" onclick="toggleLang()" class="pbx-icon-btn">{{if eq .Lang "cs"}}EN{{else}}CS{{end}}</button>
         <button type="button" onclick="window.location.href='/app'" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;margin-left:auto;">{{t .Lang "common.close"}}</button>
     </div>
-    <div class="subtitle">{{.TotalRecords}} {{if eq .TotalRecords 1}}{{t .Lang "common.recordWord"}}{{else}}{{t .Lang "common.recordsWord"}}{{end}}</div>
+    <div class="subtitle">{{.TotalRecords}} {{plural .TotalRecords .Lang (t .Lang "common.recordWord") (t .Lang "common.recordFew") (t .Lang "common.recordMany")}}</div>
     {{if .Config.CollectionDescr}}<div class="descr">{{.Config.CollectionDescr}}</div>{{end}}
 
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
@@ -119,6 +148,15 @@
         </select>
         <button id="runActionBtn" style="padding:8px 16px;background:var(--btn-danger);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">{{t .Lang "common.run"}}</button>
     </div>
+
+    <div class="ai-bar" id="aiBar">
+        <span class="ai-icon">&#10024;</span>
+        <input type="text" id="aiInput" placeholder="{{t .Lang "ai.placeholder"}}" autocomplete="off">
+        <button id="aiSendBtn" class="btn-sm btn-primary">AI</button>
+        <button id="aiClearBtn" class="btn-sm btn-neutral" style="display:none;">&#10005;</button>
+    </div>
+    <div id="aiStatus" class="ai-status" style="display:none;"></div>
+    <div id="aiConfirm" class="ai-confirm" style="display:none;"></div>
 
     <div class="table-wrap">
         <table>
@@ -314,7 +352,7 @@
             </div>
             <div class="modal-body">
                 <div class="action-result-out" id="actionResultOutput"></div>
-                <div class="action-status" id="actionResultStatus"></div>
+                <div class="action-status" id="actionResultStatus" role="alert"></div>
             </div>
         </div>
     </div>
@@ -337,6 +375,97 @@
             const d = document.createElement("div");
             d.textContent = String(s);
             return d.innerHTML;
+        }
+
+        var toastTimer = null;
+        function pbxToast(kind, msg, persist) {
+            var host = document.querySelector(".toast-host");
+            if (!host) {
+                host = document.createElement("div");
+                host.className = "toast-host";
+                document.body.appendChild(host);
+            }
+            var t = document.createElement("div");
+            t.className = "alert alert-" + kind + " alert-toast mount";
+            t.setAttribute("role", "alert");
+            var ico = { success: "&#10004;", danger: "&#10007;", warning: "&#9888;", info: "&#8505;" }[kind] || "&#8505;";
+            t.innerHTML = '<span class="a-ico">' + ico + '</span><span class="a-body">' + esc(msg) + '</span>';
+            var dismiss = function() {
+                t.classList.add("leaving");
+                setTimeout(function() { if (t.parentNode) t.parentNode.removeChild(t); }, 200);
+            };
+            t.addEventListener("click", dismiss);
+            host.appendChild(t);
+            var listed = host.querySelectorAll(".alert");
+            while (listed.length > 3) { listed[0].parentNode.removeChild(listed[0]); }
+            if (!persist) {
+                setTimeout(dismiss, 4500);
+            }
+            return t;
+        }
+        /* minimal inline alert (not a toast) for in-page status boxes */
+        function alertEl(el, kind, msg) {
+            var ico = { success: "&#10004;", danger: "&#10007;", warning: "&#9888;", info: "&#8505;" }[kind] || "&#8505;";
+            el.className = "alert alert-" + kind;
+            el.setAttribute("role", "alert");
+            el.innerHTML = '<span class="a-ico">' + ico + '</span><span class="a-body">' + esc(msg) + '</span>';
+            return el;
+        }
+
+        function pbxConfirm(message, opts) {
+            opts = opts || {};
+            var host = document.querySelector(".pbx-confirm-host");
+            if (!host) {
+                host = document.createElement("div");
+                host.className = "pbx-confirm-host" + (opts.mobile ? " mobile" : "");
+                document.body.appendChild(host);
+            }
+            function escHtml(s) {
+                return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+            }
+            var danger = !!opts.danger;
+            var t = function(k, fb) { return typeof _t === "function" ? (_t(k) || fb) : fb; };
+            var title = opts.title || t("common.confirm", "Confirm");
+            var confirmText = opts.confirmText || t("common.confirm", "Confirm");
+            var cancelText = opts.cancelText || t("common.cancel", "Cancel");
+            var overlay = document.createElement("div");
+            overlay.className = "pbx-confirm-overlay";
+            overlay.innerHTML =
+                '<div class="pbx-confirm" role="dialog" aria-modal="true">' +
+                    '<div class="pbx-confirm-head">' +
+                        '<span class="pbx-confirm-ico">' + (danger ? "&#9888;" : "&#10067;") + '</span>' +
+                        '<span class="pbx-confirm-title">' + escHtml(title) + '</span>' +
+                    '</div>' +
+                    '<div class="pbx-confirm-msg">' + escHtml(message) + '</div>' +
+                    '<div class="pbx-confirm-actions">' +
+                        '<button type="button" class="pbx-confirm-cancel">' + escHtml(cancelText) + '</button>' +
+                        '<button type="button" class="pbx-confirm-ok ' + (danger ? "danger" : "primary") + '">' + escHtml(confirmText) + '</button>' +
+                    '</div>' +
+                '</div>';
+            host.appendChild(overlay);
+            requestAnimationFrame(function() { overlay.classList.add("show"); });
+            return new Promise(function(resolve) {
+                var settled = false;
+                function done(val) {
+                    if (settled) return;
+                    settled = true;
+                    document.removeEventListener("keydown", onKey);
+                    overlay.classList.remove("show");
+                    setTimeout(function() { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 180);
+                    resolve(val);
+                }
+                function onKey(e) {
+                    if (e.key === "Escape") done(false);
+                    else if (e.key === "Enter") done(true);
+                }
+                var ok = overlay.querySelector(".pbx-confirm-ok");
+                var cancel = overlay.querySelector(".pbx-confirm-cancel");
+                ok.focus();
+                ok.addEventListener("click", function() { done(true); });
+                cancel.addEventListener("click", function() { done(false); });
+                overlay.addEventListener("click", function(e) { if (e.target === overlay) done(false); });
+                document.addEventListener("keydown", onKey);
+            });
         }
 
         function renderCell(val, ft) {
@@ -463,7 +592,7 @@
                 document.getElementById("nextBtn").disabled = currentPage >= totalPages;
                 document.getElementById("lastBtn").disabled = currentPage >= totalPages;
                 document.getElementById("pageInput").value = currentPage;
-                document.getElementById("pageInfo").textContent = _t('common.page') + " " + currentPage + " " + _t('common.of') + " " + totalPages + " (" + filtered.length + " " + _t('common.recordsWord') + ")";
+                document.getElementById("pageInfo").textContent = _t('common.page') + " " + currentPage + " " + _t('common.of') + " " + totalPages + " (" + filtered.length + " " + _pluralWord[_pluralCount(filtered.length)] + ")";
             }
         }
 
@@ -975,10 +1104,10 @@
             return null;
         }
 
-        function deleteSavedFilter() {
+        async function deleteSavedFilter() {
             var f = selectedSavedFilter();
             if (!f) return;
-            if (!confirm(_t('tabulator.deleteFilterConfirm').replace('%s', f.name))) return;
+            if (!(await pbxConfirm(_t('tabulator.deleteFilterConfirm').replace('%s', f.name), { danger: true }))) return;
             fetch("/api/filters/" + encodeURIComponent(f.id), { method: "DELETE", credentials: "same-origin" })
                 .then(function(r) { return r.json(); })
                 .then(function(res) {
@@ -990,16 +1119,16 @@
                             if (tbSel) tbSel.selectedIndex = 0;
                         });
                     } else {
-                        alert(res.message || _t('tabulator.filterDeleteFailed'));
+                        pbxToast('danger', res.message || _t('tabulator.filterDeleteFailed'));
                     }
                 })
-                .catch(function() { alert(_t('tabulator.filterDeleteFailed')); });
+                .catch(function() { pbxToast('danger', _t('tabulator.filterDeleteFailed')); });
         }
 
         function saveFilterAction() {
             var def = readBuilderDef();
-            if (!def.name) { alert(_t('tabulator.filterNameRequired')); return; }
-            if (!def.conditions.length) { alert(_t('tabulator.conditionRequired')); return; }
+            if (!def.name) { pbxToast('warning', _t('tabulator.filterNameRequired')); return; }
+            if (!def.conditions.length) { pbxToast('warning', _t('tabulator.conditionRequired')); return; }
             document.getElementById("filterSaveBtn").disabled = true;
             fetch("/api/filters/{{.ConfigName}}", {
                 method: "POST",
@@ -1010,13 +1139,13 @@
                 .then(function(r) { return r.json(); })
                 .then(function(res) {
                     document.getElementById("filterSaveBtn").disabled = false;
-                    if (!res.ok) { alert(res.message || _t('tabulator.filterSaveFailed')); return; }
+                    if (!res.ok) { pbxToast('danger', res.message || _t('tabulator.filterSaveFailed')); return; }
                     loadSavedFilters().then(function() {
                         activateFilterWithValues(def, filterValues);
                         closeAdvFilterModal();
                     });
                 })
-                .catch(function() { document.getElementById("filterSaveBtn").disabled = false; alert(_t('tabulator.filterSaveFailed')); });
+                .catch(function() { document.getElementById("filterSaveBtn").disabled = false; pbxToast('danger', _t('tabulator.filterSaveFailed')); });
         }
 
         function openAdvFilterModal() {
@@ -1156,13 +1285,13 @@
 
         // delete record
         async function deleteRecord(collName, id) {
-            if (!confirm(_t('common.confirmDeleteRecord'))) return;
+            if (!(await pbxConfirm(_t('common.confirmDeleteRecord'), { danger: true }))) return;
             var res = await fetch("{{.BasePath}}/form/" + collName + "/" + id + "/delete", { method: "POST" });
-            if (!res.ok) { alert(_t('common.deleteFailed')); return; }
+            if (!res.ok) { pbxToast('danger', _t('common.deleteFailed')); return; }
             var idx = allRecords.findIndex(function(r) { return r.id === id; });
             if (idx !== -1) allRecords.splice(idx, 1);
             render();
-            alert(_t('common.recordDeleted'));
+            pbxToast('success', _t('common.recordDeleted'));
         }
 
         // relation modal
@@ -1282,7 +1411,7 @@
             var sheetName = this.querySelector("[name=sheetName]").value.trim();
             if (!fileName || !sheetName) {
                 e.preventDefault();
-                alert(_t('tabulator.fillBoth'));
+                pbxToast('warning', _t('tabulator.fillBoth'));
                 return;
             }
         });
@@ -1308,7 +1437,7 @@
             var fileName = document.getElementById("exportFileName").value.trim();
             var sheetName = document.getElementById("exportSheetName").value.trim();
             if (!fileName || !sheetName) {
-                alert(_t('tabulator.fillBoth'));
+                pbxToast('warning', _t('tabulator.fillBoth'));
                 return;
             }
             window.location.href = "/export/{{.CollectionName}}?excelFileName=" + encodeURIComponent(fileName) + "&sheetName=" + encodeURIComponent(sheetName);
@@ -1338,7 +1467,7 @@
         if (mssqlExportBtn) {
             mssqlExportBtn.addEventListener("click", function() {
                 var p = getMssqlParams();
-                if (!p.dsn || !p.table) { alert(_t('tabulator.mssqlNotConfigured')); return; }
+                if (!p.dsn || !p.table) { pbxToast('warning', _t('tabulator.mssqlNotConfigured')); return; }
                 closeMssqlModal();
                 doMssqlExport(p, false);
             });
@@ -1352,27 +1481,27 @@
             if (createTable) fd.append("createTable", "1");
             fetch("/mssql-export/{{.CollectionName}}", { method: "POST", body: fd })
                 .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
-                .then(function(res) {
+                .then(async function(res) {
                     if (res.ok) {
-                        alert(_t('tabulator.mssqlExportOk').replace('%s', res.data.message));
+                        pbxToast('success', _t('tabulator.mssqlExportOk').replace('%s', res.data.message));
                     } else if (res.data && res.data.tableMissing) {
-                        if (confirm(_t('tabulator.mssqlTableMissing').replace('%s', res.data.table))) {
+                        if (await pbxConfirm(_t('tabulator.mssqlTableMissing').replace('%s', res.data.table))) {
                             doMssqlExport(p, true);
                         }
                     } else {
-                        alert(_t('tabulator.exportFailed').replace('%s', res.data.message || _t('common.unknownError')));
+                        pbxToast('danger', _t('tabulator.exportFailed').replace('%s', res.data.message || _t('common.unknownError')));
                     }
                 })
-                .catch(function() { alert(_t('tabulator.exportFailed').replace('%s', _t('common.unknownError'))); });
+                .catch(function() { pbxToast('danger', _t('tabulator.exportFailed').replace('%s', _t('common.unknownError'))); });
         }
 
         var mssqlImportBtn = document.getElementById("mssqlImportBtn");
         if (mssqlImportBtn) {
-            mssqlImportBtn.addEventListener("click", function() {
+            mssqlImportBtn.addEventListener("click", async function() {
                 var p = getMssqlParams();
-                if (!p.dsn || !p.table) { alert(_t('tabulator.mssqlNotConfigured')); return; }
+                if (!p.dsn || !p.table) { pbxToast('warning', _t('tabulator.mssqlNotConfigured')); return; }
                 closeMssqlModal();
-                if (!confirm(_t('tabulator.mssqlImportConfirm'))) return;
+                if (!(await pbxConfirm(_t('tabulator.mssqlImportConfirm')))) return;
                 var fd = new FormData();
                 fd.append("dsn", p.dsn);
                 fd.append("table", p.table);
@@ -1380,10 +1509,10 @@
                 fetch("/mssql-import/{{.CollectionName}}", { method: "POST", body: fd })
                     .then(function(r) { return r.json().then(function(d) { return { ok: r.ok, data: d }; }); })
                     .then(function(res) {
-                        if (res.ok) alert(_t('tabulator.mssqlImportOk').replace('%s', res.data.message));
-                        else alert(_t('tabulator.importFailed').replace('%s', res.data.message || _t('common.unknownError')));
+                        if (res.ok) pbxToast('success', _t('tabulator.mssqlImportOk').replace('%s', res.data.message));
+                        else pbxToast('danger', _t('tabulator.importFailed').replace('%s', res.data.message || _t('common.unknownError')));
                     })
-                    .catch(function() { alert(_t('tabulator.importFailed').replace('%s', _t('common.unknownError'))); });
+                    .catch(function() { pbxToast('danger', _t('tabulator.importFailed').replace('%s', _t('common.unknownError'))); });
             });
         }
 
@@ -1391,7 +1520,7 @@
         var params = new URLSearchParams(window.location.search);
         var msg = params.get("msg");
         if (msg) {
-            alert(msg);
+            pbxToast('info', msg);
             var url = new URL(window.location);
             url.searchParams.delete("msg");
             window.history.replaceState({}, "", url);
@@ -1474,15 +1603,15 @@
             document.getElementById('selectAllChk').checked = all && chks.length > 0;
         }
 
-        document.getElementById('runActionBtn').addEventListener('click', function() {
+        document.getElementById('runActionBtn').addEventListener('click', async function() {
             var actionId = document.getElementById('actionSelect').value;
-            if (!actionId) { alert(_t('tabulator.selectActionFirst')); return; }
+            if (!actionId) { pbxToast('warning', _t('tabulator.selectActionFirst')); return; }
             var ids = selectedIds();
             var action = actionOptions[actionId];
             var confirmed = true;
             if (!ids.length && action && action.onList !== undefined) {
                 // no selection: run on all visible records
-                confirmed = confirm(_t('tabulator.runAllConfirm'));
+                confirmed = await pbxConfirm(_t('tabulator.runAllConfirm'));
             }
             if (!confirmed) return;
             runAction(actionId, ids);
@@ -1516,10 +1645,13 @@
             var out = document.getElementById('actionResultOutput');
             var status = document.getElementById('actionResultStatus');
             out.textContent = (res.output || []).join('\n');
-            status.className = 'action-status ' + (res.ok !== false ? 'ok' : 'err');
-            status.textContent = res.ok === false
-                ? (_t('common.error') + ': ' + (res.error || _t('common.unknownError')))
-                : (_t('common.success') + (res.affected ? ' — ' + res.affected + ' ' + _t('common.affected') : ''));
+            var ok = res.ok !== false;
+            status.className = 'action-status alert ' + (ok ? 'alert-success' : 'alert-danger');
+            status.innerHTML = '<span class="a-ico">' + (ok ? '&#10004;' : '&#10007;') + '</span><span class="a-body">' +
+                esc(ok
+                    ? (_t('common.success') + (res.affected ? ' — ' + res.affected + ' ' + _t('common.affected') : ''))
+                    : (_t('common.error') + ': ' + (res.error || _t('common.unknownError')))) +
+                '</span>';
             document.getElementById('actionResultModal').classList.add('open');
         }
 
@@ -1528,6 +1660,176 @@
         }
 
         loadActions();
+
+        // ---- AI view agent ----
+        var aiBusy = false;
+        var aiPendingAction = null;
+        var aiOriginalRecords = null;
+
+        document.getElementById("aiSendBtn").addEventListener("click", sendAI);
+        document.getElementById("aiInput").addEventListener("keydown", function(e) {
+            if (e.key === "Enter" && !aiBusy) sendAI();
+        });
+        document.getElementById("aiClearBtn").addEventListener("click", clearAIFilter);
+
+        function sendAI() {
+            var input = document.getElementById("aiInput");
+            var text = input.value.trim();
+            if (!text || aiBusy) return;
+            aiBusy = true;
+            input.value = "";
+            document.getElementById("aiSendBtn").disabled = true;
+            document.getElementById("aiConfirm").style.display = "none";
+            setAIStatus(_t("ai.thinking"));
+
+            var labelMap = {};
+            fields.forEach(function(f, i) { if (headers[i]) labelMap[headers[i]] = f; });
+
+            var body = JSON.stringify({
+                messages: [{ role: "user", content: text }],
+                collection: "{{.CollectionName}}",
+                configName: "{{.ConfigName}}",
+                labelMap: labelMap
+            });
+
+            fetch("/ai/view-chat/stream", { method: "POST", headers: { "Content-Type": "application/json" }, body: body })
+            .then(function(resp) {
+                var reader = resp.body.getReader();
+                var decoder = new TextDecoder();
+                var buffer = "";
+                function read() {
+                    reader.read().then(function(result) {
+                        if (result.done) { finishAI(); return; }
+                        buffer += decoder.decode(result.value, { stream: true });
+                        var lines = buffer.split("\n");
+                        buffer = lines.pop();
+                        lines.forEach(function(line) {
+                            if (line.startsWith("data: ")) {
+                                try { handleAIEvent(JSON.parse(line.substring(6))); } catch(e) {}
+                            }
+                        });
+                        read();
+                    });
+                }
+                read();
+            })
+            .catch(function(err) {
+                setAIStatus(_t("ai.failed").replace("%s", String(err)), "err");
+                finishAI();
+            });
+        }
+
+        function handleAIEvent(ev) {
+            if (ev.type === "text" && ev.delta) {
+                var el = document.getElementById("aiStatus");
+                var msgEl = el.querySelector(".ai-msg");
+                if (msgEl) msgEl.textContent += ev.delta;
+                else setAIStatus(ev.delta);
+            } else if (ev.type === "status" && ev.message) {
+                setAIStatus(ev.message);
+            } else if (ev.type === "done" && ev.result) {
+                applyAIResult(ev.result);
+            } else if (ev.type === "error") {
+                setAIStatus(_t("ai.failed").replace("%s", ev.message || "unknown"), "err");
+                finishAI();
+            }
+        }
+
+        function setAIStatus(msg, cls) {
+            var el = document.getElementById("aiStatus");
+            el.style.display = "flex";
+            el.className = "ai-status" + (cls ? " " + cls : "");
+            el.innerHTML = '<span class="ai-spinner"></span><span class="ai-msg">' + esc(msg) + '</span>';
+        }
+
+        function applyAIResult(result) {
+            if (result.pendingAction) {
+                aiPendingAction = result.pendingAction;
+                showAIConfirm(result.pendingAction);
+                setAIStatus(_t("ai.confirmTitle"), "done");
+                finishAI();
+            } else if (result.records && result.records.length > 0) {
+                if (!aiOriginalRecords) aiOriginalRecords = allRecords.slice();
+                allRecords.length = 0;
+                result.records.forEach(function(r) { allRecords.push(r); });
+                currentPage = 1;
+                render();
+                var el = document.getElementById("aiStatus");
+                el.innerHTML = '<span class="ai-spinner" style="display:none;"></span><span class="ai-msg">' +
+                    _t("ai.filtered").replace("%d", result.records.length) +
+                    ' &bull; <a href="javascript:void(0)" onclick="clearAIFilter()" style="color:var(--accent)">' + _t("ai.clear") + '</a></span>';
+                el.className = "ai-status done";
+                document.getElementById("aiClearBtn").style.display = "inline-block";
+                finishAI();
+            } else {
+                setAIStatus(result.finalText || "(no result)", "done");
+                finishAI();
+            }
+        }
+
+        function showAIConfirm(action) {
+            var el = document.getElementById("aiConfirm");
+            el.style.display = "flex";
+            el.innerHTML = '<span class="ai-confirm-text">' + esc(action.summary) + '</span>' +
+                '<button onclick="confirmAI(true)" class="btn-sm btn-primary">' + _t("ai.approve") + '</button>' +
+                '<button onclick="confirmAI(false)" class="btn-sm btn-danger">' + _t("ai.reject") + '</button>';
+        }
+
+        function confirmAI(approved) {
+            if (!aiPendingAction) return;
+            var actionId = aiPendingAction.id;
+            document.getElementById("aiConfirm").style.display = "none";
+            setAIStatus(_t("ai.thinking"));
+            fetch("/ai/confirm", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ actionID: actionId, approved: approved })
+            })
+            .then(function(r) { return r.json(); })
+            .then(function(res) {
+                setAIStatus(res.ok ? _t("ai.done").replace("%s", res.message) : _t("ai.failed").replace("%s", res.message), res.ok ? "done" : "err");
+                if (res.ok) fetchTabulatorPage();
+                aiPendingAction = null;
+                finishAI();
+            })
+            .catch(function(err) {
+                setAIStatus(_t("ai.failed").replace("%s", String(err)), "err");
+                aiPendingAction = null;
+                finishAI();
+            });
+        }
+
+        function clearAIFilter() {
+            if (aiOriginalRecords) {
+                allRecords.length = 0;
+                aiOriginalRecords.forEach(function(r) { allRecords.push(r); });
+                aiOriginalRecords = null;
+            }
+            currentPage = 1;
+            render();
+            document.getElementById("aiStatus").style.display = "none";
+            document.getElementById("aiClearBtn").style.display = "none";
+        }
+
+        function fetchTabulatorPage() {
+            fetch("/api/tabulator-data/{{.ConfigName}}")
+                .then(function(r) { return r.json(); })
+                .then(function(data) {
+                    if (data && data.records) {
+                        allRecords.length = 0;
+                        data.records.forEach(function(r) { allRecords.push(r); });
+                        aiOriginalRecords = null;
+                        currentPage = 1;
+                        render();
+                    }
+                })
+                .catch(function(){});
+        }
+
+        function finishAI() {
+            aiBusy = false;
+            document.getElementById("aiSendBtn").disabled = false;
+        }
     </script>
 </body>
 </html>

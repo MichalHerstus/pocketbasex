@@ -31,11 +31,24 @@
         .btn-neutral { background: var(--btn-neutral); color: #fff; }
         .btn-danger { background: var(--btn-danger); color: #fff; }
         .toolbar { display: flex; align-items: center; gap: 10px; margin-top: 18px; flex-wrap: wrap; }
-        .err { background:var(--danger-soft); color:var(--danger-strong); border: 1px solid var(--danger); border-radius: 6px; padding: 10px 14px; margin-bottom: 14px; }
         .file-info { font-size: .85rem; color:var(--muted); margin-top: 4px; }
         .raw-toggle { background: none; border: 1px solid var(--input-border); border-radius: 6px; padding: 4px 10px; font-size: .8rem; cursor: pointer; color:var(--muted); }
         .raw-box { display: none; margin-top: 8px; }
         .raw-box.open { display: block; }
+        .cp-table { width: 100%; border-collapse: collapse; background:var(--card2-bg); border-radius: 6px; overflow: hidden; }
+        .cp-table th { background:var(--card-bg); font-size: .78rem; text-transform: uppercase; color:var(--muted); padding: 8px 10px; text-align: left; font-weight: 600; }
+        .cp-table td { padding: 6px 10px; border-top:1px solid var(--border); }
+        .cp-table input[type=text] { padding: 5px 8px; border: 1px solid var(--input-border); border-radius: 4px; font-size: .85rem; width: 100%; }
+        .cp-table input[type=number] { padding: 5px; border: 1px solid var(--input-border); border-radius: 4px; font-size: .85rem; width: 60px; }
+        .cp-hint { font-size: .78rem; color:var(--disabled-text); margin-top: 6px; }
+        .layout-cols { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+        .layout-hint { font-size: .78rem; color:var(--disabled-text); }
+        .layout-rows { display: flex; flex-direction: column; gap: 8px; }
+        .layout-row { display: flex; align-items: center; gap: 8px; padding: 8px; background:var(--card2-bg); border-radius: 6px; }
+        .layout-cells { display: flex; gap: 8px; flex: 1; flex-wrap: wrap; }
+        .layout-cell { display: flex; gap: 6px; align-items: center; flex: 1 1 220px; }
+        .layout-cell select.lc-field { flex: 1; min-width: 140px; }
+        .layout-cell input.lc-label { flex: 1; }
     </style>
     <link rel="stylesheet" href="/assets/theme.css">
     <script src="/api/lang/{{.Lang}}/catalog.js"></script>
@@ -50,7 +63,7 @@
     </div>
     <p class="subtitle">{{if .IsNew}}{{t .Lang "sr.subtitleNew"}} {{.CollName}}{{else}}{{t .Lang "sr.subtitleEditPrefix"}} {{.RecordID}} {{t .Lang "sr.subtitleEditIn"}} {{.CollName}}{{end}}</p>
 
-    {{if .Error}}<div class="err">{{.Error}}</div>{{end}}
+    {{if .Error}}<div class="alert alert-danger" role="alert"><span class="a-ico">&#10007;</span><span class="a-body">{{.Error}}</span></div>{{end}}
 
     <form class="card" method="POST" action="/pbx-setup/record/{{.CollName}}{{if not .IsNew}}/{{.RecordID}}{{end}}" enctype="multipart/form-data">
 
@@ -148,6 +161,73 @@
                 {{end}}
             </div>
             <button type="button" class="raw-toggle" onclick="addMapRow('{{$sec.Key}}','{{$fld.Key}}','{{$sec.TargetColl}}')">{{t $.Lang "sr.addMapping"}}</button>
+            {{else if eq $fld.Type "columnPicker"}}
+            <div class="column-picker">
+                <table class="cp-table">
+                    <thead>
+                        <tr>
+                            <th style="width:36px">{{t $.Lang "tabulator.allRecords"}}</th>
+                            <th>{{t $.Lang "sr.fieldName"}}</th>
+                            <th>{{t $.Lang "sr.columnTitle"}}</th>
+                            <th>{{t $.Lang "sr.columnSortable"}}</th>
+                            <th>{{t $.Lang "sr.columnSearchable"}}</th>
+                            <th>{{t $.Lang "sr.columnOrder"}}</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {{range $fld.FieldOptions}}
+                        {{$idx := .Index}}
+                        <tr>
+                            <td>
+                                <input type="checkbox" name="json_{{$sec.Key}}_{{$fld.Key}}_show_{{$idx}}" {{if .Checked}}checked{{end}}>
+                            </td>
+                            <td style="font-weight:600;color:var(--muted);">{{.Name}}</td>
+                            <td>
+                                <input type="text" name="json_{{$sec.Key}}_{{$fld.Key}}_title_{{$idx}}" value="{{.Label}}" placeholder="{{t $.Lang "sr.columnTitle"}}">
+                            </td>
+                            <td style="text-align:center;">
+                                <input type="checkbox" name="json_{{$sec.Key}}_{{$fld.Key}}_sortable_{{$idx}}" {{if .ColumnSortable}}checked{{end}}>
+                            </td>
+                            <td style="text-align:center;">
+                                <input type="checkbox" name="json_{{$sec.Key}}_{{$fld.Key}}_searchable_{{$idx}}" {{if .ColumnSearchable}}checked{{end}}>
+                            </td>
+                            <td>
+                                <input type="number" name="json_{{$sec.Key}}_{{$fld.Key}}_order_{{$idx}}" value="{{.ColumnOrder}}" min="1" max="999" style="width:60px;">
+                            </td>
+                        </tr>
+                        {{end}}
+                    </tbody>
+                </table>
+                <div class="cp-hint">{{t $.Lang "sr.columnPickerHint"}}</div>
+            </div>
+            {{else if eq $fld.Type "formLayoutGrid"}}
+            <div class="layout-builder" id="lay-{{$sec.Key}}-{{$fld.Key}}">
+                <div class="layout-cols">
+                    <button type="button" class="raw-toggle" onclick="addLayoutRow('{{$sec.Key}}','{{$fld.Key}}','{{jsonQuote ($fld.TargetFields)}}')">{{t $.Lang "sr.addRow"}}</button>
+                    <span class="layout-hint">{{t $.Lang "sr.layoutHint"}}</span>
+                </div>
+                <div class="layout-rows" id="layout-rows-{{$sec.Key}}-{{$fld.Key}}">
+                    {{range $ri, $row := $fld.LayoutRows}}
+                    <div class="layout-row" data-row="{{$ri}}">
+                        <div class="layout-cells">
+                            {{range $ci, $cell := $row.Cells}}
+                            <div class="layout-cell">
+                                <select name="json_{{$sec.Key}}_{{$fld.Key}}_row_{{$ri}}_field" class="lc-field">
+                                    <option value="">—</option>
+                                    {{range $t := $fld.TargetFields}}
+                                    <option value="{{$t}}" {{if eq $t $cell.Field}}selected{{end}}>{{$t}}</option>
+                                    {{end}}
+                                </select>
+                                <input type="text" class="lc-label" name="json_{{$sec.Key}}_{{$fld.Key}}_row_{{$ri}}_label" value="{{$cell.Label}}" placeholder="{{t $.Lang "sr.fieldLabel"}}">
+                                <button type="button" class="rm" onclick="this.parentElement.remove()">&times;</button>
+                            </div>
+                            {{end}}
+                        </div>
+                        <button type="button" class="rm" style="border:1px solid var(--input-border);border-radius:4px;" onclick="this.parentElement.remove()">✕</button>
+                    </div>
+                    {{end}}
+                </div>
+            </div>
             {{else if eq $fld.Type "number"}}
             <input type="number" id="j-{{$sec.Key}}-{{$fld.Key}}" name="json_{{$sec.Key}}_{{$fld.Key}}" value="{{$fld.Value}}">
             {{else}}
@@ -173,18 +253,91 @@
     <script>
         {{if not .IsNew}}
         async function deleteRecord() {
-            if (!confirm(_t('sr.confirmDelete'))) return;
+            if (!(await pbxConfirm(_t('sr.confirmDelete'), { danger: true }))) return;
             var res = await fetch("/pbx-setup/record/{{.CollName}}/{{.RecordID}}/delete", { method: "POST" });
             if (res.ok) {
                 window.location.href = "/pbx-setup";
             } else {
-                alert(_t('sr.deleteFailed'));
+                pbxToast('danger', _t('sr.deleteFailed'));
             }
         }
         {{end}}
 
         function escAttr(s) {
             return String(s).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        }
+
+        function pbxToast(kind, msg, persist) {
+            var host = document.querySelector(".toast-host");
+            if (!host) { host = document.createElement("div"); host.className = "toast-host"; document.body.appendChild(host); }
+            var t = document.createElement("div");
+            t.className = "alert alert-" + kind + " alert-toast mount";
+            t.setAttribute("role", "alert");
+            var ico = { success: "&#10004;", danger: "&#10007;", warning: "&#9888;", info: "&#8505;" }[kind] || "&#8505;";
+            t.innerHTML = '<span class="a-ico">' + ico + '</span><span class="a-body">' + escAttr(msg) + '</span>';
+            var dismiss = function() { t.classList.add("leaving"); setTimeout(function() { if (t.parentNode) t.parentNode.removeChild(t); }, 200); };
+            t.addEventListener("click", dismiss);
+            host.appendChild(t);
+            var listed = host.querySelectorAll(".alert");
+            while (listed.length > 3) { listed[0].parentNode.removeChild(listed[0]); }
+            if (!persist) setTimeout(dismiss, 4500);
+            return t;
+        }
+
+        function pbxConfirm(message, opts) {
+            opts = opts || {};
+            var host = document.querySelector(".pbx-confirm-host");
+            if (!host) {
+                host = document.createElement("div");
+                host.className = "pbx-confirm-host" + (opts.mobile ? " mobile" : "");
+                document.body.appendChild(host);
+            }
+            function escHtml(s) {
+                return String(s == null ? "" : s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+            }
+            var danger = !!opts.danger;
+            var t = function(k, fb) { return typeof _t === "function" ? (_t(k) || fb) : fb; };
+            var title = opts.title || t("common.confirm", "Confirm");
+            var confirmText = opts.confirmText || t("common.confirm", "Confirm");
+            var cancelText = opts.cancelText || t("common.cancel", "Cancel");
+            var overlay = document.createElement("div");
+            overlay.className = "pbx-confirm-overlay";
+            overlay.innerHTML =
+                '<div class="pbx-confirm" role="dialog" aria-modal="true">' +
+                    '<div class="pbx-confirm-head">' +
+                        '<span class="pbx-confirm-ico">' + (danger ? "&#9888;" : "&#10067;") + '</span>' +
+                        '<span class="pbx-confirm-title">' + escHtml(title) + '</span>' +
+                    '</div>' +
+                    '<div class="pbx-confirm-msg">' + escHtml(message) + '</div>' +
+                    '<div class="pbx-confirm-actions">' +
+                        '<button type="button" class="pbx-confirm-cancel">' + escHtml(cancelText) + '</button>' +
+                        '<button type="button" class="pbx-confirm-ok ' + (danger ? "danger" : "primary") + '">' + escHtml(confirmText) + '</button>' +
+                    '</div>' +
+                '</div>';
+            host.appendChild(overlay);
+            requestAnimationFrame(function() { overlay.classList.add("show"); });
+            return new Promise(function(resolve) {
+                var settled = false;
+                function done(val) {
+                    if (settled) return;
+                    settled = true;
+                    document.removeEventListener("keydown", onKey);
+                    overlay.classList.remove("show");
+                    setTimeout(function() { if (overlay.parentNode) overlay.parentNode.removeChild(overlay); }, 180);
+                    resolve(val);
+                }
+                function onKey(e) {
+                    if (e.key === "Escape") done(false);
+                    else if (e.key === "Enter") done(true);
+                }
+                var ok = overlay.querySelector(".pbx-confirm-ok");
+                var cancel = overlay.querySelector(".pbx-confirm-cancel");
+                ok.focus();
+                ok.addEventListener("click", function() { done(true); });
+                cancel.addEventListener("click", function() { done(false); });
+                overlay.addEventListener("click", function(e) { if (e.target === overlay) done(false); });
+                document.addEventListener("keydown", onKey);
+            });
         }
 
         function addColRow(secKey, fKey, target) {
@@ -211,6 +364,30 @@
                 '<input type="text" name="json_' + secKey + '_' + fKey + '_db" placeholder="' + escAttr(_t('sr.mssqlColumn')) + '">' +
                 '<button type="button" class="rm" onclick="this.parentNode.remove()">&times;</button>';
             box.appendChild(row);
+        }
+
+        // addLayoutRow appends a new row to a formLayoutGrid builder. secKey/fKey
+        // identify the JSON section/field; fields is the JSON array of target
+        // collection field names used to populate the cell selects.
+        function addLayoutRow(secKey, fKey, fieldsJSON) {
+            var rowsBox = document.getElementById("layout-rows-" + secKey + "-" + fKey);
+            var rowIdx = rowsBox.children.length;
+            var fields = JSON.parse(fieldsJSON || "[]");
+            var opts = '<option value="">—</option>';
+            fields.forEach(function(f) { opts += '<option value="' + escAttr(f) + '">' + escAttr(f) + '</option>'; });
+            var div = document.createElement("div");
+            div.className = "layout-row";
+            div.dataset.row = rowIdx;
+            div.innerHTML =
+                '<div class="layout-cells">' +
+                    '<div class="layout-cell">' +
+                        '<select name="json_' + secKey + '_' + fKey + '_row_' + rowIdx + '_field" class="lc-field">' + opts + '</select>' +
+                        '<input type="text" class="lc-label" name="json_' + secKey + '_' + fKey + '_row_' + rowIdx + '_label" placeholder="' + escAttr(_t('sr.fieldLabel')) + '">' +
+                        '<button type="button" class="rm" onclick="this.parentElement.remove()">&times;</button>' +
+                    '</div>' +
+                '</div>' +
+                '<button type="button" class="rm" style="border:1px solid var(--input-border);border-radius:4px;" onclick="this.parentElement.remove()">✕</button>';
+            rowsBox.appendChild(div);
         }
 
         function currentTheme() {
