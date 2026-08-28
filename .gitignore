@@ -1,6 +1,8 @@
 # Go binary
 /pbx
 /pbx.exe
+/pbx-macOS
+/pbx-windows.exe
 
 # PocketBase data
 pb_data/*.db

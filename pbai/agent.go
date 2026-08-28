@@ -16,6 +16,7 @@ import (
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase/core"
 
+	"pbx/i18n"
 	"pbx/views"
 )
 
@@ -74,6 +75,7 @@ type Agent struct {
 	App  core.App
 	Info *core.RequestInfo // auth context for rule checks
 	Cfg  views.AgentConfig
+	Lang string // UI language ("en" or "cs") used for user-facing messages
 
 	// maxIterations bounds the tool-calling loop.
 	maxIterations int
@@ -84,9 +86,59 @@ type Agent struct {
 	allowedTools   []string
 	viewCollection string
 	viewConfigName string
+	viewMode       string   // "tabular" or "form" (view agent variant)
+	SelectedIDs    []string // record IDs the user has checked in the table (tabular mode)
 	LabelToField   map[string]string // label → field name (for view agent)
 	FormFields     []string          // editable field names (form-fill mode)
 	RecordID       string            // existing record ID (form-fill mode)
+}
+
+// tr localizes a catalog key in the agent's UI language, applying fmt-style
+// arguments if any. Falls back to English, then to the key itself.
+func (a *Agent) tr(key string, args ...any) string {
+	s := i18n.T(a.Lang, key)
+	if len(args) > 0 {
+		s = fmt.Sprintf(s, args...)
+	}
+	return s
+}
+
+// recordNoun returns the pluralized Czech/English word for "record" matching a
+// plain count, e.g. "1 record" / "3 records" (cs: "záznam"/"záznamy"/"záznamů").
+func (a *Agent) recordNoun(count int) string {
+	if a.Lang == "cs" {
+		switch {
+		case count == 1:
+			return "záznam"
+		case count >= 2 && count <= 4:
+			return "záznamy"
+		default:
+			return "záznamů"
+		}
+	}
+	if count == 1 {
+		return "record"
+	}
+	return "records"
+}
+
+// selectedNoun is recordNoun with the "selected(ý/é/ých)" qualifier, used by the
+// delete-selected confirmation ("Delete 1 selected record / Smazat 1 vybraný záznam").
+func (a *Agent) selectedNoun(count int) string {
+	if a.Lang == "cs" {
+		switch {
+		case count == 1:
+			return "vybraný záznam"
+		case count >= 2 && count <= 4:
+			return "vybrané záznamy"
+		default:
+			return "vybraných záznamů"
+		}
+	}
+	if count == 1 {
+		return "selected record"
+	}
+	return "selected records"
 }
 
 // NewAgent creates an agent bound to the caller's request context.
@@ -98,13 +150,29 @@ func NewAgent(app core.App, info *core.RequestInfo, cfg views.AgentConfig) *Agen
 	return a
 }
 
-// NewViewAgent creates an agent scoped to a single collection view.
+// NewViewAgent creates an agent scoped to a single collection view (form mode).
 // Only the tools listed in allowedTools are offered to the LLM.
 func NewViewAgent(app core.App, info *core.RequestInfo, cfg views.AgentConfig, collection, configName string) *Agent {
 	a := NewAgent(app, info, cfg)
 	a.allowedTools = []string{"query_records", "insert_records", "update_records", "delete_records"}
 	a.viewCollection = collection
 	a.viewConfigName = configName
+	a.viewMode = "form"
+	a.LabelToField = buildLabelToField(app, collection, configName)
+	return a
+}
+
+// NewTabularAgent creates a view agent embedded in the tabular page. Its scope
+// is deliberately narrow: search/filter via query_records and deletion of the
+// records the user has currently selected (checked) in the table, always gated
+// by explicit user confirmation.
+func NewTabularAgent(app core.App, info *core.RequestInfo, cfg views.AgentConfig, collection, configName string, selectedIDs []string) *Agent {
+	a := NewAgent(app, info, cfg)
+	a.allowedTools = []string{"query_records", "delete_selected_records"}
+	a.viewCollection = collection
+	a.viewConfigName = configName
+	a.viewMode = "tabular"
+	a.SelectedIDs = selectedIDs
 	a.LabelToField = buildLabelToField(app, collection, configName)
 	return a
 }
@@ -195,6 +263,110 @@ func buildLabelToField(app core.App, collName, configName string) map[string]str
 	}
 
 	return out
+}
+
+// fieldsContextText lists the view collection's fields as "- name (type) required"
+// lines, so the agent can build filters/questions against the real schema.
+func (a *Agent) fieldsContextText() string {
+	coll, err := a.App.FindCachedCollectionByNameOrId(a.viewCollection)
+	if err != nil || len(coll.Fields) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Collection %q has these fields (name (type)), \"required\" marks non-optional:\n", a.viewCollection)
+	for _, f := range coll.Fields {
+		fmt.Fprintf(&b, "- %s (%s)%s\n", f.GetName(), f.Type(), requiredMark(f))
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+// recordContextText describes the record currently open in the form (its ID,
+// current field values and the editable form-field labels), so the agent can
+// reason about edits and map user-spoken labels to field names. Values are
+// included only when the caller is allowed to view the record (ViewRule).
+func (a *Agent) recordContextText() string {
+	if a.RecordID == "" {
+		return ""
+	}
+	coll, err := a.App.FindCachedCollectionByNameOrId(a.viewCollection)
+	if err != nil {
+		return ""
+	}
+	rec, err := a.App.FindRecordById(coll, a.RecordID)
+	if err != nil {
+		return fmt.Sprintf("(the form references record %s that does not exist or is not readable)\n", a.RecordID)
+	}
+	if ok, aerr := a.App.CanAccessRecord(rec, a.Info, coll.ViewRule); aerr != nil || !ok {
+		return fmt.Sprintf("(the form references record %s which is not readable by this user)\n", a.RecordID)
+	}
+
+	fieldLabels := map[string]string{}
+	for label, field := range a.LabelToField {
+		if _, exists := fieldLabels[field]; !exists {
+			fieldLabels[field] = label
+		}
+	}
+	formFieldSet := map[string]bool{}
+	for _, f := range a.FormFields {
+		formFieldSet[f] = true
+	}
+	includeField := func(name string) bool {
+		return len(a.FormFields) == 0 || formFieldSet[name]
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "Current record opened in the form (id %s):\n", a.RecordID)
+	for _, f := range coll.Fields {
+		name := f.GetName()
+		if f.GetSystem() || name == "id" || !includeField(name) {
+			continue
+		}
+		var val any
+		if f.Type() == "relation" {
+			val = rec.GetString(name)
+		} else {
+			val = rec.Get(name)
+		}
+		if label, hasLabel := fieldLabels[name]; hasLabel {
+			fmt.Fprintf(&b, "- %s (form label %q): %s\n", name, label, formatValue(val))
+		} else {
+			fmt.Fprintf(&b, "- %s: %s\n", name, formatValue(val))
+		}
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+// formatValue renders a record field value as a short, readable literal.
+func formatValue(v any) string {
+	switch t := v.(type) {
+	case nil:
+		return ""
+	case string:
+		if t == "" {
+			return `""`
+		}
+		return fmt.Sprintf("%q", t)
+	case []string:
+		if len(t) == 0 {
+			return "[]"
+		}
+		parts := make([]string, len(t))
+		for i, s := range t {
+			parts[i] = fmt.Sprintf("%q", s)
+		}
+		return "[" + strings.Join(parts, ", ") + "]"
+	case []byte:
+		return fmt.Sprintf("%q", string(t))
+	case time.Time:
+		return t.Format("2006-01-02 15:04")
+	default:
+		if b, err := json.Marshal(t); err == nil {
+			return string(b)
+		}
+		return fmt.Sprintf("%v", t)
+	}
 }
 
 // isSuper reports whether the caller is a superuser.
@@ -467,9 +639,14 @@ func (a *Agent) Confirm(ctx context.Context, actionID string, approved bool) (*C
 
 // viewSystemMessages builds a focused system prompt for the view-embedded agent.
 func (a *Agent) viewSystemMessages() []openai.ChatCompletionMessage {
+	if a.viewMode == "tabular" {
+		return a.tabularSystemMessages()
+	}
+
 	var b strings.Builder
 	b.WriteString(fmt.Sprintf("You are embedded in a data view of collection %q (config: %q). ", a.viewCollection, a.viewConfigName))
 	b.WriteString("You can read, search, insert, update and delete records in this collection.\n\n")
+	b.WriteString(a.fieldsContextText())
 	b.WriteString("Available tools:\n")
 	b.WriteString("- Read (no confirmation): query_records\n")
 	b.WriteString("- Write (confirmation required): insert_records, update_records, delete_records\n\n")
@@ -496,6 +673,7 @@ func (a *Agent) viewSystemMessages() []openai.ChatCompletionMessage {
 		b.WriteString("\nThis view has an editable form with these fields: ")
 		b.WriteString(strings.Join(a.FormFields, ", "))
 		b.WriteString(".\n")
+		b.WriteString("The form labels the user sees are mapped to these field names (use the field name in output, never the label).\n")
 		if a.RecordID == "" {
 			b.WriteString("When the user asks to CREATE a new record, do NOT call insert_records. ")
 			b.WriteString("Instead, respond with a single JSON object (no other text) like:\n")
@@ -503,13 +681,74 @@ func (a *Agent) viewSystemMessages() []openai.ChatCompletionMessage {
 			b.WriteString("Use only field names from the list above and include all values the user mentioned.\n")
 		} else {
 			b.WriteString(fmt.Sprintf("When the user asks to EDIT record %s, do NOT call update_records or insert_records. ", a.RecordID))
-			b.WriteString("Instead, respond with a single JSON object (no other text) containing ONLY the changed fields:\n")
+			b.WriteString("Instead, respond with a single JSON object (no other text) containing ONLY the fields the user wants to change (use the field name, not the label):\n")
 			b.WriteString("```json\n{\"formFill\": {\"fieldName\": \"newValue\"}}\n```\n")
-			b.WriteString("Use only field names from the list above.\n")
+			b.WriteString("Use only field names from the list above; keep the record's current values for everything the user does not mention.\n")
 		}
 		b.WriteString("The UI will populate the form for the user to review and submit themselves.\n")
 		b.WriteString("For queries and deletions, continue using the normal tools.\n")
 	}
+
+	if ctx := a.recordContextText(); ctx != "" {
+		b.WriteString("\n")
+		b.WriteString(ctx)
+	}
+
+	if a.isSuper() {
+		b.WriteString("\nThe current user is a superuser with full access to this collection.\n")
+	} else {
+		b.WriteString("\nThe current user is a regular signed-in user: reads and writes are restricted by the collection rules.\n")
+	}
+
+	return []openai.ChatCompletionMessage{{Role: openai.ChatMessageRoleSystem, Content: b.String()}}
+}
+
+// tabularSystemMessages builds the focused system prompt for the agent embedded
+// in the tabular view. Scope is deliberately narrow: search/filter (query_records)
+// and deletion of the records currently selected by the user in the table.
+func (a *Agent) tabularSystemMessages() []openai.ChatCompletionMessage {
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("You are embedded in the tabular view of collection %q (config: %q). ", a.viewCollection, a.viewConfigName))
+	b.WriteString("Your ONLY abilities in this view are:\n")
+	b.WriteString("- Search and filter records: call query_records. Returned records are displayed directly as table rows.\n")
+	b.WriteString("- Delete the records the user has currently selected (checked) with the row checkboxes: call delete_selected_records. Confirmation is handled by the interface: when you call the tool, the UI shows the user an Approve/Reject dialog. Never ask the user to confirm in your own words — just call the tool.\n")
+	b.WriteString("- You CANNOT insert, update, or delete arbitrary records here. If the user asks for something outside these abilities, explain that it is not available in this view.\n\n")
+
+	// collection fields so filters are built against real names/types
+	if coll, err := a.App.FindCachedCollectionByNameOrId(a.viewCollection); err == nil {
+		if len(coll.Fields) > 0 {
+			b.WriteString(fmt.Sprintf("Collection %q has these fields (name (type)):\n", a.viewCollection))
+			for _, f := range coll.Fields {
+				b.WriteString(fmt.Sprintf("- %s (%s)%s\n", f.GetName(), f.Type(), requiredMark(f)))
+			}
+			b.WriteString("\n")
+		}
+	}
+
+	if len(a.LabelToField) > 0 {
+		b.WriteString("Column label → field name mapping:\n")
+		b.WriteString("When the user refers to a column by its visible label, translate it to the real field name before calling a tool.\n")
+		for label, field := range a.LabelToField {
+			b.WriteString(fmt.Sprintf("- %q → %s\n", label, field))
+		}
+		b.WriteString("\n")
+	}
+
+	b.WriteString(fmt.Sprintf("The user currently has %d record(s) selected in the table (checkboxes). ", len(a.SelectedIDs)))
+	if len(a.SelectedIDs) == 0 {
+		b.WriteString("If the user asks to delete records, tell them to select the rows with the checkboxes first; you cannot delete anything until they do.\n")
+	} else {
+		b.WriteString("You may delete ONLY these selected records, via delete_selected_records — never propose IDs you invent. If the user asks to delete them, call the tool right away; do not ask a follow-up confirmation question, the interface shows the confirmation dialog.\n")
+	}
+	b.WriteString("\nRules:\n")
+	b.WriteString("- Answer strictly in the language the user uses; never mix words or phrases from other languages into your reply (for example, do not insert Russian or other non-Czech words into a Czech sentence).\n")
+	b.WriteString("- For search/filter requests: call query_records — the UI displays returned records directly as table rows. Keep text answers minimal.\n")
+	b.WriteString("- Sort by column labels from the view config (e.g. \"Name,-Date\") or by field names.\n")
+	b.WriteString("- Use query_records to gather facts; do not invent record contents.\n")
+	b.WriteString("- Enforce collection rules; respect the caller's permissions.\n")
+	b.WriteString("- If a tool reports access is denied, tell the user they lack permission.\n")
+	b.WriteString("- Keep final answers concise but complete.\n")
+	b.WriteString("- The UI shows a search box and does client-side filtering too, but always answer record questions from query_records output.\n")
 
 	if a.isSuper() {
 		b.WriteString("\nThe current user is a superuser with full access to this collection.\n")
@@ -533,7 +772,7 @@ func (a *Agent) systemMessages() []openai.ChatCompletionMessage {
 	b.WriteString("create_collection, update_collection, delete_collection, set_collection_rules, ")
 	b.WriteString("set_view_config, update_view_config, delete_view_config, create_action\n\n")
 	b.WriteString("Rules:\n")
-	b.WriteString("- Answer in the same language the user writes in.\n")
+	b.WriteString("- Answer strictly in the language the user uses; never mix words or phrases from other languages into your reply (for example, do not insert Russian or other non-Czech words into a Czech sentence).\n")
 	b.WriteString("- Use the provided tools to gather facts; do not invent record contents.\n")
 	b.WriteString("- When the user asks to write data, use the corresponding tool. The system will ask for confirmation.\n")
 	b.WriteString("- Copy collection names exactly as they appear in tool output. If a tool reports that a collection was not found, retry with the suggested name from the error message or call list_collections first.\n")

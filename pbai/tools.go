@@ -81,6 +81,7 @@ func allTools() []tool {
 		listActionsTool(),
 		updateRecordsTool(),
 		deleteRecordsTool(),
+		deleteSelectedRecordsTool(),
 		updateCollectionTool(),
 		deleteCollectionTool(),
 		setCollectionRulesTool(),
@@ -445,7 +446,7 @@ func insertRecordsTool() tool {
 
 			return &PendingAction{
 				Type:       "insert_records",
-				Summary:    fmt.Sprintf("Insert %d record(s) into %s", len(preview), coll.Name),
+				Summary:    a.tr("ai.confirmInsert", len(preview), a.recordNoun(len(preview)), coll.Name),
 				Detail:     string(detail),
 				Collection: coll.Name,
 				toolName:   "insert_records",
@@ -482,7 +483,7 @@ func insertRecordsTool() tool {
 				}
 				created = append(created, rec.Id)
 			}
-			return fmt.Sprintf("Inserted %d record(s) into %s (ids: %s).", len(created), coll.Name, strings.Join(created, ", ")), nil
+			return a.tr("ai.insertedRecords", len(created), a.recordNoun(len(created)), coll.Name, strings.Join(created, ", ")), nil
 		},
 	}
 }
@@ -1030,7 +1031,7 @@ func updateRecordsTool() tool {
 			}
 			return &PendingAction{
 				Type:       "update_records",
-				Summary:    fmt.Sprintf("Update %d record(s) in %s", len(preview), coll.Name),
+				Summary:    a.tr("ai.confirmUpdate", len(preview), a.recordNoun(len(preview)), coll.Name),
 				Detail:     string(detail),
 				Collection: coll.Name,
 				toolName:   "update_records",
@@ -1075,7 +1076,7 @@ func updateRecordsTool() tool {
 				}
 				updated = append(updated, id)
 			}
-			return fmt.Sprintf("Updated %d record(s) in %s (ids: %s).", len(updated), coll.Name, strings.Join(updated, ", ")), nil
+			return a.tr("ai.updatedRecords", len(updated), a.recordNoun(len(updated)), coll.Name, strings.Join(updated, ", ")), nil
 		},
 	}
 }
@@ -1120,7 +1121,7 @@ func deleteRecordsTool() tool {
 			detail, _ := json.MarshalIndent(in.IDs, "", "  ")
 			return &PendingAction{
 				Type:       "delete_records",
-				Summary:    fmt.Sprintf("Delete %d record(s) from %s", len(in.IDs), coll.Name),
+				Summary:    a.tr("ai.confirmDelete", len(in.IDs), a.recordNoun(len(in.IDs)), coll.Name),
 				Detail:     string(detail),
 				Collection: coll.Name,
 				toolName:   "delete_records",
@@ -1135,31 +1136,92 @@ func deleteRecordsTool() tool {
 			if err := json.Unmarshal(args, &in); err != nil {
 				return "", err
 			}
-			coll, err := a.findCollection(in.Collection)
-			if err != nil {
-				return "", err
-			}
-			var deleted []string
-			for _, id := range in.IDs {
-				if id == "" {
-					continue
-				}
-				rec, err := a.App.FindRecordById(coll, id)
-				if err != nil {
-					return "", fmt.Errorf("record %q not found in %q: %w", id, coll.Name, err)
-				}
-				ok, err := a.App.CanAccessRecord(rec, a.Info, coll.DeleteRule)
-				if err != nil || !ok {
-					return "", fmt.Errorf("you do not have permission to delete record %q in %q", id, coll.Name)
-				}
-				if err := a.App.Delete(rec); err != nil {
-					return "", fmt.Errorf("failed to delete record %q in %q: %w", id, coll.Name, err)
-				}
-				deleted = append(deleted, id)
-			}
-			return fmt.Sprintf("Deleted %d record(s) from %s (ids: %s).", len(deleted), coll.Name, strings.Join(deleted, ", ")), nil
+			return execDeleteRecords(a, in.Collection, in.IDs)
 		},
 	}
+}
+
+// deleteSelectedRecordsTool deletes the records the user has currently selected
+// (checked) in the tabular view. The IDs come from the agent's SelectedIDs
+// (captured from the client request), never from the LLM, so the model cannot
+// target records the user did not explicitly select. Requires user confirmation.
+func deleteSelectedRecordsTool() tool {
+	return tool{
+		name:        "delete_selected_records",
+		description: "Deletes the records the user has currently selected (checked) in the table. Requires explicit user confirmation. Takes no arguments; the affected records are the user's current row selection.",
+		params:      map[string]any{"type": "object", "properties": map[string]any{}},
+		write:       true,
+		pending: func(a *Agent, args json.RawMessage) (*PendingAction, error) {
+			if len(a.SelectedIDs) == 0 {
+				return nil, fmt.Errorf("no records selected: ask the user to select rows with the checkboxes first")
+			}
+			if len(a.SelectedIDs) > 50 {
+				return nil, fmt.Errorf("maximum 50 records per delete")
+			}
+			if a.viewCollection == "" {
+				return nil, fmt.Errorf("collection name is required")
+			}
+			coll, err := a.findCollection(a.viewCollection)
+			if err != nil {
+				return nil, err
+			}
+			if !a.canDelete(coll) {
+				return nil, fmt.Errorf("you do not have permission to delete records in %q", coll.Name)
+			}
+			params := struct {
+				Collection string   `json:"collection"`
+				IDs        []string `json:"ids"`
+			}{Collection: coll.Name, IDs: a.SelectedIDs}
+			detail, _ := json.MarshalIndent(a.SelectedIDs, "", "  ")
+			return &PendingAction{
+				Type:       "delete_selected_records",
+				Summary:    a.tr("ai.confirmDeleteSelected", len(a.SelectedIDs), a.selectedNoun(len(a.SelectedIDs)), coll.Name),
+				Detail:     string(detail),
+				Collection: coll.Name,
+				toolName:   "delete_selected_records",
+				params:     mustMarshal(params),
+			}, nil
+		},
+		exec: func(a *Agent, args json.RawMessage) (string, error) {
+			var in struct {
+				Collection string   `json:"collection"`
+				IDs        []string `json:"ids"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return "", err
+			}
+			return execDeleteRecords(a, in.Collection, in.IDs)
+		},
+	}
+}
+
+// execDeleteRecords performs the per-record delete loop shared by delete_records
+// and delete_selected_records. Every record is re-checked against the collection
+// delete rule with the caller's request info before deletion.
+func execDeleteRecords(a *Agent, collName string, ids []string) (string, error) {
+	coll, err := a.findCollection(collName)
+	if err != nil {
+		return "", err
+	}
+	var deleted []string
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		rec, err := a.App.FindRecordById(coll, id)
+		if err != nil {
+			return "", fmt.Errorf("record %q not found in %q: %w", id, coll.Name, err)
+		}
+		ok, err := a.App.CanAccessRecord(rec, a.Info, coll.DeleteRule)
+		if err != nil || !ok {
+			return "", fmt.Errorf("you do not have permission to delete record %q in %q", id, coll.Name)
+		}
+		if err := a.App.Delete(rec); err != nil {
+			return "", fmt.Errorf("failed to delete record %q in %q: %w", id, coll.Name, err)
+		}
+		deleted = append(deleted, id)
+	}
+	return a.tr("ai.deletedRecords", len(deleted), a.recordNoun(len(deleted)), coll.Name, strings.Join(deleted, ", ")), nil
 }
 
 // --- collection management tools ---

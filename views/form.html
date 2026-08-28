@@ -54,6 +54,7 @@
         @keyframes ai-spin { to { transform:rotate(360deg); } }
         .ai-status.done { border-left-color:var(--success); }
         .ai-status.err  { border-left-color:var(--danger); }
+        .ai-status.done .ai-spinner, .ai-status.err .ai-spinner { display:none; }
         .ai-confirm { padding:10px 14px; margin-bottom:12px; background:var(--accent-soft);
                       border:1px solid var(--accent); border-radius:8px; display:flex; align-items:center; gap:12px; }
         .ai-confirm .ai-confirm-text { flex:1; font-size:.9rem; }
@@ -395,17 +396,74 @@
     var aiViewCollection = "{{.CollectionName}}";
     var aiViewConfigName = "{{.ConfigName}}";
     var aiRecordID = "{{.ID}}";
+    var aiAbort = null;
+    var aiEscArm = false;
+    var aiEscArmAt = 0;
+    var aiPromptHistory = []; // previously sent AI prompts (ArrowUp/Down recall)
+    var aiPromptIdx = -1;
+    var aiPromptDraft = '';
+    var aiDefaultPlaceholder = document.getElementById("aiInput").getAttribute("placeholder");
+
+    // After an ESC-ESC stop the stopped hint lives in the placeholder; a new
+    // focus restores the regular hint.
+    document.getElementById("aiInput").addEventListener("focus", function() {
+        if (this.placeholder !== aiDefaultPlaceholder) this.placeholder = aiDefaultPlaceholder;
+    });
+
+    function rememberAIPrompt(t) {
+        if (aiPromptHistory[aiPromptHistory.length - 1] !== t) aiPromptHistory.push(t);
+        aiPromptIdx = aiPromptHistory.length;
+        aiPromptDraft = '';
+    }
 
     document.getElementById("aiSendBtn").addEventListener("click", sendAI);
     document.getElementById("aiInput").addEventListener("keydown", function(e) {
-        if (e.key === "Enter" && !aiBusy) sendAI();
+        if (e.key === "Enter" && !aiBusy) { sendAI(); return; }
+        if (e.key === "ArrowUp") {
+            if (aiPromptHistory.length === 0) return;
+            if (aiPromptIdx === aiPromptHistory.length) {
+                aiPromptDraft = document.getElementById("aiInput").value;
+                aiPromptIdx = aiPromptHistory.length - 1;
+            } else if (aiPromptIdx > 0) {
+                aiPromptIdx--;
+            } else {
+                return;
+            }
+            document.getElementById("aiInput").value = aiPromptHistory[aiPromptIdx];
+            e.preventDefault();
+        } else if (e.key === "ArrowDown") {
+            if (aiPromptIdx >= aiPromptHistory.length) return;
+            aiPromptIdx++;
+            var inp = document.getElementById("aiInput");
+            inp.value = (aiPromptIdx === aiPromptHistory.length) ? aiPromptDraft : aiPromptHistory[aiPromptIdx];
+            e.preventDefault();
+        }
+    });
+    // ESC-ESC cancel works from anywhere on the page while a stream is running
+    // (focus-independent), like OpenCode. Bound on document because clicking
+    // the AI send button moves focus off the input.
+    document.addEventListener("keydown", function(e) {
+        if (e.key !== "Escape" || !aiBusy) return;
+        e.preventDefault();
+        var now = Date.now();
+        if (!aiEscArm || now - aiEscArmAt > 1500) {
+            aiEscArm = true;
+            aiEscArmAt = now;
+            pbxToast('info', _t('ai.stopHint'));
+            return;
+        }
+        aiEscArm = false;
+        if (aiAbort) aiAbort.abort();
     });
 
     function sendAI() {
         var input = document.getElementById("aiInput");
         var text = input.value.trim();
         if (!text || aiBusy) return;
+        rememberAIPrompt(text);
         aiBusy = true;
+        var ac = new AbortController();
+        aiAbort = ac;
         input.value = "";
         document.getElementById("aiSendBtn").disabled = true;
         document.getElementById("aiConfirm").style.display = "none";
@@ -433,13 +491,13 @@
             labelMap: labelMap
         });
 
-        fetch("/ai/view-chat/stream", { method: "POST", headers: { "Content-Type": "application/json" }, body: body })
+        fetch("/ai/view-chat/stream", { method: "POST", headers: { "Content-Type": "application/json" }, body: body, signal: ac.signal })
         .then(function(resp) {
             var reader = resp.body.getReader();
             var decoder = new TextDecoder();
             var buffer = "";
             function read() {
-                reader.read().then(function(result) {
+                return reader.read().then(function(result) {
                     if (result.done) { finishAI(); return; }
                     buffer += decoder.decode(result.value, { stream: true });
                     var lines = buffer.split("\n");
@@ -449,13 +507,20 @@
                             try { handleAIEvent(JSON.parse(line.substring(6))); } catch(e) {}
                         }
                     });
-                    read();
+                    return read();
                 });
             }
-            read();
+            return read();
         })
         .catch(function(err) {
-            setAIStatus(_t("ai.failed").replace("%s", String(err)), "err");
+            if (ac.signal.aborted) {
+                var aiInp = document.getElementById("aiInput");
+                aiInp.value = "";
+                aiHint(_t("ai.stopped"));
+                finishAI();
+                return;
+            }
+            aiHint(_t("ai.failed").replace("%s", String(err)));
             finishAI();
         });
     }
@@ -471,7 +536,7 @@
         } else if (ev.type === "done" && ev.result) {
             applyAIResult(ev.result);
         } else if (ev.type === "error") {
-            setAIStatus(_t("ai.failed").replace("%s", ev.message || "unknown"), "err");
+            aiHint(_t("ai.failed").replace("%s", ev.message || "unknown"));
             finishAI();
         }
     }
@@ -481,6 +546,16 @@
         el.style.display = "flex";
         el.className = "ai-status" + (cls ? " " + cls : "");
         el.innerHTML = '<span class="ai-spinner"></span><span class="ai-msg">' + esc(msg) + '</span>';
+    }
+
+    // Once an operation finishes, dismiss the status bar and show its result
+    // message as a hint inside the prompt input (the default hint returns on focus).
+    function aiHint(txt) {
+        var el = document.getElementById("aiStatus");
+        el.style.display = "none";
+        el.className = "ai-status";
+        var inp = document.getElementById("aiInput");
+        inp.placeholder = txt || aiDefaultPlaceholder;
     }
 
     function applyAIResult(result) {
@@ -493,7 +568,7 @@
                     var parsed = JSON.parse(jsonMatch[0]);
                     if (parsed.formFill) {
                         populateForm(parsed.formFill);
-                        setAIStatus(_t("ai.formFilled") || "Form filled — review and submit.", "done");
+                        aiHint(_t("ai.formFilled") || "Form filled — review and submit.");
                         finishAI();
                         return;
                     }
@@ -503,14 +578,14 @@
         if (result.pendingAction) {
             aiPendingAction = result.pendingAction;
             showAIConfirmModal(result.pendingAction.summary);
-            setAIStatus(_t("ai.confirmTitle"), "done");
+            aiHint(_t("ai.confirmTitle"));
             finishAI();
         } else if (result.records && result.records.length > 0) {
             showAISearchModal(result.records);
-            setAIStatus(_t("ai.searchTitle"), "done");
+            aiHint(_t("ai.searchTitle"));
             finishAI();
         } else if (result.finalText) {
-            setAIStatus(result.finalText || "(no result)", "done");
+            aiHint(result.finalText || "(no result)");
             finishAI();
         }
     }
@@ -556,6 +631,14 @@
         closeAIConfirmModal();
         if (!aiPendingAction) return;
         var actionId = aiPendingAction.id;
+        if (!approved) {
+            aiPendingAction = null;
+            var inp2 = document.getElementById("aiInput");
+            inp2.value = "";
+            aiHint(_t("ai.rejected"));
+            finishAI();
+            return;
+        }
         setAIStatus(_t("ai.thinking"));
         fetch("/ai/confirm", {
             method: "POST",
@@ -564,12 +647,12 @@
         })
         .then(function(r) { return r.json(); })
         .then(function(res) {
-            setAIStatus(res.ok ? _t("ai.done").replace("%s", res.message) : _t("ai.failed").replace("%s", res.message), res.ok ? "done" : "err");
+            aiHint(res.ok ? _t("ai.done").replace("%s", res.message) : _t("ai.failed").replace("%s", res.message));
             aiPendingAction = null;
             finishAI();
         })
         .catch(function(err) {
-            setAIStatus(_t("ai.failed").replace("%s", String(err)), "err");
+            aiHint(_t("ai.failed").replace("%s", String(err)));
             aiPendingAction = null;
             finishAI();
         });
@@ -595,6 +678,8 @@
 
     function finishAI() {
         aiBusy = false;
+        aiAbort = null;
+        aiEscArm = false;
         document.getElementById("aiSendBtn").disabled = false;
     }
 

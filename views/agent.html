@@ -119,6 +119,9 @@
         var streaming = null; // {div, text} assistant bubble being streamed
         var gotAnyText = false;
         var busy = false;
+        var chatAbort = null; // AbortController for the in-flight /ai/chat/stream request
+        var escArm = false;   // double-ESC cancel arming
+        var escArmAt = 0;
 
         var HISTORY_LIMIT = 16; // max turns sent per request (server clamps at 40)
 
@@ -267,6 +270,10 @@
             }
             if (busy) return;
             busy = true;
+            escArm = false;
+            chatAbort = null;
+            var ac = new AbortController();
+            chatAbort = ac;
             if (text) rememberPrompt(text);
             addMsg('user', text || '(file attached)');
             chatHistory.push({ role: 'user', content: text });
@@ -282,7 +289,8 @@
             fetch('/ai/chat/stream', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body)
+                body: JSON.stringify(body),
+                signal: ac.signal
             })
                 .then(function(r) {
                     if (!r.ok) {
@@ -297,6 +305,7 @@
                             showSpinner(false);
                             finishResult(d);
                             busy = false;
+                            chatAbort = null;
                         });
                     }
                     var reader = r.body.getReader();
@@ -308,6 +317,7 @@
                                 endStream();
                                 showSpinner(false);
                                 busy = false;
+                                chatAbort = null;
                                 return;
                             }
                             buf += dec.decode(res.value, { stream: true });
@@ -326,6 +336,10 @@
                     return pump();
                 })
                 .catch(function() {
+                    if (ac.signal.aborted) {
+                        stopStream();
+                        return;
+                    }
                     fail('Network error.');
                 });
         }
@@ -335,6 +349,22 @@
             showSpinner(false);
             addMsg('err', message);
             busy = false;
+            chatAbort = null;
+            escArm = false;
+        }
+
+        // stopStream is the user-initiated cancel path (double-ESC). It keeps
+        // any partial assistant text on screen and only marks the turn ended.
+        function stopStream() {
+            endStream();
+            showSpinner(false);
+            if (!gotAnyText) {
+                streaming = null;
+            }
+            addMsg('tool', _t('ai.stopped'));
+            busy = false;
+            chatAbort = null;
+            escArm = false;
         }
 
         function handleEvent(ev) {
@@ -357,6 +387,8 @@
                 endStream();
                 showSpinner(false);
                 busy = false;
+                chatAbort = null;
+                escArm = false;
                 if (ev.result) {
                     finishResult(ev.result, st);
                 }
@@ -521,6 +553,23 @@
             promptIdx = promptHistory.length;
             promptDraft = '';
         }
+
+        // ESC-ESC cancel works from anywhere on the page while a stream is
+        // running (focus-independent), like OpenCode. Bound on document because
+        // clicking the Send button moves focus off the message input.
+        document.addEventListener('keydown', function(ev) {
+            if (ev.key !== 'Escape' || !busy) return;
+            ev.preventDefault();
+            var now = Date.now();
+            if (!escArm || now - escArmAt > 1500) {
+                escArm = true;
+                escArmAt = now;
+                pbxToast('info', _t('ai.stopHint'));
+                return;
+            }
+            escArm = false;
+            if (chatAbort) chatAbort.abort();
+        });
 
         document.getElementById('messageInput').addEventListener('keydown', function(ev) {
             if (ev.key === 'Enter') {

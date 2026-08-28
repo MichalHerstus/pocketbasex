@@ -95,6 +95,7 @@
         @keyframes ai-spin { to { transform:rotate(360deg); } }
         .ai-status.done { border-left-color:var(--success); }
         .ai-status.err  { border-left-color:var(--danger); }
+        .ai-status.done .ai-spinner, .ai-status.err .ai-spinner { display:none; }
         .ai-confirm { padding:10px 14px; margin-bottom:12px; background:var(--accent-soft);
                       border:1px solid var(--accent); border-radius:8px; display:flex; align-items:center; gap:12px; }
         .ai-confirm .ai-confirm-text { flex:1; font-size:.9rem; }
@@ -136,6 +137,10 @@
             <option value="">{{t .Lang "tabulator.allRecords"}}</option>
         </select>
         <button id="editFiltersBtn" style="padding:8px 16px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">{{t .Lang "tabulator.editFilters"}}</button>
+        <button id="aiToggleBtn" onclick="toggleAIPanel()" title="{{t .Lang "tabulator.aiAssistant"}}" style="position:relative;padding:8px;background:var(--btn-neutral);color:#fff;border:none;border-radius:6px;font-size:1.05rem;line-height:1;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;">
+            <span id="aiToggleDot" style="display:none;position:absolute;top:-4px;right:-4px;width:10px;height:10px;border-radius:50%;background:var(--accent);border:2px solid var(--bg);"></span>
+            <span>&#10024;</span>
+        </button>
         <button id="importBtn" style="margin-left:auto;padding:8px 16px;background:var(--btn-primary);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;display:inline-flex;align-items:center;gap:6px;">
             <img src="/assets/Monitor-Download--Streamline-Ultimate.png" style="width:16px;height:16px;" alt="{{t .Lang "tabulator.import"}}"> {{t .Lang "tabulator.import"}}
         </button>
@@ -149,14 +154,16 @@
         <button id="runActionBtn" style="padding:8px 16px;background:var(--btn-danger);color:#fff;border:none;border-radius:6px;font-size:.9rem;cursor:pointer;">{{t .Lang "common.run"}}</button>
     </div>
 
-    <div class="ai-bar" id="aiBar">
-        <span class="ai-icon">&#10024;</span>
-        <input type="text" id="aiInput" placeholder="{{t .Lang "ai.placeholder"}}" autocomplete="off">
-        <button id="aiSendBtn" class="btn-sm btn-primary">AI</button>
-        <button id="aiClearBtn" class="btn-sm btn-neutral" style="display:none;">&#10005;</button>
+    <div id="aiPanel" style="display:none;">
+        <div class="ai-bar" id="aiBar">
+            <span class="ai-icon">&#10024;</span>
+            <input type="text" id="aiInput" placeholder="{{t .Lang "ai.placeholder"}}" autocomplete="off">
+            <button id="aiSendBtn" class="btn-sm btn-primary">AI</button>
+            <button id="aiClearBtn" class="btn-sm btn-neutral" style="display:none;">&#10005;</button>
+        </div>
+        <div id="aiStatus" class="ai-status" style="display:none;"></div>
+        <div id="aiConfirm" class="ai-confirm" style="display:none;"></div>
     </div>
-    <div id="aiStatus" class="ai-status" style="display:none;"></div>
-    <div id="aiConfirm" class="ai-confirm" style="display:none;"></div>
 
     <div class="table-wrap">
         <table>
@@ -1665,18 +1672,94 @@
         var aiBusy = false;
         var aiPendingAction = null;
         var aiOriginalRecords = null;
+        var aiAbort = null;
+        var aiEscArm = false;
+        var aiEscArmAt = 0;
+        var aiPromptHistory = []; // previously sent AI prompts (ArrowUp/Down recall)
+        var aiPromptIdx = -1;
+        var aiPromptDraft = '';
+        var aiDefaultPlaceholder = document.getElementById("aiInput").getAttribute("placeholder");
+
+        // After an ESC-ESC stop the stopped hint lives in the placeholder; a
+        // new focus restores the regular hint.
+        document.getElementById("aiInput").addEventListener("focus", function() {
+            if (this.placeholder !== aiDefaultPlaceholder) this.placeholder = aiDefaultPlaceholder;
+        });
+
+        function rememberAIPrompt(t) {
+            if (aiPromptHistory[aiPromptHistory.length - 1] !== t) aiPromptHistory.push(t);
+            aiPromptIdx = aiPromptHistory.length;
+            aiPromptDraft = '';
+        }
 
         document.getElementById("aiSendBtn").addEventListener("click", sendAI);
         document.getElementById("aiInput").addEventListener("keydown", function(e) {
-            if (e.key === "Enter" && !aiBusy) sendAI();
+            if (e.key === "Enter" && !aiBusy) { sendAI(); return; }
+            if (e.key === "ArrowUp") {
+                if (aiPromptHistory.length === 0) return;
+                if (aiPromptIdx === aiPromptHistory.length) {
+                    aiPromptDraft = document.getElementById("aiInput").value;
+                    aiPromptIdx = aiPromptHistory.length - 1;
+                } else if (aiPromptIdx > 0) {
+                    aiPromptIdx--;
+                } else {
+                    return;
+                }
+                document.getElementById("aiInput").value = aiPromptHistory[aiPromptIdx];
+                e.preventDefault();
+            } else if (e.key === "ArrowDown") {
+                if (aiPromptIdx >= aiPromptHistory.length) return;
+                aiPromptIdx++;
+                var inp = document.getElementById("aiInput");
+                inp.value = (aiPromptIdx === aiPromptHistory.length) ? aiPromptDraft : aiPromptHistory[aiPromptIdx];
+                e.preventDefault();
+            }
+        });
+        // ESC-ESC cancel works from anywhere on the page while a stream is
+        // running (focus-independent), like OpenCode. Bound on document because
+        // clicking the AI send button moves focus off the input.
+        document.addEventListener("keydown", function(e) {
+            if (e.key !== "Escape" || !aiBusy) return;
+            e.preventDefault();
+            var now = Date.now();
+            if (!aiEscArm || now - aiEscArmAt > 1500) {
+                aiEscArm = true;
+                aiEscArmAt = now;
+                pbxToast('info', _t('ai.stopHint'));
+                return;
+            }
+            aiEscArm = false;
+            if (aiAbort) aiAbort.abort();
         });
         document.getElementById("aiClearBtn").addEventListener("click", clearAIFilter);
+
+        // The AI prompt is hidden by default; the sparkle icon in the toolbar
+        // toggles the whole panel (input bar + status + confirm bar).
+        function toggleAIPanel() {
+            var panel = document.getElementById("aiPanel");
+            var show = panel.style.display === "none";
+            panel.style.display = show ? "block" : "none";
+            var btn = document.getElementById("aiToggleBtn");
+            btn.style.background = show ? "var(--btn-primary)" : "";
+            if (show) document.getElementById("aiInput").focus();
+        }
+
+        // A dot on the AI icon signals that an AI filter is still applied to
+        // the table, even when the panel is collapsed.
+        function updateAIBadge() {
+            var dot = document.getElementById("aiToggleDot");
+            if (!dot) return;
+            dot.style.display = aiOriginalRecords ? "inline-block" : "none";
+        }
 
         function sendAI() {
             var input = document.getElementById("aiInput");
             var text = input.value.trim();
             if (!text || aiBusy) return;
+            rememberAIPrompt(text);
             aiBusy = true;
+            var ac = new AbortController();
+            aiAbort = ac;
             input.value = "";
             document.getElementById("aiSendBtn").disabled = true;
             document.getElementById("aiConfirm").style.display = "none";
@@ -1689,16 +1772,18 @@
                 messages: [{ role: "user", content: text }],
                 collection: "{{.CollectionName}}",
                 configName: "{{.ConfigName}}",
+                mode: "tabular",
+                selectedIDs: selectedIds(),
                 labelMap: labelMap
             });
 
-            fetch("/ai/view-chat/stream", { method: "POST", headers: { "Content-Type": "application/json" }, body: body })
+            fetch("/ai/view-chat/stream", { method: "POST", headers: { "Content-Type": "application/json" }, body: body, signal: ac.signal })
             .then(function(resp) {
                 var reader = resp.body.getReader();
                 var decoder = new TextDecoder();
                 var buffer = "";
                 function read() {
-                    reader.read().then(function(result) {
+                    return reader.read().then(function(result) {
                         if (result.done) { finishAI(); return; }
                         buffer += decoder.decode(result.value, { stream: true });
                         var lines = buffer.split("\n");
@@ -1708,12 +1793,20 @@
                                 try { handleAIEvent(JSON.parse(line.substring(6))); } catch(e) {}
                             }
                         });
-                        read();
+                        return read();
                     });
                 }
-                read();
+                return read();
             })
             .catch(function(err) {
+                if (ac.signal.aborted) {
+                    document.getElementById("aiStatus").style.display = "none";
+                    var aiInp = document.getElementById("aiInput");
+                    aiInp.value = "";
+                    aiInp.placeholder = _t("ai.stopped");
+                    finishAI();
+                    return;
+                }
                 setAIStatus(_t("ai.failed").replace("%s", String(err)), "err");
                 finishAI();
             });
@@ -1760,6 +1853,7 @@
                     ' &bull; <a href="javascript:void(0)" onclick="clearAIFilter()" style="color:var(--accent)">' + _t("ai.clear") + '</a></span>';
                 el.className = "ai-status done";
                 document.getElementById("aiClearBtn").style.display = "inline-block";
+                updateAIBadge();
                 finishAI();
             } else {
                 setAIStatus(result.finalText || "(no result)", "done");
@@ -1779,6 +1873,15 @@
             if (!aiPendingAction) return;
             var actionId = aiPendingAction.id;
             document.getElementById("aiConfirm").style.display = "none";
+            if (!approved) {
+                document.getElementById("aiStatus").style.display = "none";
+                aiPendingAction = null;
+                var inp2 = document.getElementById("aiInput");
+                inp2.value = "";
+                inp2.placeholder = _t("ai.rejected");
+                finishAI();
+                return;
+            }
             setAIStatus(_t("ai.thinking"));
             fetch("/ai/confirm", {
                 method: "POST",
@@ -1809,6 +1912,7 @@
             render();
             document.getElementById("aiStatus").style.display = "none";
             document.getElementById("aiClearBtn").style.display = "none";
+            updateAIBadge();
         }
 
         function fetchTabulatorPage() {
@@ -1821,6 +1925,7 @@
                         aiOriginalRecords = null;
                         currentPage = 1;
                         render();
+                        updateAIBadge();
                     }
                 })
                 .catch(function(){});
@@ -1828,6 +1933,8 @@
 
         function finishAI() {
             aiBusy = false;
+            aiAbort = null;
+            aiEscArm = false;
             document.getElementById("aiSendBtn").disabled = false;
         }
     </script>

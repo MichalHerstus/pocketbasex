@@ -3617,6 +3617,7 @@ func handleAgentChat(e *core.RequestEvent) error {
 	}
 
 	agent := pbai.NewAgent(e.App, info, cfg)
+	agent.Lang = getLangCode(e.App, e.Request)
 	result, err := agent.Run(e.Request.Context(), req.Messages, req.File)
 	if err != nil {
 		return e.InternalServerError("Agent failed: "+err.Error(), err)
@@ -3668,6 +3669,7 @@ func handleAgentChatStream(e *core.RequestEvent) error {
 	}
 
 	agent := pbai.NewAgent(e.App, info, cfg)
+	agent.Lang = getLangCode(e.App, e.Request)
 	_, err = agent.RunStream(e.Request.Context(), req.Messages, req.File, writeEvent)
 	if err != nil {
 		writeEvent(pbai.StreamEvent{Type: "error", Message: "Agent failed: " + err.Error()})
@@ -3680,12 +3682,14 @@ func handleAgentChatStream(e *core.RequestEvent) error {
 // with a restricted tool set (query, insert, update, delete records).
 func handleViewChatStream(e *core.RequestEvent) error {
 	var req struct {
-		Messages   []pbai.ChatMessage `json:"messages"`
-		Collection string             `json:"collection"`
-		ConfigName string             `json:"configName"`
-		FormFields []string           `json:"formFields"` // editable field names (form view only)
-		RecordID   string             `json:"recordID"`   // existing record ID (edit mode)
-		LabelMap   map[string]string  `json:"labelMap"`   // precomputed label→field map (frontend)
+		Messages    []pbai.ChatMessage `json:"messages"`
+		Collection  string             `json:"collection"`
+		ConfigName  string             `json:"configName"`
+		Mode        string             `json:"mode"`        // "tabular" or "form"
+		SelectedIDs []string           `json:"selectedIDs"` // checked rows (tabular mode)
+		FormFields  []string           `json:"formFields"`  // editable field names (form view only)
+		RecordID    string             `json:"recordID"`    // existing record ID (edit mode)
+		LabelMap    map[string]string  `json:"labelMap"`    // precomputed label→field map (frontend)
 	}
 	if err := json.NewDecoder(e.Request.Body).Decode(&req); err != nil {
 		return e.BadRequestError("Invalid request body", err)
@@ -3720,7 +3724,13 @@ func handleViewChatStream(e *core.RequestEvent) error {
 		fl.Flush()
 	}
 
-	agent := pbai.NewViewAgent(e.App, info, cfg, req.Collection, req.ConfigName)
+	var agent *pbai.Agent
+	if req.Mode == "tabular" {
+		agent = pbai.NewTabularAgent(e.App, info, cfg, req.Collection, req.ConfigName, req.SelectedIDs)
+	} else {
+		agent = pbai.NewViewAgent(e.App, info, cfg, req.Collection, req.ConfigName)
+	}
+	agent.Lang = getLangCode(e.App, e.Request)
 	agent.FormFields = req.FormFields
 	agent.RecordID = req.RecordID
 	if len(req.LabelMap) > 0 {
@@ -3753,6 +3763,7 @@ func handleAgentConfirm(e *core.RequestEvent) error {
 	}
 
 	agent := pbai.NewAgent(e.App, info, cfg)
+	agent.Lang = getLangCode(e.App, e.Request)
 	result, err := agent.Confirm(e.Request.Context(), req.ActionID, req.Approved)
 	if err != nil {
 		return e.InternalServerError("Confirm failed: "+err.Error(), err)
