@@ -129,7 +129,7 @@
         .welcome-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
         .welcome-chip { padding: 10px 16px; border-radius: 20px; background: var(--btn-neutral); color: #fff; font-size: .9rem; cursor: pointer; border: none; transition: transform .1s; }
         .welcome-chip:hover { transform: scale(1.03); }
-        .slash-menu { position: absolute; bottom: 100%; left: 0; right: 0; margin-bottom: 8px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 12px var(--shadow); z-index: 100; max-height: 280px; overflow-y: auto; display: none; }
+        .slash-menu { position: absolute; bottom: 100%; left: 0; right: 0; margin-bottom: 8px; min-width: 240px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 12px var(--shadow); z-index: 1000; max-height: 280px; overflow-y: auto; display: none; }
         .slash-menu.open { display: block; }
         .slash-item { padding: 10px 14px; cursor: pointer; display: flex; flex-direction: column; gap: 2px; border-bottom: 1px solid var(--border); }
         .slash-item:last-child { border-bottom: none; }
@@ -224,7 +224,8 @@
             { cmd: '/stats', descKey: 'agent.cmdStats' },
         ];
         var slashMenuVisible = false;
-        var slashHighlighted = -1;
+        var slashHighlighted = -1; // DOM item index currently highlighted
+        var slashFiltered = [];    // command indexes rendered in the menu
 
         async function loadSuggestions() {
             try {
@@ -266,16 +267,20 @@
 
         function showSlashMenu() {
             var input = document.getElementById('messageInput');
-            var val = input.value.trim();
-            if (!val.startsWith('/')) return;
             var menu = document.getElementById('slashMenu');
+            if (!input || !menu) return;
+            var val = input.value.trim();
+            if (!val.startsWith('/')) { hideSlashMenu(); return; }
+            // once a command is selected and the user is typing its argument
+            // (e.g. "/list produkty"), the menu stays closed
+            if (val.indexOf(' ') > 0) { hideSlashMenu(); return; }
             var prefix = val.slice(1).toLowerCase();
             var html = '';
-            var idx = 0;
+            slashFiltered = [];
             slashCommands.forEach(function(c, i) {
                 if (c.cmd.slice(1).startsWith(prefix)) {
+                    slashFiltered.push(i);
                     html += '<div class="slash-item" data-idx="' + i + '"><span class="slash-cmd">' + esc(c.cmd) + '</span><span class="slash-desc">' + _t(c.descKey) + '</span></div>';
-                    if (slashHighlighted === -1) slashHighlighted = i;
                 }
             });
             if (!html) {
@@ -285,7 +290,8 @@
             menu.innerHTML = html;
             menu.classList.add('open');
             slashMenuVisible = true;
-            // click handlers
+            slashHighlighted = 0;
+            highlightSlashItem();
             menu.querySelectorAll('.slash-item').forEach(function(el) {
                 el.onclick = function() {
                     var i = parseInt(el.dataset.idx, 10);
@@ -296,9 +302,25 @@
 
         function hideSlashMenu() {
             var menu = document.getElementById('slashMenu');
-            menu.classList.remove('open');
+            if (menu) menu.classList.remove('open');
             slashMenuVisible = false;
             slashHighlighted = -1;
+            slashFiltered = [];
+        }
+
+        function highlightSlashItem() {
+            var items = document.querySelectorAll('#slashMenu .slash-item');
+            items.forEach(function(el, i) {
+                el.classList.toggle('highlighted', i === slashHighlighted);
+                if (i === slashHighlighted) el.scrollIntoView({ block: 'nearest' });
+            });
+        }
+
+        function moveSlashHighlight(delta) {
+            var items = document.querySelectorAll('#slashMenu .slash-item');
+            if (!items.length) return;
+            slashHighlighted = Math.min(Math.max(slashHighlighted + delta, 0), items.length - 1);
+            highlightSlashItem();
         }
 
         function selectSlashCommand(i) {
@@ -1119,36 +1141,47 @@
         });
 
         document.getElementById('messageInput').addEventListener('keydown', function(ev) {
-            // Slash menu navigation
+            // Slash menu navigation (arrow up/down, Enter to select, Esc to close)
             if (slashMenuVisible) {
-                var items = document.querySelectorAll('#slashMenu .slash-item');
-                if (ev.key === 'ArrowDown') {
-                    ev.preventDefault();
-                    slashHighlighted = Math.min(slashHighlighted + 1, items.length - 1);
-                    updateSlashHighlight(items);
-                    return;
-                }
-                if (ev.key === 'ArrowUp') {
-                    ev.preventDefault();
-                    slashHighlighted = Math.max(slashHighlighted - 1, 0);
-                    updateSlashHighlight(items);
-                    return;
-                }
+                if (ev.key === 'ArrowDown') { ev.preventDefault(); moveSlashHighlight(1); return; }
+                if (ev.key === 'ArrowUp')   { ev.preventDefault(); moveSlashHighlight(-1); return; }
                 if (ev.key === 'Enter') {
                     ev.preventDefault();
-                    if (slashHighlighted >= 0 && items[slashHighlighted]) {
-                        var i = parseInt(items[slashHighlighted].dataset.idx, 10);
-                        selectSlashCommand(i);
+                    var its = document.querySelectorAll('#slashMenu .slash-item');
+                    if (slashHighlighted >= 0 && its[slashHighlighted]) {
+                        selectSlashCommand(parseInt(its[slashHighlighted].dataset.idx, 10));
                     }
                     return;
                 }
                 if (ev.key === 'Escape') {
+                    ev.preventDefault();
                     hideSlashMenu();
                     return;
                 }
             }
 
+            // Open the palette the instant "/" is typed (keydown). At keydown time the
+            // character isn't inserted into the input yet, so defer the open by
+            // one tick; the input event then re-syncs the filter anyway. If
+            // that path is ever broken, this keeps the menu appearing.
+            if (ev.key === '/' && !ev.ctrlKey && !ev.metaKey && !ev.altKey && !slashMenuVisible && !ev.target.value) {
+                setTimeout(showSlashMenu, 0);
+                return;
+            }
+
+            // A bare "/" or a lone slash command must never be sent to the AI:
+            // pressing Enter with a command word still open selects it instead.
             if (ev.key === 'Enter') {
+                var val = document.getElementById('messageInput').value.trim();
+                if (/^\/[a-z]*$/i.test(val)) {
+                    ev.preventDefault();
+                    showSlashMenu();
+                    if (slashMenuVisible && slashHighlighted >= 0) {
+                        var its = document.querySelectorAll('#slashMenu .slash-item');
+                        if (its[slashHighlighted]) selectSlashCommand(parseInt(its[slashHighlighted].dataset.idx, 10));
+                    }
+                    return;
+                }
                 ev.preventDefault();
                 send();
                 return;
@@ -1182,16 +1215,17 @@
             }
         });
 
-        function updateSlashHighlight(items) {
-            items.forEach(function(el, i) {
-                el.classList.toggle('highlighted', i === slashHighlighted);
-                if (i === slashHighlighted) el.scrollIntoView({ block: 'nearest' });
-            });
-        }
-
-        // Show slash menu on input change (handles typing /, backspace, paste)
+        // Show slash menu on input change (handles backspace, paste, selection)
         document.getElementById('messageInput').addEventListener('input', function() {
             showSlashMenu();
+        });
+
+        // Clicking anywhere outside the palette closes it.
+        document.addEventListener('click', function(ev) {
+            if (!slashMenuVisible) return;
+            if (!ev.target.closest('.slash-menu') && !ev.target.closest('#messageInput')) {
+                hideSlashMenu();
+            }
         });
 
         function currentTheme() {
