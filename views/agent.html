@@ -123,6 +123,20 @@
         .conv-item .cn-del { background: none; border: none; color: var(--muted); cursor: pointer; font-size: .85rem; padding: 2px 4px; flex-shrink: 0; border-radius: 4px; }
         .conv-item .cn-del:hover { color: var(--danger); background: var(--danger-soft); }
         .conv-empty { padding: 24px 12px; text-align: center; color: var(--muted); font-size: .85rem; }
+        .welcome-screen { padding: 32px 16px; text-align: center; display: flex; flex-direction: column; gap: 16px; }
+        .welcome-title { font-size: 1.2rem; font-weight: 600; color: var(--text); }
+        .welcome-hint { font-size: .9rem; color: var(--muted); }
+        .welcome-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+        .welcome-chip { padding: 10px 16px; border-radius: 20px; background: var(--btn-neutral); color: #fff; font-size: .9rem; cursor: pointer; border: none; transition: transform .1s; }
+        .welcome-chip:hover { transform: scale(1.03); }
+        .slash-menu { position: absolute; bottom: 100%; left: 0; right: 0; margin-bottom: 8px; background: var(--card-bg); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 4px 12px var(--shadow); z-index: 100; max-height: 280px; overflow-y: auto; display: none; }
+        .slash-menu.open { display: block; }
+        .slash-item { padding: 10px 14px; cursor: pointer; display: flex; flex-direction: column; gap: 2px; border-bottom: 1px solid var(--border); }
+        .slash-item:last-child { border-bottom: none; }
+        .slash-item:hover, .slash-item.highlighted { background: var(--row-hover); }
+        .slash-cmd { font-weight: 600; font-family: monospace; font-size: .85rem; }
+        .slash-desc { font-size: .75rem; color: var(--muted); }
+        .inputbar { position: relative; }
         .conv-sidebar-foot { padding: 12px; border-top: 1px solid var(--border); }
         .conv-clear { width: 100%; padding: 9px; border: none; border-radius: 6px; background: var(--btn-neutral); color: #fff; cursor: pointer; font-size: .9rem; }
         .conv-overlay { position: fixed; inset: 0; background: var(--overlay-bg); z-index: 85; display: none; }
@@ -155,7 +169,13 @@
     </aside>
     <div id="convOverlay" class="conv-overlay" onclick="toggleSidebar()"></div>
 
-    <div id="chat"></div>
+    <div id="chat">
+        <div id="welcomeScreen" class="welcome-screen">
+            <div class="welcome-title" id="welcomeTitle">{{t .Lang "agent.welcomeTitle"}}</div>
+            <div class="welcome-hint" id="welcomeHint">{{t .Lang "agent.welcomeHint"}}</div>
+            <div class="welcome-chips" id="welcomeChips"></div>
+        </div>
+    </div>
 
     <div class="inputbar">
         <span id="fileChip" class="filechip" style="display:none;"></span>
@@ -163,6 +183,7 @@
         <button type="button" class="btn-neutral" onclick="document.getElementById('fileInput').click();">📎</button>
         <input type="file" id="fileInput" style="display:none;" onchange="fileChosen(this)">
         <button type="button" class="btn-primary" onclick="send()">{{t .Lang "agent.send"}}</button>
+        <div id="slashMenu" class="slash-menu"></div>
     </div>
 
     <div class="spinner" id="spinner">{{t .Lang "agent.thinking"}}<span class="d"></span><span class="d"></span><span class="d"></span><span id="spinTime"></span></div>
@@ -192,6 +213,124 @@
         var convId = null;    // id of the persisted conversation being continued (null = new)
 
         var HISTORY_LIMIT = 16; // max turns sent per request (server clamps at 40)
+
+        // --- Phase 5: suggestions + slash commands ---
+        var slashCommands = [
+            { cmd: '/help', descKey: 'agent.cmdHelp' },
+            { cmd: '/list', descKey: 'agent.cmdList' },
+            { cmd: '/create', descKey: 'agent.cmdCreate' },
+            { cmd: '/search', descKey: 'agent.cmdSearch' },
+            { cmd: '/schema', descKey: 'agent.cmdSchema' },
+            { cmd: '/stats', descKey: 'agent.cmdStats' },
+        ];
+        var slashMenuVisible = false;
+        var slashHighlighted = -1;
+
+        async function loadSuggestions() {
+            try {
+                var resp = await fetch('/api/ai/suggestions');
+                if (!resp.ok) return;
+                var data = await resp.json();
+                if (!data.collections || !data.collections.length) return;
+                renderWelcomeChips(data.collections);
+            } catch (e) {}
+        }
+
+        function renderWelcomeChips(collections) {
+            var container = document.getElementById('welcomeChips');
+            if (!container) return;
+            container.innerHTML = '';
+            var browse = _t('agent.suggestBrowse');
+            collections.forEach(function(c) {
+                var btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'welcome-chip';
+                btn.textContent = browse + ' ' + esc(c.name) + ' (' + c.count + ')';
+                btn.onclick = function() {
+                    var input = document.getElementById('messageInput');
+                    input.value = _t('agent.suggestBrowse') + ' "' + c.name + '"';
+                    input.focus();
+                    hideWelcome();
+                };
+                container.appendChild(btn);
+            });
+            // set title/hint
+            document.getElementById('welcomeTitle').textContent = _t('agent.welcomeTitle');
+            document.getElementById('welcomeHint').textContent = _t('agent.welcomeHint');
+        }
+
+        function hideWelcome() {
+            var ws = document.getElementById('welcomeScreen');
+            if (ws) ws.style.display = 'none';
+        }
+
+        function showSlashMenu() {
+            var input = document.getElementById('messageInput');
+            var val = input.value.trim();
+            if (!val.startsWith('/')) return;
+            var menu = document.getElementById('slashMenu');
+            var prefix = val.slice(1).toLowerCase();
+            var html = '';
+            var idx = 0;
+            slashCommands.forEach(function(c, i) {
+                if (c.cmd.slice(1).startsWith(prefix)) {
+                    html += '<div class="slash-item" data-idx="' + i + '"><span class="slash-cmd">' + esc(c.cmd) + '</span><span class="slash-desc">' + _t(c.descKey) + '</span></div>';
+                    if (slashHighlighted === -1) slashHighlighted = i;
+                }
+            });
+            if (!html) {
+                hideSlashMenu();
+                return;
+            }
+            menu.innerHTML = html;
+            menu.classList.add('open');
+            slashMenuVisible = true;
+            // click handlers
+            menu.querySelectorAll('.slash-item').forEach(function(el) {
+                el.onclick = function() {
+                    var i = parseInt(el.dataset.idx, 10);
+                    selectSlashCommand(i);
+                };
+            });
+        }
+
+        function hideSlashMenu() {
+            var menu = document.getElementById('slashMenu');
+            menu.classList.remove('open');
+            slashMenuVisible = false;
+            slashHighlighted = -1;
+        }
+
+        function selectSlashCommand(i) {
+            var c = slashCommands[i];
+            if (!c) return;
+            var input = document.getElementById('messageInput');
+            input.value = c.cmd + ' ';
+            input.focus();
+            hideSlashMenu();
+        }
+
+        function expandSlashCommand(text) {
+            var m = text.match(/^\/(help|list|create|search|schema|stats)\b\s*(.*)$/i);
+            if (!m) return text;
+            var verb = m[1].toLowerCase();
+            var rest = m[2].trim();
+            switch (verb) {
+                case 'help':
+                    return _t('agent.cmdHelp') + '?';
+                case 'list':
+                    return rest ? 'List all records in "' + rest + '"' : text;
+                case 'create':
+                    return rest ? 'Create a record: ' + rest : text;
+                case 'search':
+                    return rest ? 'Find records matching: ' + rest : text;
+                case 'schema':
+                    return rest ? 'Show the schema (fields) of the collection "' + rest + '"' : text;
+                case 'stats':
+                    return rest ? 'Show statistics for "' + rest + '"' : text;
+            }
+            return text;
+        }
 
         function addMsg(role, text) {
             var chat = document.getElementById('chat');
@@ -339,6 +478,7 @@
         function send() {
             var input = document.getElementById('messageInput');
             var text = input.value.trim();
+            text = expandSlashCommand(text);
             if (!text && !fileData) return;
             if (pendingAction) {
                 pbxToast('warning', 'Please confirm or reject the pending action first.');
@@ -351,6 +491,7 @@
             var ac = new AbortController();
             chatAbort = ac;
             if (text) rememberPrompt(text);
+            hideWelcome();
             addMsg('user', text || '(file attached)');
             chatHistory.push({ role: 'user', content: text });
             input.value = '';
@@ -500,7 +641,21 @@
             convId = null;
             closeConfirm();
             document.getElementById('chat').innerHTML = '';
+            showWelcome();
             loadConversations();
+            loadSuggestions();
+        }
+
+        function showWelcome() {
+            var chat = document.getElementById('chat');
+            if (!chat || document.getElementById('welcomeScreen')) return;
+            var div = document.createElement('div');
+            div.id = 'welcomeScreen';
+            div.className = 'welcome-screen';
+            div.innerHTML = '<div class="welcome-title" id="welcomeTitle"></div>' +
+                            '<div class="welcome-hint" id="welcomeHint"></div>' +
+                            '<div class="welcome-chips" id="welcomeChips"></div>';
+            chat.appendChild(div);
         }
 
         function renderResult(data, skipText) {
@@ -531,6 +686,7 @@
         // returned (e.g. a stale server build), fall back to the client-side
         // table renderer so a response is never silently dropped.
         function finishResult(result, streamEl) {
+            hideWelcome();
             if (result.render) {
                 if (streamEl) { streamEl.div.remove(); }
                 else if (streaming) { streaming.div.remove(); streaming = null; }
@@ -963,6 +1119,35 @@
         });
 
         document.getElementById('messageInput').addEventListener('keydown', function(ev) {
+            // Slash menu navigation
+            if (slashMenuVisible) {
+                var items = document.querySelectorAll('#slashMenu .slash-item');
+                if (ev.key === 'ArrowDown') {
+                    ev.preventDefault();
+                    slashHighlighted = Math.min(slashHighlighted + 1, items.length - 1);
+                    updateSlashHighlight(items);
+                    return;
+                }
+                if (ev.key === 'ArrowUp') {
+                    ev.preventDefault();
+                    slashHighlighted = Math.max(slashHighlighted - 1, 0);
+                    updateSlashHighlight(items);
+                    return;
+                }
+                if (ev.key === 'Enter') {
+                    ev.preventDefault();
+                    if (slashHighlighted >= 0 && items[slashHighlighted]) {
+                        var i = parseInt(items[slashHighlighted].dataset.idx, 10);
+                        selectSlashCommand(i);
+                    }
+                    return;
+                }
+                if (ev.key === 'Escape') {
+                    hideSlashMenu();
+                    return;
+                }
+            }
+
             if (ev.key === 'Enter') {
                 ev.preventDefault();
                 send();
@@ -997,6 +1182,18 @@
             }
         });
 
+        function updateSlashHighlight(items) {
+            items.forEach(function(el, i) {
+                el.classList.toggle('highlighted', i === slashHighlighted);
+                if (i === slashHighlighted) el.scrollIntoView({ block: 'nearest' });
+            });
+        }
+
+        // Show slash menu on input change (handles typing /, backspace, paste)
+        document.getElementById('messageInput').addEventListener('input', function() {
+            showSlashMenu();
+        });
+
         function currentTheme() {
             var t = localStorage.getItem('pbx-theme');
             if (t === 'dark' || t === 'light') return t;
@@ -1021,7 +1218,7 @@
             fetch('/api/theme/' + next, { method: 'POST' }).catch(function(){});
         }
         applyTheme(currentTheme());
-        document.addEventListener('DOMContentLoaded', function() { loadConversations(); });
+        document.addEventListener('DOMContentLoaded', function() { loadConversations(); loadSuggestions(); });
     </script>
 </body>
 </html>

@@ -4064,6 +4064,20 @@ func sanitizeHeaderFilename(name string) string {
 	return b.String()
 }
 
+// handleAISuggestions returns the top collections the signed-in user may
+// browse (with listRule-aware record counts) to seed the chat welcome screen.
+func handleAISuggestions(e *core.RequestEvent) error {
+	info, err := authRequestInfo(e)
+	if err != nil || info.Auth == nil {
+		return e.ForbiddenError("Not authenticated", nil)
+	}
+	sug, err := pbai.SuggestCollections(e.App, info)
+	if err != nil {
+		return e.InternalServerError("Failed to load suggestions", err)
+	}
+	return e.JSON(http.StatusOK, map[string]any{"collections": sug})
+}
+
 // --- Delete record ---
 
 func handleDeleteRecord(e *core.RequestEvent) error {
