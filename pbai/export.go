@@ -158,9 +158,9 @@ func exportDataTool() tool {
 					visible = append(visible, r)
 				}
 			}
-			if len(visible) == 0 {
-				return "No accessible records found.", nil
-			}
+if len(visible) == 0 {
+			return a.tr("ai.noRecords"), nil
+		}
 
 			var data []byte
 			var contentType string

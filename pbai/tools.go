@@ -243,9 +243,9 @@ func listCollectionsTool() tool {
 				names = append(names, fmt.Sprintf("%s (%d fields)", c.Name, len(c.Fields)))
 			}
 			sort.Strings(names)
-			if len(names) == 0 {
-				return "No listable collections.", nil
-			}
+if len(names) == 0 {
+			return a.tr("ai.noCollections"), nil
+		}
 			return strings.Join(names, "\n"), nil
 		},
 	}
@@ -281,9 +281,9 @@ func getSchemaTool() tool {
 			for _, f := range coll.Fields {
 				out = append(out, fmt.Sprintf("%s (%s)%s", f.GetName(), f.Type(), requiredMark(f)))
 			}
-			if len(out) == 0 {
-				return "Collection has no fields.", nil
-			}
+if len(out) == 0 {
+			return a.tr("ai.noFields"), nil
+		}
 			return strings.Join(out, "\n"), nil
 		},
 	}
@@ -362,9 +362,9 @@ func queryRecordsTool() tool {
 				}
 				visible = append(visible, r.PublicExport())
 			}
-			if len(visible) == 0 {
-				return "No accessible records found.", nil
-			}
+if len(visible) == 0 {
+			return a.tr("ai.noRecords"), nil
+		}
 			if in.Fields != "" {
 				fieldSet := map[string]bool{}
 				for _, f := range strings.Split(in.Fields, ",") {

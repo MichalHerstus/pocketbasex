@@ -140,7 +140,7 @@ type detailData struct {
 }
 
 var detailTpl = template.Must(template.New("detail").Parse(
-	`<div class="ai-detail">{{if .Title}}<div class="ai-detail-title">{{.Title}}</div>{{end}}<dl>{{range .Fields}}<dt>{{.Label}}</dt><dd>{{.Value}}</dd>{{end}}</dl>{{if .FormLink}}<div class="ai-detail-actions"><a class="btn-sm" href="{{.FormLink}}" target="_blank">Edit</a>{{if .HasDelete}}<button type="button" class="btn-sm danger del-rec-btn" data-coll="{{.CollName}}" data-id="{{.RecID}}">Delete</button>{{end}}</div>{{end}}</div>`,
+	`<div class="ai-detail">{{if .Title}}<div class="ai-detail-title">{{.Title}}</div>{{end}}<dl style="grid-template-columns: minmax(120px, 1fr) 3fr; gap: 2px 8px;">{{range .Fields}}<dt>{{.Label}}</dt><dd>{{.Value}}</dd>{{end}}</dl>{{if .FormLink}}<div class="ai-detail-actions"><a class="btn-sm" href="{{.FormLink}}" target="_blank">Edit</a>{{if .HasDelete}}<button type="button" class="btn-sm danger del-rec-btn" data-coll="{{.CollName}}" data-id="{{.RecID}}">Delete</button>{{end}}</div>{{end}}</div>`,
 ))
 
 type renderData struct {

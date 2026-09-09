@@ -99,9 +99,9 @@ func queryRelatedTool() tool {
 				}
 				visible = append(visible, rec.PublicExport())
 			}
-			if len(visible) == 0 {
-				return "No accessible records found.", nil
-			}
+if len(visible) == 0 {
+			return a.tr("ai.noRecords"), nil
+		}
 			data, err := json.Marshal(visible)
 			if err != nil {
 				return "", err

@@ -583,8 +583,8 @@ func (a *Agent) RunStream(ctx context.Context, history []ChatMessage, file *File
 				args = []byte("{}")
 			}
 
-			if tool.write {
-				emit(StreamEvent{Type: "status", Message: "Preparing " + tc.Function.Name})
+if tool.write {
+			emit(StreamEvent{Type: "status", Message: a.tr("ai.preparing", tc.Function.Name)})
 				// build the pending action and stop the loop
 				pending, perr := tool.pending(a, args)
 				if perr != nil {
@@ -604,7 +604,7 @@ func (a *Agent) RunStream(ctx context.Context, history []ChatMessage, file *File
 				return res, nil
 			}
 
-			emit(StreamEvent{Type: "status", Message: "Running " + tc.Function.Name})
+			emit(StreamEvent{Type: "status", Message: a.tr("ai.running", tc.Function.Name)})
 			toolCallsSoFar++
 			resultText, err := tool.exec(a, args)
 			if err != nil {
@@ -653,15 +653,15 @@ func (a *Agent) RunStream(ctx context.Context, history []ChatMessage, file *File
 // that the caller still has the required access.
 func (a *Agent) Confirm(ctx context.Context, actionID string, approved bool) (*ConfirmResult, error) {	action := loadPending(actionID)
 	if action == nil {
-		return &ConfirmResult{OK: false, Message: "The action has expired or does not exist."}, nil
+		return &ConfirmResult{OK: false, Message: a.tr("ai.actionExpired")}, nil
 	}
 	if !approved {
-		return &ConfirmResult{OK: false, Message: "Action rejected by user."}, nil
+		return &ConfirmResult{OK: false, Message: a.tr("ai.actionRejected")}, nil
 	}
 
 	tool := findTool(action.toolName)
 	if tool == nil || tool.write != true {
-		return &ConfirmResult{OK: false, Message: "Invalid action type."}, nil
+		return &ConfirmResult{OK: false, Message: a.tr("ai.actionInvalid")}, nil
 	}
 
 	resultText, err := tool.exec(a, action.params)
