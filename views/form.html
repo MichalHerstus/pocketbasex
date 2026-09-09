@@ -55,6 +55,8 @@
         .ai-status.done { border-left-color:var(--success); }
         .ai-status.err  { border-left-color:var(--danger); }
         .ai-status.done .ai-spinner, .ai-status.err .ai-spinner { display:none; }
+        @keyframes ai-field-flash { 0% { box-shadow:0 0 0 3px var(--accent); background-color:var(--accent-soft); } 100% { box-shadow:none; background-color:transparent; } }
+        .ai-field-flash { animation:ai-field-flash 1.2s ease 2; }
         .ai-confirm { padding:10px 14px; margin-bottom:12px; background:var(--accent-soft);
                       border:1px solid var(--accent); border-radius:8px; display:flex; align-items:center; gap:12px; }
         .ai-confirm .ai-confirm-text { flex:1; font-size:.9rem; }
@@ -559,17 +561,21 @@
     }
 
     function applyAIResult(result) {
-        // formFill takes priority over pendingAction (LLM sometimes returns both)
+        // formFill takes priority over pendingAction (LLM sometimes returns both).
+        // Structured server-side extract takes precedence; older server builds
+        // still embed {"formFill":...} in the final text, so keep the regex
+        // fallback.
+        if (result.formFill && Object.keys(result.formFill).length) {
+            applyFormFill(result.formFill);
+            return;
+        }
         if (result.finalText) {
-            var text = result.finalText;
-            var jsonMatch = text.match(/\{[\s\S]*"formFill"[\s\S]*\}/);
+            var jsonMatch = result.finalText.match(/\{[\s\S]*"formFill"[\s\S]*\}/);
             if (jsonMatch) {
                 try {
                     var parsed = JSON.parse(jsonMatch[0]);
                     if (parsed.formFill) {
-                        populateForm(parsed.formFill);
-                        aiHint(_t("ai.formFilled") || "Form filled — review and submit.");
-                        finishAI();
+                        applyFormFill(parsed.formFill);
                         return;
                     }
                 } catch(e) {}
@@ -588,6 +594,32 @@
             aiHint(result.finalText || "(no result)");
             finishAI();
         }
+    }
+
+    // applyFormFill populates the form with AI-provided values, then hands back
+    // validation feedback and a flash highlight so the user can review what
+    // changed before submitting.
+    function applyFormFill(values) {
+        var changed = populateForm(values);
+        validateFormFeedback(changed);
+        aiHint(_t("ai.formFilled") || "Form filled — review and submit.");
+        finishAI();
+    }
+
+    // validateFormFeedback runs HTML5 validity on the form (focusing the first
+    // invalid control via reportValidity) and flashes the fields the AI filled.
+    function validateFormFeedback(names) {
+        var form = document.querySelector("form[method=POST]");
+        if (form && !form.checkValidity()) {
+            form.reportValidity();
+        }
+        (names || []).forEach(function(name) {
+            var el = form ? form.querySelector('[name="' + name + '"]') : null;
+            if (!el) return;
+            el.classList.remove("ai-field-flash");
+            void el.offsetWidth; // restart the animation
+            el.classList.add("ai-field-flash");
+        });
     }
 
     function showAISearchModal(records) {
@@ -659,6 +691,7 @@
     }
 
     function populateForm(values) {
+        var changed = [];
         Object.keys(values).forEach(function(fieldName) {
             var val = values[fieldName];
             if (val === null || val === undefined) return;
@@ -673,7 +706,9 @@
                 el.value = strVal;
             }
             el.dispatchEvent(new Event("change", { bubbles: true }));
+            changed.push(fieldName);
         });
+        return changed;
     }
 
     function finishAI() {

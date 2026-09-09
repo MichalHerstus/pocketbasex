@@ -58,6 +58,7 @@ type ChatResult struct {
 	Render        string           `json:"render,omitempty"`  // server-rendered HTML fragment for the chat bubble
 	Navigate      *NavigateSuggestion `json:"navigate,omitempty"` // navigation suggestion from navigate_to
 	Export        *ExportSuggestion   `json:"export,omitempty"`   // download link from export_data
+	FormFill      map[string]any      `json:"formFill,omitempty"` // structured form values for the view agent
 }
 
 // NavigateSuggestion is a clickable navigation target surfaced by navigate_to.
@@ -543,10 +544,17 @@ func (a *Agent) RunStream(ctx context.Context, history []ChatMessage, file *File
 
 		// no tool calls → final answer
 		if len(msg.ToolCalls) == 0 {
-			if assistantText == "" {
+			var formFill map[string]any
+			if a.viewMode == "form" {
+				formFill, assistantText = extractFormFill(assistantText)
+				if len(transcript) > 0 && transcript[len(transcript)-1].Role == "assistant" {
+					transcript[len(transcript)-1].Content = assistantText
+				}
+			}
+			if assistantText == "" && formFill == nil {
 				assistantText = "(no response)"
 			}
-			res := &ChatResult{Transcript: transcript, FinalText: assistantText, Records: lastRecords, Navigate: lastNavigate, Export: lastExport}
+			res := &ChatResult{Transcript: transcript, FinalText: assistantText, Records: lastRecords, Navigate: lastNavigate, Export: lastExport, FormFill: formFill}
 			res.Render = RenderResult(a.App, res, a.BasePath, a.isSuper())
 			emit(StreamEvent{Type: "done", Result: res})
 			return res, nil
