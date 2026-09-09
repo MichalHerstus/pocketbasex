@@ -104,7 +104,7 @@ migrate((app) => {
         "type": "text"
       }
     ],
-    "id": "pbc_4520000001",
+    "id": "pbc_4520000002",
     "indexes": [],
     "listRule": null,
     "name": "_conversations",
