@@ -57,6 +57,7 @@ type ChatResult struct {
 	Records       []map[string]any `json:"records,omitempty"` // last query_records output; the UI renders it as a table
 	Render        string           `json:"render,omitempty"`  // server-rendered HTML fragment for the chat bubble
 	Navigate      *NavigateSuggestion `json:"navigate,omitempty"` // navigation suggestion from navigate_to
+	Export        *ExportSuggestion   `json:"export,omitempty"`   // download link from export_data
 }
 
 // NavigateSuggestion is a clickable navigation target surfaced by navigate_to.
@@ -522,6 +523,7 @@ func (a *Agent) RunStream(ctx context.Context, history []ChatMessage, file *File
 	transcript := []ChatMessage{}
 	var lastRecords []map[string]any
 	var lastNavigate *NavigateSuggestion
+	var lastExport *ExportSuggestion
 	toolCallsSoFar := 0
 	for i := 0; i < a.maxIterations; i++ {
 		var iterText strings.Builder
@@ -544,7 +546,7 @@ func (a *Agent) RunStream(ctx context.Context, history []ChatMessage, file *File
 			if assistantText == "" {
 				assistantText = "(no response)"
 			}
-			res := &ChatResult{Transcript: transcript, FinalText: assistantText, Records: lastRecords, Navigate: lastNavigate}
+			res := &ChatResult{Transcript: transcript, FinalText: assistantText, Records: lastRecords, Navigate: lastNavigate, Export: lastExport}
 			res.Render = RenderResult(a.App, res, a.BasePath, a.isSuper())
 			emit(StreamEvent{Type: "done", Result: res})
 			return res, nil
@@ -619,6 +621,13 @@ func (a *Agent) RunStream(ctx context.Context, history []ChatMessage, file *File
 				}
 				if json.Unmarshal([]byte(resultText), &nav) == nil && nav.Navigate != nil {
 					lastNavigate = nav.Navigate
+				}
+			} else if tool.name == "export_data" {
+				var exp struct {
+					Export *ExportSuggestion `json:"export"`
+				}
+				if json.Unmarshal([]byte(resultText), &exp) == nil && exp.Export != nil {
+					lastExport = exp.Export
 				}
 			}
 			messages = append(messages, openai.ChatCompletionMessage{
@@ -808,15 +817,19 @@ func (a *Agent) systemMessages() []openai.ChatCompletionMessage {
 	b.WriteString("insert/update/delete records, create/update/delete collections, set collection rules, ")
 	b.WriteString("update/delete view configurations and manage custom actions.\n\n")
 	b.WriteString("Available tools:\n")
-	b.WriteString("- Read tools (no confirmation): list_collections, get_collection_schema, query_records, list_actions, navigate_to\n")
-	b.WriteString("- Write tools (confirmation required): insert_records, update_records, delete_records, ")
+	b.WriteString("- Read tools (no confirmation): list_collections, get_collection_schema, query_records, query_related, get_stats, list_actions, navigate_to, export_data\n")
+	b.WriteString("- Write tools (confirmation required): insert_records, create_records_batch, update_records, delete_records, ")
 	b.WriteString("create_collection, update_collection, delete_collection, set_collection_rules, ")
-	b.WriteString("set_view_config, update_view_config, delete_view_config, create_action\n\n")
+	b.WriteString("set_view_config, update_view_config, delete_view_config, create_action, run_action\n\n")
 	b.WriteString("Rules:\n")
 	b.WriteString("- Answer strictly in the language the user uses; never mix words or phrases from other languages into your reply (for example, do not insert Russian or other non-Czech words into a Czech sentence).\n")
 	b.WriteString("- Use the provided tools to gather facts; do not invent record contents.\n")
 	b.WriteString("- When the user asks to write data, use the corresponding tool. The system will ask for confirmation.\n")
 	b.WriteString("- When the user explicitly asks to go to or open a specific view or record, call navigate_to (it returns a clickable link rather than changing the page).\n")
+	b.WriteString("- When the user asks to download or export data (CSV/JSON file), call export_data.\n")
+	b.WriteString("- Use query_related instead of query_records when the answer needs data from related collections joined by relation fields.\n")
+	b.WriteString("- Use get_stats for counts/sums/averages over large sets; use query_records for listing individual records.\n")
+	b.WriteString("- When the user asks to run a saved custom action, call run_action with the action name resolved via list_actions.\n")
 	b.WriteString("- Copy collection names exactly as they appear in tool output. If a tool reports that a collection was not found, retry with the suggested name from the error message or call list_collections first.\n")
 	b.WriteString("- If a request is ambiguous, ask the user a clarifying question instead of guessing.\n")
 	b.WriteString("- After fetching records with query_records, keep your answer brief: the UI renders the returned records as a table automatically.\n")

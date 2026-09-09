@@ -88,6 +88,11 @@ func allTools() []tool {
 		updateViewConfigTool(),
 		deleteViewConfigTool(),
 		navigateToTool(),
+		queryRelatedTool(),
+		getStatsTool(),
+		createRecordsBatchTool(),
+		runActionTool(),
+		exportDataTool(),
 	}
 }
 
@@ -466,23 +471,9 @@ func insertRecordsTool() tool {
 			if err != nil {
 				return "", err
 			}
-			var created []string
-			for _, raw := range in.Records {
-				data, err := coerceRecordValues(coll, raw)
-				if err != nil {
-					return "", err
-				}
-				if err := a.checkCreateRule(coll, data); err != nil {
-					return "", err
-				}
-				rec := core.NewRecord(coll)
-				for k, v := range data {
-					rec.Set(k, v)
-				}
-				if err := a.App.Save(rec); err != nil {
-					return "", fmt.Errorf("failed to save record in %q: %w", coll.Name, err)
-				}
-				created = append(created, rec.Id)
+			created, err := execCreateRecords(a, coll, in.Records)
+			if err != nil {
+				return "", err
 			}
 			return a.tr("ai.insertedRecords", len(created), a.recordNoun(len(created)), coll.Name, strings.Join(created, ", ")), nil
 		},

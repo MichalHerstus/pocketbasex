@@ -4028,6 +4028,42 @@ func handleAgentConversationDelete(e *core.RequestEvent) error {
 	return e.JSON(http.StatusOK, map[string]any{"ok": true})
 }
 
+// handleAIExport streams a previously generated AI export to the requesting
+// user (owner or superuser) if it is still within its TTL.
+func handleAIExport(e *core.RequestEvent) error {
+	id := e.Request.PathValue("id")
+	userID := requestedAuthUserID(e)
+	if userID == "" {
+		return e.ForbiddenError("Not authenticated", nil)
+	}
+	super := isSuperUserFromID(e, userID)
+
+	ent := pbai.LoadExport(id)
+	if ent == nil {
+		return e.NotFoundError("Export not found or expired", nil)
+	}
+	if ent.OwnerID != userID && !super {
+		return e.NotFoundError("Export not found or expired", nil)
+	}
+	e.Response.Header().Set("Content-Disposition", `attachment; filename="`+sanitizeHeaderFilename(ent.Filename)+`"`)
+	return e.Blob(http.StatusOK, ent.ContentType, ent.Data)
+}
+
+// sanitizeHeaderFilename strips characters that could break out of a
+// Content-Disposition filename so a model-supplied name cannot inject a header.
+func sanitizeHeaderFilename(name string) string {
+	var b strings.Builder
+	for _, r := range name {
+		switch r {
+		case '"', ';', '\r', '\n', '\\':
+			continue
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 // --- Delete record ---
 
 func handleDeleteRecord(e *core.RequestEvent) error {

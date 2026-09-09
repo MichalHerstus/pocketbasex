@@ -213,3 +213,23 @@ func TestRenderDetailEditAndDelete(t *testing.T) {
 		t.Errorf("delete button should be hidden for non-superusers: %s", noDel)
 	}
 }
+func TestRenderResultExportChip(t *testing.T) {
+	res := &ChatResult{
+		FinalText: "done",
+		Export: &ExportSuggestion{
+			ID:       "abc123XYZ",
+			Filename: `export <b>&".csv`,
+			Format:   "csv",
+			Count:    12,
+		},
+	}
+	out := RenderResult(nil, res, "")
+	for _, want := range []string{"/api/ai/exports/abc123XYZ", `Download export`, "&lt;b&gt;&amp;", "12 rows"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("export chip missing %q in output:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, `<b>&"`) {
+		t.Errorf("raw filename leaked into output:\n%s", out)
+	}
+}

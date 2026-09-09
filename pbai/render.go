@@ -298,6 +298,21 @@ func escapeAttr(s string) string {
 	return strings.ReplaceAll(strings.ReplaceAll(s, "/", "%2F"), "?", "%3F")
 }
 
+// renderExportChip builds the download link for an export_data result. The id
+// is a random alphanumeric token and the filename is HTML-escaped, so model
+// output cannot inject markup through either field.
+func renderExportChip(exp ExportSuggestion) string {
+	var b strings.Builder
+	b.WriteString(`<div class="ai-detail-actions ai-export-chip">`)
+	fmt.Fprintf(&b, `<a class="btn-sm" href="/api/ai/exports/%s" download>Download export</a>`, escapeAttr(exp.ID))
+	fmt.Fprintf(&b, ` <span class="ai-muted">%s</span>`, html.EscapeString(exp.Filename))
+	if exp.Count > 0 {
+		fmt.Fprintf(&b, ` <span class="ai-muted">· %d rows</span>`, exp.Count)
+	}
+	b.WriteString(`</div>`)
+	return b.String()
+}
+
 func renderDetail(rec map[string]any, title string, labels map[string]string, basePath, configName string, canDelete bool) string {
 	data := detailData{Title: title}
 	sys := []string{"id", "created", "updated"}
@@ -376,6 +391,10 @@ func RenderResult(app core.App, res *ChatResult, basePath string, canDelete ...b
 		}
 		_, _, cfgName, _ := viewConfig(app, coll)
 		data.Body = template.HTML(renderTable(res.Records, basePath, cfgName))
+	}
+
+	if res.Export != nil {
+		data.Body = template.HTML(string(data.Body) + renderExportChip(*res.Export))
 	}
 
 	var buf bytes.Buffer

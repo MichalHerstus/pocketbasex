@@ -551,6 +551,9 @@
             if (result.navigate) {
                 addNavigateChip(result.navigate);
             }
+            if (result.export) {
+                addExportChip(result.export);
+            }
             applyResultToHistory(result);
             saveConversation();
         }
@@ -572,6 +575,28 @@
                 if (window.history && window.location.pathname !== h) {
                     window.location.href = h;
                 }
+            };
+            chat.appendChild(div);
+            chat.scrollTop = chat.scrollHeight;
+            updateRegenButtons();
+        }
+
+        // addExportChip renders a download button for an export_data result.
+        // The click triggers a hidden <a> download so the browser keeps the
+        // current page intact while the file is saved.
+        function addExportChip(exp) {
+            var chat = document.getElementById('chat');
+            var div = document.createElement('div');
+            div.className = 'msg nav-chat';
+            div.innerHTML = '<button type="button" class="nav-btn export-btn">\u2193 Download export (' + esc(exp.filename) + ')</button>';
+            var btn = div.querySelector('.export-btn');
+            btn.onclick = function() {
+                var a = document.createElement('a');
+                a.href = '/api/ai/exports/' + encodeURIComponent(exp.id);
+                a.download = exp.filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
             };
             chat.appendChild(div);
             chat.scrollTop = chat.scrollHeight;

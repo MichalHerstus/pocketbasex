@@ -267,6 +267,7 @@ func registerAIRoutes(se *core.ServeEvent) {
 	se.Router.POST("/ai/conversations/save", rateLimitMiddleware(aiStreamRateLimiter)(handleAgentConversationSave))
 	se.Router.GET("/ai/conversations/{id}", func(e *core.RequestEvent) error { return handleAgentConversationGet(e) })
 	se.Router.POST("/ai/conversations/delete", rateLimitMiddleware(aiStreamRateLimiter)(handleAgentConversationDelete))
+	se.Router.GET("/api/ai/exports/{id}", func(e *core.RequestEvent) error { return handleAIExport(e) })
 }
 
 // registerActionRoutes registers the custom action list/execute endpoints.
