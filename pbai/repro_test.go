@@ -106,8 +106,67 @@ func TestRecordsAlwaysHaveRender(t *testing.T) {
 		{{"id": "1", "collectionName": "x", "a": "1"}, {"id": "2", "collectionName": "x", "a": "2"}},
 	} {
 		res := &ChatResult{Records: records}
-		if out := RenderResult(nil, res); out == "" {
+		if out := RenderResult(nil, res, ""); out == "" {
 			t.Errorf("records present but render empty: %v", records)
 		}
+	}
+}
+
+// TestNavigateToTool ensures navigate_to resolves a real _views config, returns
+// a JSON navigate directive, and rejects unknown config names (so the UI link
+// never dead-ends).
+func TestNavigateToTool(t *testing.T) {
+	app, err := tests.NewTestApp()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer app.Cleanup()
+
+	viewsColl := core.NewBaseCollection("_views")
+	for _, f := range []struct {
+		name string
+		typ  string
+	}{{"_name", core.FieldTypeText}, {"_collName", core.FieldTypeText}} {
+		cf := core.Fields[f.typ]()
+		cf.SetName(f.name)
+		viewsColl.Fields.Add(cf)
+	}
+	if err := app.Save(viewsColl); err != nil {
+		t.Fatal(err)
+	}
+	vrec := core.NewRecord(viewsColl)
+	vrec.Set("_name", "produkty")
+	vrec.Set("_collName", "products")
+	if err := app.Save(vrec); err != nil {
+		t.Fatal(err)
+	}
+
+	agent := NewAgent(app, &core.RequestInfo{Context: "ai"}, views.AgentConfig{})
+	dl := findTool("navigate_to")
+	if dl == nil {
+		t.Fatal("navigate_to tool not registered")
+	}
+
+	out, err := dl.exec(agent, json.RawMessage(`{"target":"form","configName":"produkty","recordId":"abc123"}`))
+	if err != nil {
+		t.Fatalf("navigate_to exec error: %v", err)
+	}
+	var parsed struct {
+		Navigate struct {
+			Target     string `json:"target"`
+			ConfigName string `json:"configName"`
+			RecordID   string `json:"recordId"`
+		} `json:"navigate"`
+	}
+	if err := json.Unmarshal([]byte(out), &parsed); err != nil {
+		t.Fatalf("navigate_to output not JSON: %v (%s)", err, out)
+	}
+	if parsed.Navigate.Target != "form" || parsed.Navigate.ConfigName != "produkty" || parsed.Navigate.RecordID != "abc123" {
+		t.Errorf("unexpected navigate directive: %s", out)
+	}
+
+	// unknown config name → error (never a dead-end link)
+	if _, err := dl.exec(agent, json.RawMessage(`{"target":"tabular","configName":"nope"}`)); err == nil {
+		t.Errorf("expected error for unknown config name")
 	}
 }

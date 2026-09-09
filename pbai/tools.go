@@ -87,6 +87,7 @@ func allTools() []tool {
 		setCollectionRulesTool(),
 		updateViewConfigTool(),
 		deleteViewConfigTool(),
+		navigateToTool(),
 	}
 }
 
@@ -1827,6 +1828,49 @@ func mustMarshal(v any) json.RawMessage {
 }
 
 // register the tools in the registry
+func navigateToTool() tool {
+	return tool{
+		name:        "navigate_to",
+		description: "Suggests navigating to a PBX page the user can click. Does NOT change the page itself; it returns a navigation suggestion the UI shows as a clickable button. Args: {\"target\": \"tabular\" or \"form\", \"configName\": \"view config name\", \"recordId\": \"optional record id for form\"}. Use when the user asks to go to / open a specific view or record.",
+		params: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"target":     map[string]any{"type": "string", "enum": []string{"tabular", "form"}},
+				"configName": map[string]any{"type": "string"},
+				"recordId":   map[string]any{"type": "string"},
+			},
+			"required": []string{"target", "configName"},
+		},
+		exec: func(a *Agent, args json.RawMessage) (string, error) {
+			var in struct {
+				Target     string `json:"target"`
+				ConfigName string `json:"configName"`
+				RecordID   string `json:"recordId"`
+			}
+			if err := json.Unmarshal(args, &in); err != nil {
+				return "", err
+			}
+			if in.Target != "tabular" && in.Target != "form" {
+				return "", fmt.Errorf("target must be \"tabular\" or \"form\"")
+			}
+			if in.ConfigName == "" {
+				return "", fmt.Errorf("configName is required")
+			}
+			// confirm the view config exists so the suggestion never dead-ends
+			recs, err := a.App.FindRecordsByFilter("_views", "_name = {:name}", "", 1, 0, dbx.Params{"name": in.ConfigName})
+			if err != nil || len(recs) == 0 {
+				return "", fmt.Errorf("no view config named %q exists", in.ConfigName)
+			}
+			nav := map[string]any{"navigate": map[string]any{"target": in.Target, "configName": in.ConfigName}}
+			if in.RecordID != "" {
+				nav["navigate"].(map[string]any)["recordId"] = in.RecordID
+			}
+			b, _ := json.Marshal(nav)
+			return string(b), nil
+		},
+	}
+}
+
 func init() {
 	for _, d := range allTools() {
 		register(d)

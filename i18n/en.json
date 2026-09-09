@@ -260,6 +260,10 @@
   "agent.approveExecute": "Approve & execute",
   "agent.notConfigured": "Agent is not configured (set it up in /pbx-setup \u2192 AI agent).",
   "agent.ready": "Ready \u2014",
+  "agent.history": "Conversations",
+  "agent.noHistory": "No conversations yet",
+  "agent.deleteConv": "Delete conversation",
+  "ai.justNow": "now",
 
   "sr.newRecord": "New record",
   "sr.editRecord": "Edit record",

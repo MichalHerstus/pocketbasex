@@ -3744,8 +3744,7 @@ func handleViewChatStream(e *core.RequestEvent) error {
 }
 
 // handleAgentConfirm executes or rejects a pending agent write action.
-func handleAgentConfirm(e *core.RequestEvent) error {
-	var req struct {
+func handleAgentConfirm(e *core.RequestEvent) error {	var req struct {
 		ActionID string `json:"actionID"`
 		Approved bool   `json:"approved"`
 	}
@@ -3769,6 +3768,264 @@ func handleAgentConfirm(e *core.RequestEvent) error {
 		return e.InternalServerError("Confirm failed: "+err.Error(), err)
 	}
 	return e.JSON(http.StatusOK, result)
+}
+
+// handleAgentDeleteRecord starts the confirmation flow for deleting a single
+// record from a rendered detail card. It builds a pending action via the same
+// delete_records tool path (so rules are enforced), returns it for the confirm
+// modal, and execution proceeds through handleAgentConfirm on approval.
+func handleAgentDeleteRecord(e *core.RequestEvent) error {
+	var req struct {
+		Collection string `json:"collection"`
+		RecordID   string `json:"recordId"`
+	}
+	if err := json.NewDecoder(e.Request.Body).Decode(&req); err != nil {
+		return e.BadRequestError("Invalid request body", err)
+	}
+	if req.Collection == "" || req.RecordID == "" {
+		return e.BadRequestError("collection and recordId are required", nil)
+	}
+
+	cfg := getAgentConfig(e)
+	info, err := agentRequestInfo(e)
+	if err != nil {
+		return e.InternalServerError("Failed to resolve request context", err)
+	}
+
+	agent := pbai.NewAgent(e.App, info, cfg)
+	agent.Lang = getLangCode(e.App, e.Request)
+	pending, err := agent.NewDeletePendingAction(req.Collection, req.RecordID)
+	if err != nil {
+		return e.ForbiddenError(err.Error(), nil)
+	}
+	return e.JSON(http.StatusOK, map[string]any{"pendingAction": pending})
+}
+
+// --- Conversation persistence (Phase 3) ---
+
+// agentConvMessage is the persisted shape of a single chat turn. It mirrors
+// pbai.ChatMessage so a stored history can be replayed straight into the agent.
+type agentConvMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+// agentConvSummaries is the shape of GET /ai/conversations.
+type agentConvSummaries struct {
+	ID      string `json:"id"`
+	Title   string `json:"title"`
+	Model   string `json:"model"`
+	User    string `json:"user,omitempty"` // owner id incl. for superusers listing all
+	Updated string `json:"updated"`
+}
+
+// handleAgentConversationsList lists the caller's persisted conversations
+// (superusers see all). Sorted newest-first.
+func handleAgentConversationsList(e *core.RequestEvent) error {
+	userID := requestedAuthUserID(e)
+	if userID == "" {
+		return e.JSON(http.StatusOK, map[string]any{"conversations": []agentConvSummaries{}})
+	}
+	super := isSuperUserFromID(e, userID)
+
+	filter := ""
+	params := dbx.Params{}
+	if !super {
+		filter = "_user = {:u}"
+		params["u"] = userID
+	}
+	records, err := e.App.FindRecordsByFilter("_conversations", filter, "-updated", 200, 0, nil, params)
+	if err != nil {
+		return e.InternalServerError("Failed to load conversations", err)
+	}
+	out := make([]agentConvSummaries, 0, len(records))
+	for _, r := range records {
+		out = append(out, agentConvSummaries{
+			ID:      r.GetString("id"),
+			Title:   r.GetString("_title"),
+			Model:   r.GetString("_model"),
+			User:    r.GetString("_user"),
+			Updated: r.GetDateTime("updated").Time().Format(time.RFC3339),
+		})
+	}
+	return e.JSON(http.StatusOK, map[string]any{"conversations": out})
+}
+
+// handleAgentConversationSave upserts a conversation for the caller. The body
+// carries the full transcript plus an optional existing conversation id ("" for
+// a new one). Returns the conversation id so the client can continue it.
+func handleAgentConversationSave(e *core.RequestEvent) error {
+	var req struct {
+		ConversationID string             `json:"conversationId,omitempty"`
+		Title          string             `json:"title,omitempty"`
+		Model          string             `json:"model,omitempty"`
+		Messages       []agentConvMessage `json:"messages"`
+	}
+
+	// Resolve the caller before decoding the body: authRequestInfo internally
+	// calls e.RequestInfo() which BindBody's the request; doing it after the
+	// handler consumed the body would fail silently (empty stream).
+	userID := requestedAuthUserID(e)
+	if userID == "" {
+		return e.ForbiddenError("Not authenticated", nil)
+	}
+	super := isSuperUserFromID(e, userID)
+
+	if err := json.NewDecoder(e.Request.Body).Decode(&req); err != nil {
+		return e.BadRequestError("Invalid request body", err)
+	}
+	if len(req.Messages) == 0 {
+		return e.BadRequestError("messages are required", nil)
+	}
+
+	coll, err := e.App.FindCachedCollectionByNameOrId("_conversations")
+	if err != nil {
+		return e.InternalServerError("Conversations collection missing", err)
+	}
+
+	clean := make([]agentConvMessage, 0, len(req.Messages))
+	for _, m := range req.Messages {
+		r := strings.ToLower(strings.TrimSpace(m.Role))
+		if r == "" || (r != "user" && r != "assistant") {
+			continue
+		}
+		if m.Content == "" {
+			continue
+		}
+		clean = append(clean, agentConvMessage{Role: r, Content: m.Content})
+	}
+	if len(clean) == 0 {
+		return e.BadRequestError("messages are required", nil)
+	}
+
+	title := strings.TrimSpace(req.Title)
+	if title == "" {
+		title = deriveAgentTitle(clean)
+	}
+
+	msgsJSON, err := json.Marshal(clean)
+	if err != nil {
+		return e.InternalServerError("Failed to encode messages", err)
+	}
+
+	var rec *core.Record
+	if req.ConversationID != "" {
+		rec, err = e.App.FindRecordById("_conversations", req.ConversationID)
+		if err != nil {
+			return e.NotFoundError("Conversation not found", nil)
+		}
+		owner := rec.GetString("_user")
+		if owner != userID && !super {
+			return e.NotFoundError("Conversation not found", nil)
+		}
+	} else {
+		rec = core.NewRecord(coll)
+		// keep the stored title as a stable identifier once set
+		rec.Set("_user", userID)
+	}
+
+	rec.Set("_title", title)
+	rec.Set("_messages", string(msgsJSON))
+	if req.Model != "" {
+		rec.Set("_model", req.Model)
+	}
+	if err := e.App.Save(rec); err != nil {
+		return e.InternalServerError("Failed to save conversation", err)
+	}
+	return e.JSON(http.StatusOK, map[string]any{"id": rec.GetString("id")})
+}
+
+// deriveAgentTitle builds a short title from the conversation's first user
+// message (or the transcript when only assistant turns exist).
+func deriveAgentTitle(msgs []agentConvMessage) string {
+	for _, m := range msgs {
+		if m.Role == "user" {
+			return restring(m.Content, 48)
+		}
+	}
+	if len(msgs) > 0 {
+		return restring(msgs[0].Content, 48)
+	}
+	return "Chat"
+}
+
+// restring trims s to at most n runes, adding an ellipsis when truncated.
+func restring(s string, n int) string {
+	rs := []rune(strings.TrimSpace(s))
+	if len(rs) == 0 {
+		return ""
+	}
+	if len(rs) <= n {
+		return string(rs)
+	}
+	return string(rs[:n]) + "…"
+}
+
+// handleAgentConversationGet returns a persisted conversation's transcript for
+// replay. Ownership is enforced (superusers may read any).
+func handleAgentConversationGet(e *core.RequestEvent) error {
+	id := e.Request.PathValue("id")
+	if id == "" {
+		return e.BadRequestError("Missing conversation id", nil)
+	}
+	userID := requestedAuthUserID(e)
+	if userID == "" {
+		return e.ForbiddenError("Not authenticated", nil)
+	}
+	super := isSuperUserFromID(e, userID)
+
+	rec, err := e.App.FindRecordById("_conversations", id)
+	if err != nil {
+		return e.NotFoundError("Conversation not found", nil)
+	}
+	owner := rec.GetString("_user")
+	if owner != userID && !super {
+		return e.NotFoundError("Conversation not found", nil)
+	}
+
+	var msgs []agentConvMessage
+	if ms := rec.GetString("_messages"); ms != "" {
+		_ = json.Unmarshal([]byte(ms), &msgs)
+	}
+	return e.JSON(http.StatusOK, map[string]any{
+		"id":       rec.GetString("id"),
+		"title":    rec.GetString("_title"),
+		"model":    rec.GetString("_model"),
+		"messages": msgs,
+	})
+}
+
+// handleAgentConversationDelete removes a conversation the caller owns (or any,
+// for superusers).
+func handleAgentConversationDelete(e *core.RequestEvent) error {
+	userID := requestedAuthUserID(e)
+	if userID == "" {
+		return e.ForbiddenError("Not authenticated", nil)
+	}
+	super := isSuperUserFromID(e, userID)
+
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(e.Request.Body).Decode(&req); err != nil {
+		return e.BadRequestError("Invalid request body", err)
+	}
+	if req.ID == "" {
+		return e.BadRequestError("Missing conversation id", nil)
+	}
+
+	rec, err := e.App.FindRecordById("_conversations", req.ID)
+	if err != nil {
+		return e.NotFoundError("Conversation not found", nil)
+	}
+	owner := rec.GetString("_user")
+	if owner != userID && !super {
+		return e.NotFoundError("Conversation not found", nil)
+	}
+	if err := e.App.Delete(rec); err != nil {
+		return e.InternalServerError("Failed to delete conversation", err)
+	}
+	return e.JSON(http.StatusOK, map[string]any{"ok": true})
 }
 
 // --- Delete record ---

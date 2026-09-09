@@ -56,6 +56,14 @@ type ChatResult struct {
 	FinalText     string           `json:"finalText"`
 	Records       []map[string]any `json:"records,omitempty"` // last query_records output; the UI renders it as a table
 	Render        string           `json:"render,omitempty"`  // server-rendered HTML fragment for the chat bubble
+	Navigate      *NavigateSuggestion `json:"navigate,omitempty"` // navigation suggestion from navigate_to
+}
+
+// NavigateSuggestion is a clickable navigation target surfaced by navigate_to.
+type NavigateSuggestion struct {
+	Target     string `json:"target"`     // "tabular" | "form"
+	ConfigName string `json:"configName"`
+	RecordID   string `json:"recordId,omitempty"`
 }
 
 // ConfirmResult is returned by Agent.Confirm.
@@ -76,6 +84,9 @@ type Agent struct {
 	Info *core.RequestInfo // auth context for rule checks
 	Cfg  views.AgentConfig
 	Lang string // UI language ("en" or "cs") used for user-facing messages
+	// BasePath prefixes generated links (e.g. form record links). "" for the
+	// desktop app; "/mobile" for the mobile variant (unused for now).
+	BasePath string
 
 	// maxIterations bounds the tool-calling loop.
 	maxIterations int
@@ -150,8 +161,7 @@ func NewAgent(app core.App, info *core.RequestInfo, cfg views.AgentConfig) *Agen
 	return a
 }
 
-// NewViewAgent creates an agent scoped to a single collection view (form mode).
-// Only the tools listed in allowedTools are offered to the LLM.
+// NewViewAgent creates an agent scoped to a single collection view (form mode).// Only the tools listed in allowedTools are offered to the LLM.
 func NewViewAgent(app core.App, info *core.RequestInfo, cfg views.AgentConfig, collection, configName string) *Agent {
 	a := NewAgent(app, info, cfg)
 	a.allowedTools = []string{"query_records", "insert_records", "update_records", "delete_records"}
@@ -511,6 +521,7 @@ func (a *Agent) RunStream(ctx context.Context, history []ChatMessage, file *File
 
 	transcript := []ChatMessage{}
 	var lastRecords []map[string]any
+	var lastNavigate *NavigateSuggestion
 	toolCallsSoFar := 0
 	for i := 0; i < a.maxIterations; i++ {
 		var iterText strings.Builder
@@ -533,8 +544,8 @@ func (a *Agent) RunStream(ctx context.Context, history []ChatMessage, file *File
 			if assistantText == "" {
 				assistantText = "(no response)"
 			}
-			res := &ChatResult{Transcript: transcript, FinalText: assistantText, Records: lastRecords}
-			res.Render = RenderResult(a.App, res)
+			res := &ChatResult{Transcript: transcript, FinalText: assistantText, Records: lastRecords, Navigate: lastNavigate}
+			res.Render = RenderResult(a.App, res, a.BasePath, a.isSuper())
 			emit(StreamEvent{Type: "done", Result: res})
 			return res, nil
 		}
@@ -578,7 +589,7 @@ func (a *Agent) RunStream(ctx context.Context, history []ChatMessage, file *File
 				summary := fmt.Sprintf("Awaiting confirmation: %s", pending.Summary)
 				transcript = append(transcript, ChatMessage{Role: "assistant", Content: summary})
 				res := &ChatResult{Transcript: transcript, PendingAction: pending, FinalText: summary}
-				res.Render = RenderResult(a.App, res)
+				res.Render = RenderResult(a.App, res, a.BasePath, a.isSuper())
 				emit(StreamEvent{Type: "done", Result: res})
 				return res, nil
 			}
@@ -597,10 +608,17 @@ func (a *Agent) RunStream(ctx context.Context, history []ChatMessage, file *File
 				// no follow-up LLM pass - the UI renders the records table
 				// directly, so skip the second round-trip entirely.
 				if toolCallsSoFar == 1 && len(lastRecords) > 0 {
-					res := &ChatResult{Transcript: transcript, Records: lastRecords}
-					res.Render = RenderResult(a.App, res)
+					res := &ChatResult{Transcript: transcript, Records: lastRecords, Navigate: lastNavigate}
+					res.Render = RenderResult(a.App, res, a.BasePath, a.isSuper())
 					emit(StreamEvent{Type: "done", Result: res})
 					return res, nil
+				}
+			} else if tool.name == "navigate_to" {
+				var nav struct {
+					Navigate *NavigateSuggestion `json:"navigate"`
+				}
+				if json.Unmarshal([]byte(resultText), &nav) == nil && nav.Navigate != nil {
+					lastNavigate = nav.Navigate
 				}
 			}
 			messages = append(messages, openai.ChatCompletionMessage{
@@ -616,8 +634,7 @@ func (a *Agent) RunStream(ctx context.Context, history []ChatMessage, file *File
 
 // Confirm executes a previously created pending write action after re-checking
 // that the caller still has the required access.
-func (a *Agent) Confirm(ctx context.Context, actionID string, approved bool) (*ConfirmResult, error) {
-	action := loadPending(actionID)
+func (a *Agent) Confirm(ctx context.Context, actionID string, approved bool) (*ConfirmResult, error) {	action := loadPending(actionID)
 	if action == nil {
 		return &ConfirmResult{OK: false, Message: "The action has expired or does not exist."}, nil
 	}
@@ -635,6 +652,30 @@ func (a *Agent) Confirm(ctx context.Context, actionID string, approved bool) (*C
 		return &ConfirmResult{OK: false, Message: err.Error()}, nil
 	}
 	return &ConfirmResult{OK: true, Message: resultText}, nil
+}
+
+// NewDeletePendingAction builds a stored pending action for deleting a single
+// record, surfaced when the user clicks Delete on a rendered detail card. It
+// reuses the delete_records tool's pending + confirm flow so rule enforcement
+// is identical to the agent's normal deletion path.
+func (a *Agent) NewDeletePendingAction(collection, recordID string) (*PendingAction, error) {
+	if collection == "" || recordID == "" {
+		return nil, fmt.Errorf("collection and record id are required")
+	}
+	args, _ := json.Marshal(map[string]any{
+		"collection": collection,
+		"ids":        []string{recordID},
+	})
+	dl := findTool("delete_records")
+	if dl == nil || dl.pending == nil {
+		return nil, fmt.Errorf("delete_records tool is unavailable")
+	}
+	pending, err := dl.pending(a, args)
+	if err != nil {
+		return nil, err
+	}
+	pending = storePending(pending)
+	return pending, nil
 }
 
 // viewSystemMessages builds a focused system prompt for the view-embedded agent.
@@ -767,7 +808,7 @@ func (a *Agent) systemMessages() []openai.ChatCompletionMessage {
 	b.WriteString("insert/update/delete records, create/update/delete collections, set collection rules, ")
 	b.WriteString("update/delete view configurations and manage custom actions.\n\n")
 	b.WriteString("Available tools:\n")
-	b.WriteString("- Read tools (no confirmation): list_collections, get_collection_schema, query_records, list_actions\n")
+	b.WriteString("- Read tools (no confirmation): list_collections, get_collection_schema, query_records, list_actions, navigate_to\n")
 	b.WriteString("- Write tools (confirmation required): insert_records, update_records, delete_records, ")
 	b.WriteString("create_collection, update_collection, delete_collection, set_collection_rules, ")
 	b.WriteString("set_view_config, update_view_config, delete_view_config, create_action\n\n")
@@ -775,6 +816,7 @@ func (a *Agent) systemMessages() []openai.ChatCompletionMessage {
 	b.WriteString("- Answer strictly in the language the user uses; never mix words or phrases from other languages into your reply (for example, do not insert Russian or other non-Czech words into a Czech sentence).\n")
 	b.WriteString("- Use the provided tools to gather facts; do not invent record contents.\n")
 	b.WriteString("- When the user asks to write data, use the corresponding tool. The system will ask for confirmation.\n")
+	b.WriteString("- When the user explicitly asks to go to or open a specific view or record, call navigate_to (it returns a clickable link rather than changing the page).\n")
 	b.WriteString("- Copy collection names exactly as they appear in tool output. If a tool reports that a collection was not found, retry with the suggested name from the error message or call list_collections first.\n")
 	b.WriteString("- If a request is ambiguous, ask the user a clarifying question instead of guessing.\n")
 	b.WriteString("- After fetching records with query_records, keep your answer brief: the UI renders the returned records as a table automatically.\n")

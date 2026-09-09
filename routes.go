@@ -162,6 +162,8 @@ func registerAssetsAndAPIRoutes(se *core.ServeEvent) {
 			// CSS is embedded at build time and iterates on frequently — forbid
 			// heuristic browser caching so theme changes always reach the client.
 			e.Response.Header().Set("Cache-Control", "no-cache")
+		} else if strings.HasSuffix(path, ".js") {
+			ct = "text/javascript; charset=utf-8"
 		}
 		e.Response.Header().Set("Content-Type", ct)
 		e.Response.Write(data)
@@ -260,6 +262,11 @@ func registerAIRoutes(se *core.ServeEvent) {
 	se.Router.POST("/ai/chat/stream", rateLimitMiddleware(aiStreamRateLimiter)(handleAgentChatStream))
 	se.Router.POST("/ai/view-chat/stream", rateLimitMiddleware(aiStreamRateLimiter)(handleViewChatStream))
 	se.Router.POST("/ai/confirm", func(e *core.RequestEvent) error { return handleAgentConfirm(e) })
+	se.Router.POST("/ai/delete-record", rateLimitMiddleware(aiStreamRateLimiter)(handleAgentDeleteRecord))
+	se.Router.GET("/ai/conversations", func(e *core.RequestEvent) error { return handleAgentConversationsList(e) })
+	se.Router.POST("/ai/conversations/save", rateLimitMiddleware(aiStreamRateLimiter)(handleAgentConversationSave))
+	se.Router.GET("/ai/conversations/{id}", func(e *core.RequestEvent) error { return handleAgentConversationGet(e) })
+	se.Router.POST("/ai/conversations/delete", rateLimitMiddleware(aiStreamRateLimiter)(handleAgentConversationDelete))
 }
 
 // registerActionRoutes registers the custom action list/execute endpoints.

@@ -53,7 +53,7 @@ func TestRenderTableColumnsAndEscaping(t *testing.T) {
 			"tags":           []any{"a", "b"},
 		},
 	}
-	html := renderTable(records)
+	html := renderTable(records, "", "")
 	// system collection fields are never rendered as columns
 	if strings.Contains(html, "collectionName") || strings.Contains(html, "collectionId") {
 		t.Errorf("system columns leaked: %s", html)
@@ -83,7 +83,7 @@ func TestRenderDetailLabelsAndTitle(t *testing.T) {
 		"title":          "Widget",
 		"qty":            3,
 	}
-	html := renderDetail(rec, "Produkty", labels)
+	html := renderDetail(rec, "Produkty", labels, "", "produkty", false)
 	if !strings.Contains(html, "Produkty") {
 		t.Errorf("title missing: %s", html)
 	}
@@ -99,7 +99,7 @@ func TestRenderDetailLabelsAndTitle(t *testing.T) {
 
 func TestRenderDetailEscapes(t *testing.T) {
 	rec := map[string]any{"id": "r1", "collectionName": "x", "note": "<script>x</script>"}
-	html := renderDetail(rec, "", nil)
+	html := renderDetail(rec, "", nil, "", "", false)
 	if strings.Contains(html, "<script>") {
 		t.Errorf("detail value not escaped: %s", html)
 	}
@@ -116,7 +116,7 @@ func TestRenderResultTableComposition(t *testing.T) {
 			{"collectionName": "p", "id": "2", "title": "B"},
 		},
 	}
-	html := RenderResult(nil, res)
+	html := RenderResult(nil, res, "")
 	if !strings.Contains(html, "ai-md") || !strings.Contains(html, "Here") {
 		t.Errorf("lead-in missing: %s", html)
 	}
@@ -132,7 +132,7 @@ func TestRenderResultDetailComposition(t *testing.T) {
 			{"collectionName": "p", "id": "1", "title": "A"},
 		},
 	}
-	html := RenderResult(nil, res)
+	html := RenderResult(nil, res, "")
 	if !strings.Contains(html, "ai-md") || !strings.Contains(html, "Found") {
 		t.Errorf("lead-in missing: %s", html)
 	}
@@ -143,7 +143,7 @@ func TestRenderResultDetailComposition(t *testing.T) {
 
 func TestRenderResultMarkdownOnly(t *testing.T) {
 	res := &ChatResult{FinalText: "Just text with **bold**."}
-	html := RenderResult(nil, res)
+	html := RenderResult(nil, res, "")
 	if strings.Contains(html, "ai-table") || strings.Contains(html, "ai-detail") {
 		t.Errorf("unexpected record cards: %s", html)
 	}
@@ -157,11 +157,59 @@ func TestRenderResultPending(t *testing.T) {
 		PendingAction: &PendingAction{Type: "insert_records", Summary: "Insert 2 records"},
 		FinalText:     "Awaiting confirmation: Insert 2 records",
 	}
-	html := RenderResult(nil, res)
+	html := RenderResult(nil, res, "")
 	if !strings.Contains(html, "Awaiting confirmation") {
 		t.Errorf("pending summary missing: %s", html)
 	}
 	if strings.Contains(html, "ai-table") || strings.Contains(html, "ai-detail") {
 		t.Errorf("unexpected cards in pending render: %s", html)
+	}
+}
+
+func TestRenderTableRecordLinks(t *testing.T) {
+	records := []map[string]any{
+		{"collectionName": "products", "id": "abc123", "title": "Widget"},
+		{"collectionName": "products", "id": "def456", "title": "Gadget"},
+	}
+	html := renderTable(records, "", "produkty")
+	if !strings.Contains(html, `href="/form/produkty/abc123"`) {
+		t.Errorf("record link missing for id column: %s", html)
+	}
+	if !strings.Contains(html, `href="/form/produkty/def456"`) {
+		t.Errorf("record link missing for second id: %s", html)
+	}
+	if strings.Contains(html, `href="/form/produkty/title"`) {
+		t.Errorf("non-id column got a link: %s", html)
+	}
+}
+
+func TestRenderTableBasePathPrefix(t *testing.T) {
+	records := []map[string]any{
+		{"collectionName": "products", "id": "abc123", "title": "Widget"},
+	}
+	html := renderTable(records, "/mobile", "produkty")
+	if !strings.Contains(html, `href="/mobile/form/produkty/abc123"`) {
+		t.Errorf("basePath prefix missing: %s", html)
+	}
+}
+
+func TestRenderDetailEditAndDelete(t *testing.T) {
+	labels := map[string]string{"title": "Název"}
+	rec := map[string]any{
+		"collectionName": "products",
+		"id":             "abc123",
+		"title":          "Widget",
+	}
+	html := renderDetail(rec, "Produkty", labels, "", "produkty", true)
+	if !strings.Contains(html, `href="/form/produkty/abc123"`) {
+		t.Errorf("edit link missing: %s", html)
+	}
+	if !strings.Contains(html, `data-coll="products"`) || !strings.Contains(html, `data-id="abc123"`) {
+		t.Errorf("delete button data missing: %s", html)
+	}
+	// non-superuser render omits the delete button
+	noDel := renderDetail(rec, "Produkty", labels, "", "produkty", false)
+	if strings.Contains(noDel, "del-rec-btn") {
+		t.Errorf("delete button should be hidden for non-superusers: %s", noDel)
 	}
 }

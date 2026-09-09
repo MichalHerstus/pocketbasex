@@ -260,6 +260,10 @@
   "agent.approveExecute": "Schv\u00e1lit a spustit",
   "agent.notConfigured": "Agent nen\u00ed nakonfigurov\u00e1n (nastavte v /pbx-setup \u2192 AI agent).",
   "agent.ready": "P\u0159ipraveno \u2014",
+  "agent.history": "Konverzace",
+  "agent.noHistory": "Zat\u00edm \u017e\u00e1dn\u00e9 konverzace",
+  "agent.deleteConv": "Smazat konverzaci",
+  "ai.justNow": "te\u010f",
 
   "sr.newRecord": "Nov\u00fd z\u00e1znam",
   "sr.editRecord": "Upravit z\u00e1znam",

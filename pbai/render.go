@@ -109,7 +109,12 @@ func stripImages(s string) string {
 
 // --- templates ---
 
-type tableRow struct{ Cells []string }
+type rowCell struct {
+	Text string // display text
+	Href string // if non-empty, render as a link
+}
+
+type tableRow struct{ Cells []rowCell }
 
 type tableData struct {
 	Columns []string
@@ -117,7 +122,7 @@ type tableData struct {
 }
 
 var tableTpl = template.Must(template.New("table").Parse(
-	`<div class="ai-tbl"><table class="ai-table"><thead><tr>{{range .Columns}}<th>{{.}}</th>{{end}}</tr></thead><tbody>{{range .Rows}}<tr>{{range .Cells}}<td>{{.}}</td>{{end}}</tr>{{end}}</tbody></table></div>`,
+	`<div class="ai-tbl"><table class="ai-table"><thead><tr>{{range .Columns}}<th>{{.}}</th>{{end}}</tr></thead><tbody>{{range .Rows}}<tr>{{range .Cells}}{{if .Href}}<td><a class="rec-link" href="{{.Href}}" target="_blank">{{.Text}}</a></td>{{else}}<td>{{.Text}}</td>{{end}}{{end}}</tr>{{end}}</tbody></table></div>`,
 ))
 
 type detailField struct {
@@ -126,12 +131,16 @@ type detailField struct {
 }
 
 type detailData struct {
-	Title  string
-	Fields []detailField
+	Title     string
+	Fields    []detailField
+	FormLink  string // link to the record form view ("" = hide)
+	HasDelete bool   // render a delete button
+	CollName  string // collection name for delete
+	RecID     string // record id for delete
 }
 
 var detailTpl = template.Must(template.New("detail").Parse(
-	`<div class="ai-detail">{{if .Title}}<div class="ai-detail-title">{{.Title}}</div>{{end}}<dl>{{range .Fields}}<dt>{{.Label}}</dt><dd>{{.Value}}</dd>{{end}}</dl></div>`,
+	`<div class="ai-detail">{{if .Title}}<div class="ai-detail-title">{{.Title}}</div>{{end}}<dl>{{range .Fields}}<dt>{{.Label}}</dt><dd>{{.Value}}</dd>{{end}}</dl>{{if .FormLink}}<div class="ai-detail-actions"><a class="btn-sm" href="{{.FormLink}}" target="_blank">Edit</a>{{if .HasDelete}}<button type="button" class="btn-sm danger del-rec-btn" data-coll="{{.CollName}}" data-id="{{.RecID}}">Delete</button>{{end}}</div>{{end}}</div>`,
 ))
 
 type renderData struct {
@@ -180,16 +189,18 @@ func formatCell(v any) string {
 
 // viewConfig renders nothing directly; it returns the display title and a
 // field→label map for the collection a record belongs to, derived from the
-// _views configs (pageTitle + _form formLabels/labels).
-func viewConfig(app core.App, collName string) (title string, labels map[string]string, ok bool) {
+// _views configs (pageTitle + _form formLabels/labels). It also returns the
+// _views config name (ok set) so record links can be built.
+func viewConfig(app core.App, collName string) (title string, labels map[string]string, configName string, ok bool) {
 	if app == nil || collName == "" {
-		return "", nil, false
+		return "", nil, "", false
 	}
 	recs, err := app.FindRecordsByFilter("_views", "_collName = {:c}", "", 1, 0, dbx.Params{"c": collName})
 	if err != nil || len(recs) == 0 {
-		return "", nil, false
+		return "", nil, "", false
 	}
 	rec := recs[0]
+	configName = rec.GetString("_name")
 	labels = map[string]string{}
 
 	var tab struct {
@@ -216,7 +227,7 @@ func viewConfig(app core.App, collName string) (title string, labels map[string]
 	for k, v := range form.Labels {
 		labels[k] = v
 	}
-	return title, labels, len(labels) > 0 || title != ""
+	return title, labels, configName, len(labels) > 0 || title != ""
 }
 
 // displayColumns derives the column order for a records dataset: id first,
@@ -252,16 +263,26 @@ func displayColumns(records []map[string]any) []string {
 	return cols
 }
 
-func renderTable(records []map[string]any) string {
+func renderTable(records []map[string]any, basePath, configName string) string {
 	cols := displayColumns(records)
 	if len(cols) == 0 {
 		return ""
 	}
+	formBase := ""
+	if configName != "" {
+		formBase = basePath + "/form/" + escapeAttr(configName)
+	}
 	data := tableData{Columns: cols}
 	for _, rec := range records {
 		row := tableRow{}
+		id := formatCell(rec["id"])
 		for _, c := range cols {
-			row.Cells = append(row.Cells, formatCell(rec[c]))
+			cell := rowCell{Text: formatCell(rec[c])}
+			// link the id column to the record's form view when we know a config
+			if c == "id" && formBase != "" && id != "" {
+				cell.Href = formBase + "/" + escapeAttr(id)
+			}
+			row.Cells = append(row.Cells, cell)
 		}
 		data.Rows = append(data.Rows, row)
 	}
@@ -272,7 +293,12 @@ func renderTable(records []map[string]any) string {
 	return buf.String()
 }
 
-func renderDetail(rec map[string]any, title string, labels map[string]string) string {
+// escapeAttr removes characters that could break out of a URL attribute.
+func escapeAttr(s string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(s, "/", "%2F"), "?", "%3F")
+}
+
+func renderDetail(rec map[string]any, title string, labels map[string]string, basePath, configName string, canDelete bool) string {
 	data := detailData{Title: title}
 	sys := []string{"id", "created", "updated"}
 	for _, c := range sys {
@@ -294,6 +320,16 @@ func renderDetail(rec map[string]any, title string, labels map[string]string) st
 	if len(data.Fields) == 0 {
 		return ""
 	}
+	recID := formatCell(rec["id"])
+	coll, _ := rec["collectionName"].(string)
+	if configName != "" && recID != "" {
+		data.FormLink = basePath + "/form/" + escapeAttr(configName) + "/" + escapeAttr(recID)
+	}
+	if canDelete && configName != "" && coll != "" && recID != "" {
+		data.HasDelete = true
+		data.CollName = coll
+		data.RecID = recID
+	}
 	var buf bytes.Buffer
 	if err := detailTpl.Execute(&buf, data); err != nil {
 		return ""
@@ -304,12 +340,18 @@ func renderDetail(rec map[string]any, title string, labels map[string]string) st
 // --- composition ---
 
 // RenderResult turns a ChatResult into the HTML fragment shown in the chat.
-func RenderResult(app core.App, res *ChatResult) string {
+// basePath prefixes record links ("" for desktop, "/mobile" for mobile).
+// canDelete controls whether detail cards render a Delete button (only true
+// for superusers); permission is re-checked server-side at confirm time.
+func RenderResult(app core.App, res *ChatResult, basePath string, canDelete ...bool) string {
 	lead := strings.TrimSpace(res.FinalText)
 	data := renderData{}
 	if lead != "" {
 		data.Lead = mdHTML(lead)
 	}
+
+	allowDelete := len(canDelete) > 0 && canDelete[0]
+	configName := ""
 
 	switch {
 	case res.PendingAction != nil:
@@ -319,13 +361,21 @@ func RenderResult(app core.App, res *ChatResult) string {
 		if c, ok := res.Records[0]["collectionName"].(string); ok {
 			coll = c
 		}
-		title, labels, ok := viewConfig(app, coll)
-		if !ok {
+		title, labels, cfgName, ok := viewConfig(app, coll)
+		if ok {
+			configName = cfgName
+		}
+		if title == "" {
 			title = coll
 		}
-		data.Body = template.HTML(renderDetail(res.Records[0], title, labels))
+		data.Body = template.HTML(renderDetail(res.Records[0], title, labels, basePath, configName, allowDelete))
 	case len(res.Records) > 1:
-		data.Body = template.HTML(renderTable(res.Records))
+		coll := ""
+		if c, ok := res.Records[0]["collectionName"].(string); ok {
+			coll = c
+		}
+		_, _, cfgName, _ := viewConfig(app, coll)
+		data.Body = template.HTML(renderTable(res.Records, basePath, cfgName))
 	}
 
 	var buf bytes.Buffer
