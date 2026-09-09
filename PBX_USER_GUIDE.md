@@ -6,13 +6,15 @@ PocketBase capabilities (data storage, the stock admin UI at `/_/`, CLI) and ext
 them with ready-made list (tabular) and form pages, a dashboard, Excel and MSSQL
 import/export, an AI agent, mobile views, and a superadmin setup area.
 
-This guide covers everything implemented up to **Phase 17** of `PBX_plan.md`
-(configuration model, config-name routing, superadmin config editor, view-collection
-editing, Excel/MSSQL import+sync, collection-creation wizard, mobile views, the
-per-user landing-page `_view` field, custom actions, AI-agent action-management tools,
-multilingual UI (English/Czech), AI agent enhancements (conversation memory,
-streaming responses, self-correcting collection lookup, server-rendered chat replies),
-and the extended AI agent toolset for full CRUD on collections, views, and records).
+This guide covers everything implemented in **`PBX_plan.md`** **and** the **six‑phase
+AI‑agent enhancement plan** (`PBX_agent_plan.md`): configuration model, config‑name
+routing, superadmin config editor, view‑collection editing, Excel/MSSQL import+sync,
+collection‑creation wizard, mobile views, the per‑user landing‑page `_view` field,
+custom actions, AI‑agent action‑management tools, multilingual UI (English/Czech),
+streaming AI replies, rich server‑rendered answers, conversation persistence, the
+extended AI‑agent toolset (full CRUD on collections, views, and records, plus
+cross‑collection queries, stats, batch inserts, action execution and data exports),
+and AI onboarding (welcome suggestions + slash commands) with structured form‑fill.
 
 ---
 
@@ -236,7 +238,7 @@ The form page shows one record at a time:
 A chat page. You can:
 
 - Ask natural-language questions about your data ("how many products cost less than 100").
-- The agent has **15 tools** organized in three categories:
+- The agent has **20 tools** organized in two categories:
 
 **Read tools** (run immediately, no confirmation):
 
@@ -245,6 +247,9 @@ A chat page. You can:
 | `list_collections` | List collections the user can access |
 | `get_collection_schema` | Show field names and types of a collection |
 | `query_records` | Query records with filter, sort, pagination, field projection |
+| `query_related` | Fetch records and expand their relation fields (read across collections) |
+| `get_stats` | Aggregate stats (count / distinct / min / max / avg / sum) |
+| `export_data` | Export records as CSV or JSON and get a short-lived download link |
 | `list_actions` | List custom actions for a collection (superuser) |
 
 **Write tools** (confirmation required via pending action modal):
@@ -252,8 +257,10 @@ A chat page. You can:
 | Tool | Description | Auth |
 |------|-------------|------|
 | `insert_records` | Insert new records | User |
+| `create_records_batch` | Bulk-insert up to 200 records in one call | User |
 | `update_records` | Update existing records (max 50) | User |
 | `delete_records` | Delete records (max 50) | User |
+| `run_action` | Execute a saved custom action | User¹ |
 | `create_collection` | Create a new collection | Superuser |
 | `update_collection` | Add/remove fields from a collection | Superuser |
 | `delete_collection` | Delete a collection (warns about view configs) | Superuser |
@@ -262,6 +269,9 @@ A chat page. You can:
 | `update_view_config` | Update view configuration (full replace) | Superuser |
 | `delete_view_config` | Delete a view configuration | Superuser |
 | `create_action` | Create/update custom action script | Superuser |
+
+¹ `run_action` follows the same visibility rule as the Actions dropdown: public
+actions run for any signed-in user, non-public actions are superuser-only.
 
 - **Read-only tools** run immediately.
 - **Write tools** never run straight away — they produce a **Pending Action**, shown in a
@@ -284,14 +294,40 @@ A chat page. You can:
   model call: you get the table without a second, slower generation step.
 - **Self-correcting collection names** — if the model types a collection name wrong, the
   agent detects it, suggests the closest real name, and retries in the same turn.
-- **Conversation memory** — the chat keeps your last 16 turns in context, so follow-up
-  questions ("and now give me the most expensive one") work without repeating yourself.
 - **Attach files** — you can attach a file to a message. Text / Markdown / CSV are read
   inline, PDFs (max 20 pages / 300 KB) are extracted, and images are sent to the model.
+- **Conversation memory & sidebar** — every chat is auto-saved after each turn under your
+  account. A collapsible **left sidebar** lists your past conversations (with delete), lets
+  you switch back to them or continue, and the chat keeps the last 16 turns in context inside
+  each session, so follow-ups ("and now give me the most expensive one") work.
+- **Welcome suggestions** — with an empty chat, the page shows a welcome screen with
+  **suggestion chips** for your 5 largest collections (counts respect the list rule). Click
+  one to prefill "Show records in …" and press Enter.
+- **Slash commands** — typing `/` in the chat input opens a command palette:
+  `/list`, `/create`, `/search`, `/schema`, `/stats`, `/help`. Picking one pre-fills the
+  input (e.g. `/list produkty`) and the command is expanded into a natural-language prompt
+  before sending.
+- **Cross-collection answers** — `query_related` joins related records (respecting the
+  related collections' view rules), `get_stats` gives aggregate numbers, and `export_data`
+  produces a CSV/JSON file with a **Download export** link (valid 10 minutes, owner-only).
+- **Exporting** — asking the agent to *export* something returns a **download chip** you
+  click to save the file; it streams from `/api/ai/exports/{id}`.
 
 If the agent is unconfigured, it says so — a superuser must fill in `/pbx-setup` → **AI agent** first.
 
-### 4.5 Language (Czech / English)
+### 4.5 AI in the form view — structured form-fill
+
+When a **form** view is open (`/form/{configName}`), the **AI** bar can **fill the form**
+for you. Instead of running a write tool, the embedded agent returns a structured
+`{"formFill":{...}}` payload that the page applies directly to the fields:
+
+- Fields the AI filled are **flashed** briefly so you can see what changed.
+- The browser's native validation runs afterwards — if a required field is missing, it is
+  highlighted with `reportValidity()`.
+- Nothing is submitted automatically: you review the filled form and press **Submit**
+  yourself. This applies to both new records and edits.
+
+### 4.6 Language (Czech / English)
 
 Every page — including the login screen — has a **language button** in the top bar (shows
 `CS` when the page is in English, `EN` when it is in Czech). Clicking it switches the whole
