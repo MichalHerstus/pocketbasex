@@ -211,7 +211,7 @@ func seedSampleData(app core.App) error {
 				"_coll":   "example",
 				"_config": "example",
 				"_user":   "",
-				"_def":    `{"name":"Customers","conditions":[{"field":"is_customer","op":"=","value":true}],"chains":[]}`,
+				"_def":    `{"name":"Customers","conditions":[{"field":"is_customer","op":"=","value":"true"}],"chains":[]}`,
 			},
 		},
 	}
