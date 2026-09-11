@@ -26,7 +26,6 @@ import (
 	"github.com/pocketbase/dbx"
 	"github.com/pocketbase/pocketbase"
 	"github.com/pocketbase/pocketbase/core"
-	"github.com/pocketbase/pocketbase/plugins/jsvm"
 	"github.com/pocketbase/pocketbase/tools/filesystem"
 	"github.com/pocketbase/pocketbase/tools/hook"
 
@@ -265,13 +264,6 @@ func main() {
 	// from pb_data/lang.json otherwise
 	langFlag := app.RootCmd.PersistentFlags().String("lang", "", "default UI language (en or cs)")
 
-	// load jsvm so pb_migrations/*.js migrations are auto-applied on serve
-	jsvm.MustRegister(app, jsvm.Config{
-		MigrationsDir: "pb_migrations",
-		HooksDir:      "pb_hooks",
-		HooksWatch:    false,
-	})
-
 	// all endpoints
 	app.OnServe().Bind(&hook.Handler[*core.ServeEvent]{
 		Func: func(se *core.ServeEvent) error {
@@ -279,6 +271,11 @@ func main() {
 			if langFlag != nil && *langFlag != "" {
 				cliLangOverride = true
 				cliLang = i18n.Normalize(*langFlag)
+			}
+
+			// create the default "system" collections + sample data on first run
+			if err := ensureDefaultCollections(se.App); err != nil {
+				return err
 			}
 
 			registerAuthRoutes(se)

@@ -12,7 +12,16 @@ EXT    := $(if $(filter windows,$(OS)),.exe,)
 
 OUT := $(BINARY)-$(OS)$(EXT)
 
-.PHONY: build run stop vet clean
+.PHONY: build linux macos windows run stop vet clean
+
+linux:
+	$(MAKE) OS=linux build
+
+macos:
+	$(MAKE) OS=macOS build
+
+windows:
+	$(MAKE) OS=windows build
 
 build:
 	GOOS=$(GOOS) GOARCH=$(GOARCH) CGO_ENABLED=0 go build -o $(OUT) .
